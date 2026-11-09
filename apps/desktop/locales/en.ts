@@ -133,6 +133,10 @@ export const english = {
   'search.offline': 'Connect to the Host service to manage search.',
   'search.loading': 'Reading search settings…',
   'search.enabled': 'Enable search',
+  'search.jinaReader': 'Use Jina Reader as a fallback',
+  'search.jinaScope':
+    'If a public link you paste has no query parameters and the site returns HTTP 403 or no readable text, Daban sends its URL to Jina Reader once.',
+  'search.jinaSaveFailed': 'Could not confirm the Jina Reader setting. Check the Host connection.',
   'search.provider': 'Search provider',
   'search.key': 'Search API Key',
   'search.keyHint':

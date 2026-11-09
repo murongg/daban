@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { Fault } from './control.js';
+import { errorCode, Fault } from './control.js';
 import { runtimeRequire } from './dsh.js';
+import { fetchJina, jinaEnabled } from './jina.js';
+import { resolvePublic } from './network.js';
 import { readWebGrant } from './policy.js';
 import { type Convert, createConverter, type ExtractedPage, webDownloadLimit } from './webpage.js';
 
@@ -32,6 +34,11 @@ interface Page {
 }
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
+type JinaFallback = (
+  url: URL,
+  signal: AbortSignal,
+  current: () => boolean,
+) => Promise<Awaited<ReturnType<typeof fetchJina>> | undefined>;
 
 export class WebReader {
   private readonly pages = new Map<
@@ -46,7 +53,16 @@ export class WebReader {
     ) => Promise<FetchedPage>,
     private readonly convert: Convert,
     private readonly now = Date.now,
+    private readonly jina?: JinaFallback,
   ) {}
+  private extract(source: FetchedPage): ExtractedPage {
+    // Paging cannot recover bytes that were never downloaded.
+    if (source.truncated || source.body.content.length > webDownloadLimit)
+      throw new Fault('WEB_FETCH_TOO_LARGE', 413);
+    return source.body.kind === 'html'
+      ? this.convert(source.body.content, source.url)
+      : { text: source.body.content, extraction: 'text' };
+  }
   async read(
     value: unknown,
     owner: string,
@@ -91,23 +107,43 @@ export class WebReader {
     if (pageId && (!stored || stored.owner !== owner || stored.requested !== url.href))
       throw new Fault('WEB_PAGE_EXPIRED', 410);
     if (!stored) {
-      const source = await this.fetchPage(url.href, signal, grant?.followed ?? false);
+      let source = await this.fetchPage(url.href, signal, grant?.followed ?? false);
       signal.throwIfAborted();
       const finalUrl = new URL(source.url);
       finalUrl.hash = '';
       if (grant?.followed && finalUrl.href !== url.href)
         throw new Fault('WEB_REDIRECT_BLOCKED', 403);
-      // Paging cannot recover bytes that were never downloaded. Never cache a prefix as a complete source.
-      if (source.truncated || source.body.content.length > webDownloadLimit)
-        throw new Fault('WEB_FETCH_TOO_LARGE', 413);
-      const { text, extraction, links }: ExtractedPage =
-        source.body.kind === 'html'
-          ? this.convert(source.body.content, source.url)
-          : { text: source.body.content, extraction: 'text' };
+      const forbidden = source.statusCode === 403;
+      const ok = source.statusCode >= 200 && source.statusCode < 300;
+      let page = forbidden ? undefined : this.extract(source);
+      if (
+        this.jina &&
+        grant?.userProvided &&
+        !url.href.includes('?') &&
+        finalUrl.href === url.href &&
+        (forbidden || (ok && !page?.text.trim()))
+      ) {
+        if (!grant.current()) throw new Fault('APPROVAL_POLICY_CHANGED', 403);
+        const result = await this.jina(url, signal, grant.current).catch((error: unknown) => {
+          signal.throwIfAborted();
+          if (!grant.current()) throw new Fault('APPROVAL_POLICY_CHANGED', 403);
+          const code = errorCode(error);
+          const reason = code?.startsWith('JINA_') ? code : 'JINA_UNAVAILABLE';
+          const origin = forbidden ? 'WEB_ORIGIN_FORBIDDEN' : 'WEB_CONTENT_UNAVAILABLE';
+          throw new Fault(origin, forbidden ? 403 : 422, `${origin}: ${reason}`);
+        });
+        signal.throwIfAborted();
+        if (!grant.current()) throw new Fault('APPROVAL_POLICY_CHANGED', 403);
+        if (result) {
+          source = { ...source, statusCode: result.statusCode };
+          page = { text: result.text, extraction: 'jina' };
+        }
+      }
+      const { text, extraction, links } = page ?? this.extract(source);
       signal.throwIfAborted();
       if (!text.trim()) throw new Fault('WEB_CONTENT_UNAVAILABLE', 422);
       if (
-        grant &&
+        grant?.canFollow &&
         links &&
         source.statusCode >= 200 &&
         source.statusCode < 300 &&
@@ -167,14 +203,33 @@ interface Context {
   };
   systemPrompt: { getSectionOrder: (name: string) => number; section: (value: unknown) => unknown };
 }
-export async function apply(ctx: Context, config: { sdkFile: string }) {
+export async function apply(ctx: Context, config: { sdkFile: string; jinaFile?: string }) {
   const { defineTool } = await import(
     pathToFileURL(runtimeRequire(config.sdkFile).resolve('@deepseek-ai/dsh-tools')).href
   );
+  const jinaFile = config.jinaFile;
   const reader = new WebReader(
     (url, signal, followed) =>
       ctx.web.fetch({ url, ...(followed ? { followRedirects: false } : {}) }, signal),
     createConverter(config.sdkFile),
+    Date.now,
+    jinaFile
+      ? async (url, signal, current) => {
+          const timeout = AbortSignal.timeout(12000);
+          const deadline = AbortSignal.any([signal, timeout]);
+          if (!(await jinaEnabled(jinaFile)) || !current()) return;
+          try {
+            // A proxy may have resolved the origin on our behalf. Check it locally before disclosing the URL.
+            await resolvePublic(url.hostname.replace(/^\[|\]$/g, ''), deadline);
+            if (!(await jinaEnabled(jinaFile)) || !current()) return;
+            deadline.throwIfAborted();
+            return await fetchJina(url.href, deadline);
+          } catch (error) {
+            if (timeout.aborted && !signal.aborted) throw new Fault('JINA_TIMEOUT', 504);
+            throw error;
+          }
+        }
+      : undefined,
   );
   ctx.systemPrompt.section({
     name: 'tool:web_fetch',
@@ -225,7 +280,7 @@ export async function apply(ctx: Context, config: { sdkFile: string }) {
         render: (args: { url: string }, page: Page) => [
           {
             type: 'text',
-            text: `Fetched ${page.url} (HTTP ${page.statusCode})\n\n${notice}\n\nSnapshot ${page.pageId} · ${page.extraction} · characters ${page.offset}–${page.offset + page.content.length} of ${page.totalChars}\n\n${page.content}${page.nextOffset === undefined ? '\n\n[End of snapshot]' : `\n\n[More content available. Continue web_fetch with ${JSON.stringify({ url: args.url, pageId: page.pageId, offset: page.nextOffset })}]`}`,
+            text: `Fetched ${page.url} (HTTP ${page.statusCode})\n\n${notice}\n\nSnapshot ${page.pageId} · ${page.extraction === 'jina' ? 'Jina Reader' : page.extraction} · characters ${page.offset}–${page.offset + page.content.length} of ${page.totalChars}\n\n${page.content}${page.nextOffset === undefined ? '\n\n[End of snapshot]' : `\n\n[More content available. Continue web_fetch with ${JSON.stringify({ url: args.url, pageId: page.pageId, offset: page.nextOffset })}]`}`,
           },
         ],
         presentationMeta: (_args: unknown, page: Page) => ({

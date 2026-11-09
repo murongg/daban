@@ -99,6 +99,7 @@ export const suites = {
     'policy.test',
     'web.test',
     'web-read.test',
+    'jina.test',
     'interactions.test',
     'software.test',
     'software-protocol.test',

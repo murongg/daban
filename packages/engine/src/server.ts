@@ -82,6 +82,7 @@ import { GroupTools } from './group-tools.js';
 import { Groups } from './groups.js';
 import { HostBrowser } from './host-browser.js';
 import { integrationCommand } from './integration-api.js';
+import { jinaEnabled, jinaSettingFile, setJinaEnabled } from './jina.js';
 import { BotLifecycle } from './lifecycle.js';
 import { LinuxTools } from './linux-tools.js';
 import { LocalCommandTools } from './local-command-tools.js';
@@ -341,6 +342,7 @@ export async function startPrototype({
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
   const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
   const searches = new SearchSettings(path.join(modelDir, 'search.json'), settings);
+  const jinaFile = path.join(modelDir, jinaSettingFile);
   // Search configuration is optional; its status endpoint reports corruption without blocking ordinary Host startup.
   await searches.status().catch(() => undefined);
   const authority = new Authority(path.join(modelDir, 'control-token'));
@@ -1597,6 +1599,13 @@ export async function startPrototype({
             if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
             if (url.search) throw new Fault('INVALID_MODEL_SETTINGS', 400);
           }
+          if (url.pathname === '/api/web/jina') {
+            if (req.method !== 'POST') throw new Fault('METHOD_NOT_ALLOWED', 405);
+            const data = await body(req, 1024);
+            if (url.search || Object.keys(data).length !== 1 || typeof data.enabled !== 'boolean')
+              throw new Fault('INVALID_WEB_SETTINGS', 400);
+            return json(res, await setJinaEnabled(jinaFile, data.enabled));
+          }
           if (url.pathname.startsWith('/api/search/')) {
             if (url.search) throw new Fault('SEARCH_INVALID_SETTINGS', 400);
             const action = url.pathname.slice('/api/search/'.length);
@@ -1724,6 +1733,7 @@ export async function startPrototype({
                     }),
               botCapabilities: true,
               searchSettings: true,
+              jinaReader: await jinaEnabled(jinaFile),
               clientProtocol: host || runtime instanceof Computers ? managedProtocol : 18,
               ...(host
                 ? {

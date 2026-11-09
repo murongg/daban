@@ -1,7 +1,13 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
+import { Fault } from './control.js';
 import { runtimeRequire } from './dsh.js';
+import { setJinaEnabled } from './jina.js';
+import { apply as policy } from './policy.js';
 import { apply, WebReader } from './web-read.js';
 import { createConverter } from './webpage.js';
 
@@ -12,6 +18,171 @@ const source = (content: string, kind: 'text' | 'html' = 'text') => ({
   statusCode: 200,
   body: { kind, content },
   truncated: false,
+});
+const pasted = {
+  url: source('').url,
+  userProvided: true,
+  followed: false,
+  canFollow: true,
+  current: () => true,
+};
+
+test.each([200, 403])(
+  'uses Jina once after origin status %i and pages the same snapshot',
+  async (statusCode) => {
+    const fetchPage = vi.fn(async () => ({
+      ...source(statusCode === 403 ? 'Synthetic access denied' : '<main></main>', 'html'),
+      statusCode,
+    }));
+    const jina = vi.fn(async () => ({
+      statusCode: 200,
+      text: 'Synthetic Reader text. '.repeat(1000),
+    }));
+    const reader = new WebReader(fetchPage, createConverter(sdkFile), Date.now, jina);
+    const first = await reader.read({ url: pasted.url }, 'mock-session', signal(), pasted);
+    expect(first).toMatchObject({ url: pasted.url, statusCode: 200, extraction: 'jina' });
+    expect(first.content).toMatch(/^Synthetic Reader text/);
+    expect(first.nextOffset).toBeDefined();
+    const end = await reader.read(
+      { url: pasted.url, pageId: first.pageId, offset: first.nextOffset },
+      'mock-session',
+      signal(),
+      pasted,
+    );
+    expect(first.content + end.content).toBe('Synthetic Reader text. '.repeat(1000));
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(jina).toHaveBeenCalledTimes(1);
+    expect(pasted).not.toHaveProperty('links');
+  },
+);
+
+test('never forwards inferred, query-bearing, redirected, successful or locally blocked reads to Jina', async () => {
+  const jina = vi.fn(async () => ({ statusCode: 200, text: 'Synthetic Reader text' }));
+  const reader = new WebReader(
+    async (url) => {
+      if (url.includes('/blocked')) throw new Fault('WEB_BLOCKED_URL', 403);
+      if (url.includes('/good')) return { ...source('Short text'), url };
+      return {
+        ...source('Synthetic access denied'),
+        url: url.includes('/redirect') ? pasted.url : url,
+        statusCode: 403,
+      };
+    },
+    createConverter(sdkFile),
+    Date.now,
+    jina,
+  );
+  for (const [url, userProvided] of [
+    [pasted.url, false],
+    [`${pasted.url}?key=synthetic`, true],
+    [`${pasted.url}/redirect`, true],
+    [`${pasted.url}/good`, true],
+  ] as const) {
+    await reader.read({ url }, 'mock-session', signal(), { ...pasted, url, userProvided });
+  }
+  const url = `${pasted.url}/blocked`;
+  await expect(
+    reader.read({ url }, 'mock-session', signal(), { ...pasted, url }),
+  ).rejects.toMatchObject({ code: 'WEB_BLOCKED_URL' });
+  expect(jina).not.toHaveBeenCalled();
+});
+
+test('a read that loses task ownership after the origin responds cannot use Jina', async () => {
+  let current = true;
+  const jina = vi.fn(async () => ({ statusCode: 200, text: 'Synthetic Reader text' }));
+  const reader = new WebReader(
+    async () => {
+      current = false;
+      return { ...source('Synthetic access denied'), statusCode: 403 };
+    },
+    createConverter(sdkFile),
+    Date.now,
+    jina,
+  );
+  await expect(
+    reader.read({ url: pasted.url }, 'mock-session', signal(), {
+      ...pasted,
+      current: () => current,
+    }),
+  ).rejects.toMatchObject({ code: 'APPROVAL_POLICY_CHANGED' });
+  expect(jina).not.toHaveBeenCalled();
+});
+
+test('keeps the origin failure when the Jina fallback is unavailable or fails', async () => {
+  const fetchPage = async () => ({ ...source('Synthetic access denied'), statusCode: 403 });
+  const disabled = new WebReader(fetchPage, createConverter(sdkFile));
+  expect(await disabled.read({ url: pasted.url }, 'mock-session', signal(), pasted)).toMatchObject({
+    statusCode: 403,
+  });
+  const jina = vi.fn(async () => {
+    throw new Fault('JINA_RATE_LIMITED', 429);
+  });
+  const enabled = new WebReader(fetchPage, createConverter(sdkFile), Date.now, jina);
+  await expect(
+    enabled.read({ url: pasted.url }, 'mock-session', signal(), pasted),
+  ).rejects.toMatchObject({ status: 403, message: expect.stringContaining('JINA_RATE_LIMITED') });
+  expect(jina).toHaveBeenCalledTimes(1);
+});
+
+test('the configured tool never sends a private URL to Jina even when direct fetch reports 403', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-web-'));
+  const jinaFile = path.join(directory, 'jina-reader.enabled');
+  const url = 'http://127.0.0.1/synthetic';
+  const request = vi.fn<typeof fetch>();
+  vi.stubGlobal('fetch', request);
+  try {
+    await setJinaEnabled(jinaFile, true);
+    type Execution = {
+      name: string;
+      arguments: unknown;
+      signal: AbortSignal;
+      agent: { session: { id: string } };
+    };
+    type Hook = (exec: Execution, next: () => Promise<unknown>) => Promise<unknown>;
+    let pre: Hook | undefined;
+    let execute: ((args: unknown, exec: Execution) => Promise<unknown>) | undefined;
+    policy(
+      {
+        on: (...hook) => {
+          if (hook[0] === 'tools/pre-execute') pre = hook[1];
+        },
+      },
+      {
+        limit: 10,
+        urls: [url],
+      },
+    );
+    await apply(
+      {
+        web: {
+          fetch: async () => ({ ...source('Synthetic access denied'), url, statusCode: 403 }),
+        },
+        tools: {
+          register: (value) => {
+            execute = (value as { execute: typeof execute }).execute;
+          },
+          get: () => true,
+        },
+        systemPrompt: { getSectionOrder: () => 1, section: () => {} },
+      },
+      { sdkFile, jinaFile },
+    );
+    expect.assert(pre && execute);
+    const args = { url };
+    const exec = {
+      name: 'web_fetch',
+      arguments: args,
+      signal: signal(),
+      agent: { session: { id: 'mock-session' } },
+    };
+    await expect(pre(exec, () => execute!(args, exec))).rejects.toMatchObject({
+      code: 'WEB_ORIGIN_FORBIDDEN',
+    });
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 test('registers a bounded DSH tool with canonical output, continuation guidance and replay-safe metadata', async () => {
   type Page = Awaited<ReturnType<WebReader['read']>>;

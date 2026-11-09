@@ -48,6 +48,8 @@ const searchClaims = new Map<symbol, { bridge: BridgeConfig; claim: SearchClaim 
 interface WebReadGrant {
   url: string;
   followed: boolean;
+  canFollow: boolean;
+  userProvided: boolean;
   current: () => boolean;
   links?: readonly string[];
 }
@@ -167,7 +169,8 @@ export function apply(
     for (const token of ownedTokens) searchClaims.delete(token);
   });
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
-  const urls = new Set(config.urls);
+  const userUrls = new Set(config.urls);
+  const urls = new Set(userUrls);
   const linkedUrls = new Set<string>();
   const followLinks = (config.approvalMode ?? 'auto') === 'auto';
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
@@ -367,10 +370,13 @@ export function apply(
           return dispatch(async () => {
             const changed = checkRead();
             if (changed) return changed;
-            if (!needsApproval && followLinks && url)
+            if (url)
               webReads.set(exec, {
                 url,
                 followed,
+                canFollow: !needsApproval && followLinks,
+                // Search and single-use approvals can authorize direct fetches, but cannot opt a URL into external processing.
+                userProvided: userUrls.has(url),
                 current: () => active && !exec.signal.aborted && ownsRead(),
               });
             return next();
