@@ -44,7 +44,7 @@ vi.mock('./native-daemon', () => ({
     async ensure() {
       mock.mode = this.mode;
       if (this.mode === 'vm' && mock.vmFailure) throw new Error(mock.vmFailure);
-      return {
+      const client = {
         status: async () => ({
           ...disconnected('ready'),
           agent: {
@@ -64,6 +64,7 @@ vi.mock('./native-daemon', () => ({
               }
             : { available: true, revision: 0, busy: false, vm: 'unknown' },
       };
+      return { client, snapshot: await client.status() };
     }
     async close() {}
   },

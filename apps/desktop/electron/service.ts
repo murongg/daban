@@ -134,6 +134,7 @@ export function runtimeService(
   let legacyHost = false;
   let connecting: Promise<RuntimeSnapshot> | undefined;
   let polling = false;
+  let setupPolling = false;
   let closed = false;
   let updating = false;
   let connection = 0;
@@ -231,7 +232,7 @@ export function runtimeService(
     const changed = agentUpgradeBlocked(last);
     if (changed) throw Error(changed);
   }
-  async function connectAgent() {
+  async function connectAgent(): Promise<{ client: RuntimeClient; snapshot?: RuntimeSnapshot }> {
     if (!agentConfig) throw new Error('AGENT_NOT_CONFIGURED');
     if (component && !files) files = await component.prepare(componentChanged);
     if (closed) throw Error('RUNTIME_CLOSED');
@@ -273,10 +274,10 @@ export function runtimeService(
           : new NativeDaemon(agentConfig);
       daemon = native;
       const connected = await native.ensure();
+      if (closed) throw Error('RUNTIME_CLOSED');
       nativeMode = true;
-      setupState = environment
-        ? await environment.invoke('status')
-        : { required: false, phase: 'complete' };
+      if (!environment) setupState = { required: false, phase: 'complete' };
+      else if (setupState?.target !== 'linux') setupState = undefined;
       return connected;
     }
     if (platform === 'win32') {
@@ -317,7 +318,7 @@ export function runtimeService(
     nativeMode = false;
     if (nativeFirst || setupState?.target === 'linux')
       setupState = { required: false, target: 'linux', phase: 'complete' };
-    return privateClient();
+    return { client: privateClient() };
   }
   async function inspectAgent(): Promise<DiagnosticReport> {
     const report: DiagnosticReport = {
@@ -453,19 +454,26 @@ export function runtimeService(
     if (connecting) return connecting;
     connecting = (async () => {
       connection++;
-      rebootPublished = ++rebootRequested;
-      published = ++requested;
+      const powerTicket = ++rebootRequested,
+        ticket = ++requested;
+      rebootPublished = powerTicket;
+      published = ticket;
       const previous = state,
         previousClient = client;
       if (!(previousClient && nativeMode && nativeFirst)) publish(disconnected('connecting'));
       try {
-        if (agentConfig) client = await connectAgent();
+        let snapshot: RuntimeSnapshot | undefined;
+        if (agentConfig) ({ client, snapshot } = await connectAgent());
         else {
           const owner = await managed();
           await refreshReboot();
           client = await owner.connect();
         }
-        await refresh();
+        // The startup read already authenticated and validated this snapshot. A newer mutation still wins.
+        if (snapshot && ticket === published && powerTicket === rebootPublished) {
+          if (snapshot.reboot) acceptReboot(snapshot.reboot, powerTicket);
+          publish(snapshot);
+        } else await refresh();
         pendingHandoff = nativeFirst && !nativeMode;
         legacyHost = false;
       } catch (error) {
@@ -857,16 +865,33 @@ export function runtimeService(
         nativeMode &&
         client &&
         !connecting &&
+        !setupPolling &&
         Date.now() - lastSetupPoll > 1000
       ) {
-        try {
-          lastSetupPoll = Date.now();
-          setupState = await environment.invoke('status');
-          publish(state);
-          // The native owner discovers optional Linux without replacing its running conversations.
-        } catch {
-          /* A transient setup poll must not disconnect ordinary chat. */
-        }
+        const epoch = connection,
+          owner = client,
+          previous = setupState;
+        lastSetupPoll = Date.now();
+        setupPolling = true;
+        // Optional setup must not hold up chat status, and a late poll must not replace a setup command's result.
+        environment
+          .invoke('status')
+          .then((next) => {
+            if (
+              !closed &&
+              !updating &&
+              connection === epoch &&
+              client === owner &&
+              setupState === previous
+            ) {
+              setupState = next;
+              publish(state);
+            }
+          })
+          .catch(() => {})
+          .finally(() => {
+            setupPolling = false;
+          });
       }
       if (!client || connecting || recovering) return;
       const interval = Object.values(state.agents).some(

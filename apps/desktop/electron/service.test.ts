@@ -117,9 +117,9 @@ vi.mock('./native-daemon', () => ({
       if (mode === 'vm') mocks.daemonConfigs.push(config);
     }
     async ensure() {
-      if (this.mode === 'native') return mocks.nativeEnsure();
-      await mocks.daemonEnsure();
-      return agentClient(this.config);
+      if (this.mode === 'vm') await mocks.daemonEnsure();
+      const client = this.mode === 'native' ? await mocks.nativeEnsure() : agentClient(this.config);
+      return { client, snapshot: await client.status() };
     }
     close() {
       return this.mode === 'native' ? mocks.nativeClose() : mocks.daemonClose();
@@ -642,6 +642,13 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
   const recovery = {
     status: { available: true, revision: 0 } as import('@daban/protocol').RecoveryStatus,
   };
+  const environment = {
+    status: async (): Promise<SetupStatus> => ({
+      required: true,
+      target: 'linux',
+      phase: 'available',
+    }),
+  };
   let settings = {
     provider: 'deepseek-official',
     model: 'deepseek-flash',
@@ -662,7 +669,7 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     });
     response.setHeader('content-type', 'application/json');
     if (request.url === '/api/host/environment') {
-      response.end(JSON.stringify({ required: true, target: 'linux', phase: 'available' }));
+      response.end(JSON.stringify(await environment.status()));
     } else if (request.url === '/api/host/recovery') {
       if (execution === 'local-workspace') {
         response.writeHead(503);
@@ -784,6 +791,7 @@ async function agentFixture(protocol = 17, execution: 'linux-vm' | 'local-worksp
     pages,
     schedules,
     recovery,
+    environment,
     requests,
     server,
     identity,
@@ -1386,6 +1394,50 @@ it('keeps first-use native model setup usable without probing an uninstalled VM 
       }),
     ).toEqual({ ok: false, error: 'RUNTIME_RECOVERY_PENDING' });
   } finally {
+    await service.close();
+    await f.close();
+  }
+});
+
+it('publishes the first native snapshot and keeps it updating while Linux setup status is pending', async () => {
+  const f = await agentFixture(43, 'local-workspace');
+  const client = agentClient(f.config);
+  mocks.nativeEnsure.mockResolvedValue(client);
+  let requested: () => unknown = () => undefined;
+  let finish: () => unknown = () => undefined;
+  const setupRequested = new Promise((resolve) => {
+    requested = () => resolve(undefined);
+  });
+  const setupStatus: SetupStatus = { required: true, target: 'linux', phase: 'available' };
+  f.environment.status = () =>
+    new Promise((resolve) => {
+      finish = () => resolve(setupStatus);
+      requested();
+    });
+  const frame = { url: 'file:///mock/index.html' },
+    sender = { mainFrame: frame, send: vi.fn() };
+  mocks.windows.push({ webContents: sender });
+  const service = runtimeService(f.root, frame.url, undefined, undefined, {
+    ...f.config,
+    nativeFirst: true,
+  });
+  const reads = () => f.requests.filter(({ route }) => route === '/api/state').length;
+  const connecting = service.connect();
+  try {
+    expect(await Promise.race([connecting, setupRequested])).toMatchObject({ phase: 'ready' });
+    expect(reads()).toBe(1);
+    await setupRequested;
+    await vi.waitFor(() => expect(reads()).toBeGreaterThan(1), { timeout: 2000 });
+    finish();
+    await vi.waitFor(() =>
+      expect(sender.send).toHaveBeenCalledWith(
+        'daban:runtime-state',
+        expect.objectContaining({ phase: 'ready', setup: setupStatus }),
+      ),
+    );
+  } finally {
+    finish();
+    await connecting;
     await service.close();
     await f.close();
   }
