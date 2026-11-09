@@ -41,6 +41,14 @@
 - Reserve usable width for both panes and keep pointer, keyboard, and CSS limits in agreement. Preserve the existing overlay or single-column layout when space is tight, and hide the divider when only one pane is available. Remember widths independently as local UI preferences. Clamp the displayed width to the available space while retaining the saved preference and any in-progress edits.
 - Verify rendered widths in a browser at wide and narrow sizes. Cover dragging, keyboard limits, reopening or reloading, and switching between split and expanded views without losing edits.
 
+### Focus Indicators
+
+- Trace unexpected rings through both the shared focus rules and component overrides. Check `outline`, `outline-offset`, and which element owns the visible border or background.
+- Use the shared `--focus` token and the focus geometry in `DESIGN.md`. Keep field focus along the existing edge and button focus close to the control. Inset outlines inside clipped or scrollable strips.
+- Draw a composite field's text-entry focus on its visible container. For address bars, search boxes, and date or number fields, suppress the inner input outline only when the container provides a visible replacement. Give embedded actions such as submit and calendar buttons their own keyboard focus indicator.
+- Preserve visible keyboard focus through `:focus-visible` or React Aria's `data-focus-visible` as appropriate. Treat selection, validation, and remote desktop takeover as separate states with their own cues.
+- Verify focus changes in Chromium with mouse clicks, `Tab`, and `Shift+Tab`. Check light and dark themes and forced colors. Confirm that the indicator stays distinct from the resting border, follows the focused target, and remains visible in dense or clipped layouts.
+
 ## Readability and Linting
 
 - Do not handwrite minified source or pack independent statements onto one line. Use normal indentation, line breaks, and clear code blocks.
