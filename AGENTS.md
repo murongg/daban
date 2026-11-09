@@ -25,6 +25,15 @@
 - Maintain Chinese and English messages in `apps/desktop/locales/zh-CN.ts` and `en.ts`. Both dictionaries must have matching keys and placeholders.
 - Access application copy through typed `MessageKey` values. Preserve user content, model output, saved names, and domain enum values as authored; do not turn them into translation keys.
 
+## Desktop UI Design
+
+- Keep the interface restrained and minimal. Reuse the components and design tokens in [DESIGN.md](DESIGN.md), and establish hierarchy through alignment, spacing, and typography.
+- Use borders, fills, shadows, accent colors, and motion only when they clarify grouping, priority, state, or feedback. Give each section at most one visually dominant action.
+- Place actions next to the content they affect and group related controls with consistent sizing and spacing. For example, place discussion refresh beside the discussion heading and discard beside save.
+- Use `IconButton` for familiar actions in compact headers and toolbars. Keep visible text when the icon alone would leave the action or its consequences unclear.
+- Give icon-only buttons a localized accessible name and a tooltip on hover and keyboard focus when enabled. Preserve loading feedback, disabled states, and destructive-action confirmations.
+- Verify the layout at the narrowest supported pane width and check that each action is reachable and usable by keyboard.
+
 ## Readability and Linting
 
 - Do not handwrite minified source or pack independent statements onto one line. Use normal indentation, line breaks, and clear code blocks.
