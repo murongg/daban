@@ -5,7 +5,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -120,6 +120,42 @@ it('opens settings over the current workspace and restores the underlying draft 
     }),
   );
   expect(screen.getByRole('heading', { name: '任务', level: 1 })).toBeVisible();
+});
+
+it('reveals optional settings explanations on demand without dismissing the settings dialog', async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.keyboard('{Control>},{/Control}');
+  const settings = await screen.findByRole('dialog', { name: '设置' });
+  const overview = '调整外观和提醒，让工作区按你的习惯工作。';
+  const language = '立即切换并保存在本机。';
+  expect(screen.queryByText(overview)).not.toBeInTheDocument();
+  expect(screen.queryByText(language)).not.toBeInTheDocument();
+
+  await user.click(within(settings).getByRole('button', { name: '通用说明' }));
+  expect(
+    within(screen.getByRole('dialog', { name: '通用说明' })).getByText(overview),
+  ).toBeVisible();
+  await user.keyboard('{Escape}');
+  expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible();
+  expect(screen.queryByText(overview)).not.toBeInTheDocument();
+
+  const help = within(settings).getByRole('button', { name: '界面语言说明' });
+  help.focus();
+  await user.keyboard('{Enter}');
+  expect(
+    within(screen.getByRole('dialog', { name: '界面语言说明' })).getByText(language),
+  ).toBeVisible();
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(help).toHaveFocus());
+  expect(within(settings).getByRole('button', { name: /界面语言$/ })).toBeVisible();
+
+  await user.click(within(settings).getByRole('tab', { name: '数据与存储' }));
+  expect(within(settings).getByRole('button', { name: '导出' })).toBeVisible();
+  await user.click(within(settings).getByRole('button', { name: '导出本机聊天与设置说明' }));
+  expect(screen.getByRole('dialog', { name: '导出本机聊天与设置说明' })).toHaveTextContent(
+    '群聊记录、附件原件、资料库和 Linux 产出保存在运行环境中',
+  );
 });
 
 it('keeps an unsaved model key while switching categories but clears it after leaving settings', async () => {
@@ -278,10 +314,11 @@ it('explains native-only setup without offering Linux installation or VM recover
   await userEvent.click(within(dialog).getByRole('tab', { name: '电脑与权限' }));
   expect(within(dialog).getByRole('heading', { name: '本机电脑' })).toBeVisible();
   const panel = within(dialog).getByRole('tabpanel', { name: '电脑与权限' });
-  expect(
-    within(panel).getByText('在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。'),
-  ).toBeVisible();
   expect(within(dialog).queryByRole('button', { name: '检查并恢复' })).toBeNull();
+  await userEvent.click(within(panel).getByRole('button', { name: '本机电脑说明' }));
+  expect(screen.getByRole('dialog', { name: '本机电脑说明' })).toHaveTextContent(
+    '在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。',
+  );
 });
 
 it('keeps Linux recovery reachable when ordinary tasks use the native workspace', async () => {

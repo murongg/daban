@@ -798,6 +798,7 @@ export const chinese = {
   'common.groupChat': '群聊',
   'common.handBackBot': '交还给 Bot',
   'common.handled': '已处理',
+  'common.helpFor': '{0}说明',
   'common.inbox': '收件箱',
   'common.inboxFilter': '收件箱筛选',
   'common.includes': '包含',

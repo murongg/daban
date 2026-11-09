@@ -23,6 +23,17 @@ function mockBotStatus(scope = 'a'.repeat(64), name = '合成甲'): NoticeStatus
   };
 }
 
+it('keeps notification availability visible while showing optional guidance on demand', async () => {
+  render(<Notifications />);
+  const guidance = /在后台提醒任务完成/;
+  expect(screen.queryByText(guidance)).not.toBeInTheDocument();
+  expect(screen.getByText(/网页预览不会请求通知权限/)).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '接收桌面提醒说明' }));
+  const help = screen.getByRole('dialog', { name: '接收桌面提醒说明' });
+  expect(help).toHaveTextContent(guidance);
+  expect(help).toHaveTextContent(/完整退出客户端后/);
+});
+
 it('ignores the initial read from a disposed StrictMode effect after its replacement has loaded', async () => {
   const finish: ((value: unknown) => unknown)[] = [];
   const invoke = vi.fn(

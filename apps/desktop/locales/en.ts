@@ -904,6 +904,7 @@ export const english = {
   'common.groupChat': 'Group chat',
   'common.handBackBot': 'Hand back to Bot',
   'common.handled': 'Handled',
+  'common.helpFor': 'Help for {0}',
   'common.inbox': 'Inbox',
   'common.inboxFilter': 'Inbox filter',
   'common.includes': 'Includes',
