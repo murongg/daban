@@ -8,12 +8,19 @@ const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, '
 const originalMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia');
 const animations: { target: HTMLElement; frames: Keyframe[]; animation: Animation }[] = [];
 let reduced = false;
+const motionPreference = new EventTarget();
 beforeEach(() => {
   animations.length = 0;
   reduced = false;
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
-    value: () => ({ matches: reduced }),
+    value: () => ({
+      get matches() {
+        return reduced;
+      },
+      addEventListener: motionPreference.addEventListener.bind(motionPreference),
+      removeEventListener: motionPreference.removeEventListener.bind(motionPreference),
+    }),
   });
   Object.defineProperty(HTMLElement.prototype, 'animate', {
     configurable: true,
@@ -31,7 +38,7 @@ afterEach(() => {
   else Reflect.deleteProperty(window, 'matchMedia');
   vi.useRealTimers();
 });
-function Fixture({ closed }: { closed: () => unknown }) {
+function Fixture({ closed, suspended = false }: { closed: () => unknown; suspended?: boolean }) {
   const [open, setOpen] = useState(true);
   const [child, setChild] = useState(false);
   return (
@@ -39,8 +46,7 @@ function Fixture({ closed }: { closed: () => unknown }) {
       {open && (
         <Dialog
           title="合成动画设置"
-          motion
-          active={!child}
+          active={!child && !suspended}
           onClose={() => {
             closed();
             setOpen(false);
@@ -53,7 +59,7 @@ function Fixture({ closed }: { closed: () => unknown }) {
         </Dialog>
       )}
       {child && (
-        <Dialog title="合成子窗口" onClose={() => setChild(false)}>
+        <Dialog title="合成子窗口" onClose={() => setChild(false)} motion={false}>
           Synthetic child.
         </Dialog>
       )}
@@ -77,17 +83,60 @@ it('keeps the modal and draft until exit completes and dismisses only once', asy
   expect(closed).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
-it('cancels a stale exit when another dialog takes ownership and preserves the parent input', async () => {
+it('cancels a stale exit when suspended and restores the same draft without replaying entry', async () => {
   const closed = vi.fn();
-  render(<Fixture closed={closed} />);
+  const view = render(<Fixture closed={closed} />);
   await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
   const animation = animations.at(-1)!.animation;
   const finish = animation.onfinish!;
-  await userEvent.click(screen.getByRole('button', { name: '打开合成子窗口' }));
+  view.rerender(<Fixture closed={closed} suspended />);
   await act(async () => finish.call(animation, new Event('finish') as AnimationPlaybackEvent));
   expect(closed).not.toHaveBeenCalled();
-  await userEvent.keyboard('{Escape}');
+  view.rerender(<Fixture closed={closed} />);
+  expect(animations).toHaveLength(4);
+  expect(screen.getByRole('dialog')).not.toHaveAttribute('inert');
   expect(screen.getByRole('textbox', { name: '合成草稿' })).toHaveValue('synthetic-motion-draft');
+  const childTrigger = screen.getByRole('button', { name: '打开合成子窗口' });
+  await userEvent.click(childTrigger);
+  expect(screen.getByRole('dialog', { name: '合成子窗口' })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.getByRole('dialog', { name: '合成动画设置' })).toBeVisible();
+  expect(childTrigger).toHaveFocus();
+  expect(animations).toHaveLength(4);
+});
+
+it('blocks activation and submission as soon as Escape starts a dismissal', async () => {
+  const action = vi.fn();
+  const closed = vi.fn();
+  render(
+    <Dialog title="合成确认" motion onClose={closed}>
+      <form onSubmit={action}>
+        <button type="submit" onClick={action}>
+          执行合成操作
+        </button>
+      </form>
+    </Dialog>,
+  );
+  const button = screen.getByRole('button', { name: '执行合成操作' });
+  const dialog = screen.getByRole('dialog');
+  button.focus();
+  await userEvent.keyboard('{Escape}');
+  expect(dialog).toHaveAttribute('inert');
+  fireEvent.click(button);
+  fireEvent.submit(button.closest('form')!);
+  expect(action).not.toHaveBeenCalled();
+  expect(closed).not.toHaveBeenCalled();
+});
+
+it('settles a pending exit immediately when reduced motion is enabled', async () => {
+  const closed = vi.fn();
+  render(<Fixture closed={closed} />);
+  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
+  expect(closed).not.toHaveBeenCalled();
+  reduced = true;
+  await act(async () => motionPreference.dispatchEvent(new Event('change')));
+  expect(closed).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 it('skips spatial animation for reduced motion and cannot get stuck if finish events never arrive', async () => {
   const closed = vi.fn();

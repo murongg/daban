@@ -5,7 +5,7 @@ import {
   type RuntimeCommand,
   type RuntimeReply,
 } from '@daban/protocol';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
@@ -36,6 +36,26 @@ function SyntheticTranscript({
     </>
   );
 }
+
+it('returns a history reader to the latest virtualized messages and keeps keyboard focus in the log', async () => {
+  const entries = Array.from({ length: 120 }, (_, index) => ({
+    id: `mock-latest-${index}`,
+    content: <p>SYNTHETIC LATEST {index}</p>,
+  }));
+  render(<SyntheticTranscript entries={entries} />);
+  const log = screen.getByRole('log');
+  await screen.findByText('SYNTHETIC LATEST 119');
+  expect(screen.queryByRole('button', { name: '回到最新' })).not.toBeInTheDocument();
+  await act(async () => log.scrollTo({ top: 0 }));
+  const back = screen.getByRole('button', { name: '回到最新' });
+  back.focus();
+  fireEvent.click(back);
+  // JSDOM does not emit a scroll event when assigning scrollTop.
+  await act(async () => log.scrollTo({ top: log.scrollTop }));
+  await screen.findByText('SYNTHETIC LATEST 119');
+  expect(log).toHaveFocus();
+  expect(back).not.toBeInTheDocument();
+});
 
 it('retains expanded records and their drafts when scrolling them out of the visible window', async () => {
   const entries: TranscriptEntry[] = Array.from({ length: 1000 }, (_, index) => ({

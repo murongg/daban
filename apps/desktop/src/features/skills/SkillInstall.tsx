@@ -159,10 +159,8 @@ export function SkillInstall({
     <Dialog
       title={t(selection ? 'skills.reviewPackage' : 'skills.installTitle')}
       wide
-      motion
-      onClose={() => {
-        if (busy !== 'install') onClose();
-      }}
+      closeDisabled={busy === 'install'}
+      onClose={onClose}
     >
       {!selection ? (
         <>

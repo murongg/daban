@@ -15,6 +15,17 @@ function measure(pane: HTMLElement | null) {
   };
 }
 
+function stopExpansion(pane: HTMLElement | null) {
+  const transition = pane
+    ?.getAnimations?.()
+    .find(
+      (animation) =>
+        'transitionProperty' in animation && animation.transitionProperty === '--pane-expansion',
+    );
+  transition?.cancel();
+  return !!transition;
+}
+
 export function Pane({
   id,
   label,
@@ -22,6 +33,7 @@ export function Pane({
   bodyClass,
   edge = 'left',
   resizable = true,
+  inert = false,
   children,
 }: {
   id: string;
@@ -30,6 +42,7 @@ export function Pane({
   bodyClass?: string;
   edge?: 'left' | 'right';
   resizable?: boolean;
+  inert?: boolean;
   children: ReactNode;
 }) {
   const key = `daban-pane-width:${id}`;
@@ -79,6 +92,7 @@ export function Pane({
       id={id}
       ref={pane}
       aria-label={label}
+      inert={inert}
       className={`pane ${className}`}
       style={{ '--pane-width': width === undefined ? undefined : `${width}px` } as CSSProperties}
     >
@@ -98,6 +112,8 @@ export function Pane({
             event.preventDefault();
             event.currentTarget.focus({ preventScroll: true });
             event.currentTarget.setPointerCapture?.(event.pointerId);
+            // A drag that interrupts a collapse starts at the visible edge, preserving the pointer offset.
+            if (stopExpansion(pane.current)) setWidth(bounds.width);
             drag.current = { pointer: event.pointerId, x: event.clientX, initial: bounds.width };
           }}
           onPointerMove={(event) => {
@@ -133,6 +149,7 @@ export function Pane({
                 return;
             }
             event.preventDefault();
+            stopExpansion(pane.current);
             const value = Math.min(bounds.max, Math.max(bounds.min, next));
             setWidth(value);
             save(value);

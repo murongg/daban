@@ -51,7 +51,7 @@ export function LinuxSetup() {
             aria-valuemax={100}
             aria-valuenow={status.progress}
           >
-            <span style={{ width: `${status.progress}%` }} />
+            <span style={{ transform: `scaleX(${status.progress / 100})` }} />
           </div>
           <span>{status.progress}%</span>
         </div>

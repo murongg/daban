@@ -683,6 +683,7 @@ export const english = {
     'Conversation action needs verification. History and drafts are retained.',
   'chat.conversationHistory': 'Conversation history',
   'chat.conversationRecords': 'Conversation history',
+  'chat.returnToLatest': 'Back to latest',
   'chat.downloadingFile': 'Downloading file',
   'chat.draftReadyReview': 'Draft ready for your review',
   'chat.editQueuedMessage': 'Edit queued message {0}',

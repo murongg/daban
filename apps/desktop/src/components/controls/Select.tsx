@@ -5,11 +5,11 @@ import {
   Button,
   ListBox,
   ListBoxItem,
-  Popover,
   SelectValue,
   Text,
 } from 'react-aria-components';
 import { t, useLocale } from '../../i18n/locale';
+import { Popover } from './Popover';
 import './controls.css';
 
 export interface SelectOption {
@@ -79,12 +79,7 @@ export function Select({
         </SelectValue>
         <ChevronDown aria-hidden="true" />
       </Button>
-      <Popover
-        className="control-popover select-popover"
-        data-daban-popup="true"
-        placement="bottom start"
-        offset={5}
-      >
+      <Popover className="select-popover" placement="bottom start" offset={5}>
         <ListBox aria-label={label} className="select-options">
           {options.map((option) => (
             <ListBoxItem

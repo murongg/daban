@@ -174,7 +174,7 @@ export function UpdatesPanel({
             aria-valuemax={100}
             aria-valuenow={Math.round(status.percent ?? 0)}
           >
-            <span style={{ width: `${status.percent ?? 0}%` }} />
+            <span style={{ transform: `scaleX(${(status.percent ?? 0) / 100})` }} />
           </div>
           <span className="muted">{Math.round(status.percent ?? 0)}%</span>
           <IconButton label={t('updates.cancelDownload')} onClick={() => run('cancel')}>

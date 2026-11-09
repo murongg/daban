@@ -193,12 +193,19 @@ it('groups the task detail actions as named icon buttons', async () => {
   );
   expect(save).toBeDisabled();
   expect(discard).toBeDisabled();
+  const thread = pane.getByRole('region', { name: '任务讨论' });
+  const reveal = vi.fn();
+  Object.defineProperty(thread, 'scrollIntoView', { configurable: true, value: reveal });
+  await userEvent.click(discussion);
+  expect(thread).toHaveFocus();
+  expect(reveal).toHaveBeenLastCalledWith({ block: 'start', behavior: 'smooth' });
   await userEvent.type(description, ' MOCK UNSAVED EDIT');
   await userEvent.click(discard);
   expect(description).toHaveValue('MOCK SHARED DETAIL');
   expect(live.write).not.toHaveBeenCalled();
   await userEvent.click(close);
   expect(screen.queryByRole('complementary', { name: '任务详情' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /继续.*合成操作任务/ })).toHaveFocus();
   expect(screen.getByRole('button', { name: '查看 合成操作任务' })).toBeVisible();
 });
 

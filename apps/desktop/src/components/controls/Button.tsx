@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ComponentPropsWithRef, ReactNode } from 'react';
 import { useLocale } from '../../i18n/locale';
 import { Tooltip } from './Tooltip';
 
@@ -8,7 +8,7 @@ export function IconButton({
   className = '',
   title = label,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
+}: ComponentPropsWithRef<'button'> & { label: string; children: ReactNode }) {
   useLocale();
   return (
     <Tooltip label={title}>

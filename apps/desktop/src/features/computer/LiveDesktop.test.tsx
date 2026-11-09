@@ -94,6 +94,7 @@ it('hides old native frames on instance replacement and releases a held pointer 
     publish(replaced);
   });
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(screen.getByRole('application')).toHaveAttribute('aria-busy', 'true');
   expect(screen.getByRole('textbox', { name: '发送文字到 Linux 桌面' })).toBeDisabled();
   await waitFor(() =>
     expect(
@@ -111,6 +112,7 @@ it('hides old native frames on instance replacement and releases a held pointer 
     await next;
   });
   expect(await screen.findByRole('img')).toHaveAttribute('src', 'data:image/jpeg;base64,bmV3');
+  expect(screen.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   expect(
     invoke.mock.calls.some(
       ([c]) => c.type === 'frame' && c.instance === 'mock-native-new' && c.epoch === 4,

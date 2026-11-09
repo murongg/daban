@@ -1,6 +1,7 @@
 import { Folder, X } from 'lucide-react';
-import { Button, Dialog, DialogTrigger, Popover } from 'react-aria-components';
+import { Button, Dialog, DialogTrigger } from 'react-aria-components';
 import { IconButton } from '../../components/controls/Button';
+import { Popover } from '../../components/controls/Popover';
 import { t, useLocale } from '../../i18n/locale';
 
 function folderName(path: string) {
@@ -38,12 +39,7 @@ export function FolderReferences({
           >
             {name}
           </Button>
-          <Popover
-            className="control-popover folder-reference-popover"
-            data-daban-popup="true"
-            placement="top start"
-            offset={6}
-          >
+          <Popover className="folder-reference-popover" placement="top start" offset={6}>
             <Dialog aria-label={t('chat.folderPath', { 0: name })}>
               <p>{path}</p>
               <p className="muted">{t('chat.folderReferenceHint')}</p>

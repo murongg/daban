@@ -1,4 +1,11 @@
 @import url("./tokens.css");
+
+@property --pane-expansion {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
 fieldset {
   margin: 0;
   padding: 0;
@@ -172,11 +179,18 @@ button {
 .pane {
   /* The separator reads these pixel limits to expose the same range to the keyboard. */
   position: relative;
-  width: clamp(
+  --pane-fit: clamp(
     var(--pane-min),
     var(--pane-width, var(--pane-default)),
     min(var(--pane-cap, 100%), 100% - var(--pane-reserve))
   );
+  --pane-motion-width: calc(
+    (1 - var(--pane-expansion)) *
+    var(--pane-fit) +
+    var(--pane-expansion) *
+    var(--pane-expanded-width)
+  );
+  width: var(--pane-fit);
   flex-shrink: 0;
 }
 .pane-divider {
@@ -321,6 +335,9 @@ textarea.field {
   display: flex;
   flex-direction: column;
   z-index: 30;
+}
+.sidebar-scrim {
+  display: none;
 }
 .sidebar-header {
   min-height: 70px;
@@ -843,11 +860,27 @@ textarea.field {
   display: flex;
   flex-direction: column;
 }
+.transcript-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 .transcript {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 31px clamp(24px, 3.3vw, 58px) 16px;
+}
+.transcript:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.transcript-return {
+  position: absolute;
+  right: clamp(24px, 3.3vw, 58px);
+  bottom: 8px;
 }
 .transcript-content {
   display: flex;
@@ -1400,6 +1433,7 @@ button.chat-excerpt:hover {
   --pane-min: 350px;
   --pane-cap: 880px;
   --pane-reserve: 320px;
+  --pane-expanded-width: min(72%, 880px);
   border-left: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -1407,8 +1441,29 @@ button.chat-excerpt:hover {
   background: var(--canvas);
 }
 .workspace.expanded {
-  width: 72%;
-  max-width: 880px;
+  width: var(--pane-expanded-width);
+}
+@media (min-width: 701px) and (prefers-reduced-motion: no-preference) {
+  /* Interpolate only the expansion state. Drag and keyboard widths still apply directly. */
+  .workspace:not(:has(#panel-computer)) {
+    --pane-expansion: 0;
+    width: var(--pane-motion-width);
+    transition: --pane-expansion var(--motion-surface) var(--motion-ease);
+  }
+  .workspace.expanded:not(:has(#panel-computer)) {
+    --pane-expansion: 1;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workspace:not(:has(#panel-computer)),
+  .task-pane {
+    animation: pane-appear var(--motion-surface) ease-out;
+  }
+}
+@keyframes pane-appear {
+  from {
+    opacity: 0.72;
+  }
 }
 .workspace-context {
   display: grid;
@@ -3148,17 +3203,26 @@ textarea.skill-source {
   display: flex;
   align-items: center;
   gap: 8px;
-  animation: toast-in 0.18s ease-out;
+  transition:
+    opacity var(--motion-feedback) ease-out,
+    translate var(--motion-feedback) var(--motion-ease),
+    display var(--motion-feedback) allow-discrete;
+}
+.toast[hidden] {
+  display: none;
+  opacity: 0;
+  translate: 0 4px;
+  pointer-events: none;
+}
+@starting-style {
+  .toast:not([hidden]) {
+    opacity: 0;
+    translate: 0 4px;
+  }
 }
 .toast svg {
   width: 15px;
   height: 15px;
-}
-@keyframes toast-in {
-  from {
-    transform: translate(-50%, 7px);
-    opacity: 0.6;
-  }
 }
 @media (min-width: 1600px) {
   .transcript {
@@ -3213,16 +3277,13 @@ textarea.skill-source {
   .workspace {
     --pane-default: 430px;
     --pane-reserve: 25px;
+    --pane-expanded-width: min(100% - 24px, 880px);
     position: absolute;
     right: 0;
     top: 70px;
     bottom: 0;
     z-index: 20;
     box-shadow: -15px 6px 35px #0000000a;
-  }
-  .workspace.expanded {
-    width: calc(100% - 24px);
-    max-width: 880px;
   }
   .transcript {
     padding-left: max(35px, 7%);
@@ -3262,6 +3323,9 @@ textarea.skill-source {
     inset: 0;
     background: #15201b3b;
     z-index: 29;
+  }
+  .sidebar-scrim:not([hidden]) {
+    display: block;
   }
   .chat-header {
     min-height: 62px;
@@ -3316,16 +3380,13 @@ textarea.skill-source {
     font-size: 8px;
   }
   .workspace {
+    --pane-expanded-width: 100%;
     top: 62px;
     width: 100%;
     max-width: 100%;
     min-width: 0;
     box-shadow: none;
     border-left: 0;
-  }
-  .workspace.expanded {
-    width: 100%;
-    max-width: 100%;
   }
   .desktop-preview {
     max-height: 430px;
@@ -3357,6 +3418,36 @@ textarea.skill-source {
   }
   .member-choices {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 700px) and (prefers-reduced-motion: no-preference) {
+  @supports (transition-behavior: allow-discrete) {
+    .sidebar {
+      transition:
+        translate var(--motion-surface) var(--motion-ease),
+        display var(--motion-surface) allow-discrete;
+    }
+    .sidebar:not(.open) {
+      translate: -100% 0;
+      pointer-events: none;
+    }
+    .sidebar-scrim {
+      transition:
+        opacity var(--motion-surface) ease-out,
+        display var(--motion-surface) allow-discrete;
+    }
+    .sidebar-scrim[hidden] {
+      opacity: 0;
+      pointer-events: none;
+    }
+    @starting-style {
+      .sidebar.open {
+        translate: -100% 0;
+      }
+      .sidebar-scrim:not([hidden]) {
+        opacity: 0;
+      }
+    }
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -4662,9 +4753,15 @@ textarea.skill-source {
   display: block;
   height: 100%;
   background: var(--strong);
+  transform-origin: left;
+  transition: transform var(--motion-surface) ease-out;
 }
-.setup-spinner {
+.setup-spinner,
+.busy-spinner {
   animation: setup-spin 1.2s linear infinite;
+}
+.busy-spinner {
+  animation-delay: 180ms;
 }
 @keyframes setup-spin {
   to {
@@ -5053,6 +5150,7 @@ textarea.skill-source {
 }
 .work-layout {
   display: flex;
+  justify-content: flex-end;
   flex: 1;
   min-height: 0;
 }
@@ -5063,6 +5161,7 @@ textarea.skill-source {
   --pane-default: 53.5%;
   --pane-min: 360px;
   --pane-reserve: 240px;
+  --pane-expanded-width: 100%;
   display: flex;
   border-left: 1px solid var(--line);
 }
@@ -5070,8 +5169,20 @@ textarea.skill-source {
   display: none;
 }
 .work-layout.editor-expanded > .task-pane {
-  width: 100%;
+  width: var(--task-expanded-width, 100%);
   border-left: 0;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @container (width > 850px) {
+    .task-pane {
+      --task-expanded-width: var(--pane-motion-width);
+      width: var(--pane-motion-width);
+      transition: --pane-expansion var(--motion-surface) var(--motion-ease);
+    }
+    .work-layout.editor-expanded > .task-pane {
+      --pane-expansion: 1;
+    }
+  }
 }
 .work-layout.editor-expanded .task-editor {
   padding-right: max(24px, 8%);

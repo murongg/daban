@@ -53,6 +53,7 @@ export function Sidebar({
   onCopy,
   onCopyGroup,
   open,
+  inert = false,
   close,
   settingsOpen = false,
 }: {
@@ -70,6 +71,7 @@ export function Sidebar({
   onCopy?: (bot?: string) => unknown;
   onCopyGroup?: (group?: string) => unknown;
   open: boolean;
+  inert?: boolean;
   close: () => unknown;
   settingsOpen?: boolean;
 }) {
@@ -276,11 +278,12 @@ export function Sidebar({
   }
   return (
     <>
-      {open && <div className="sidebar-scrim" onClick={close} aria-hidden="true" />}
+      <div className="sidebar-scrim" hidden={!open} onClick={close} aria-hidden="true" />
       <Pane
         id="sidebar"
         className={`sidebar ${open ? 'open' : ''}`}
         label={t('sidebar.sidebar')}
+        inert={inert}
         edge="right"
       >
         <header className="sidebar-header">

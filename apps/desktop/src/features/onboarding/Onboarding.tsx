@@ -146,7 +146,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
               aria-valuemax={100}
               aria-valuenow={percent}
             >
-              <span style={{ width: `${percent}%` }} />
+              <span style={{ transform: `scaleX(${percent / 100})` }} />
             </div>
             <span>{percent}%</span>
           </div>

@@ -1,5 +1,5 @@
 import type { BrowserState, RuntimeOwner } from '@daban/protocol';
-import { Globe } from 'lucide-react';
+import { Globe, LoaderCircle } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { t, useLocale } from '../../i18n/locale';
 
@@ -31,6 +31,7 @@ export function EmbeddedBrowser({
     tab = active?.id,
     generation = active?.generation,
     suspended = active?.suspended;
+  const loading = !attached && !failed && !disabled && owner === 'human' && !!tab && !suspended;
   useEffect(() => {
     const bridge = window.daban?.browser;
     const element = surface.current;
@@ -58,7 +59,19 @@ export function EmbeddedBrowser({
       // Native views sit above DOM content. Hide them before app dialogs/popovers need that space.
       const covered = [
         ...document.querySelectorAll('[role="dialog"], [data-daban-popup], details[open]'),
-      ].some((overlay) => !overlay.contains(element) && overlay.getBoundingClientRect().width > 0);
+      ].some((overlay) => {
+        if (overlay.contains(element)) return false;
+        const bounds = overlay.getBoundingClientRect();
+        if (!bounds.width) return false;
+        // Inline disclosures can be open in the neighboring conversation while the native view is usable.
+        if (!overlay.matches('details')) return true;
+        return (
+          bounds.left < rect.right &&
+          bounds.right > rect.left &&
+          bounds.top < rect.bottom &&
+          bounds.bottom > rect.top
+        );
+      });
       const visible =
         owner === 'human' &&
         !disabled &&
@@ -139,12 +152,12 @@ export function EmbeddedBrowser({
         ref={surface}
         className="live-screen native-browser"
         aria-label={t('livebrowser.browserScreen', { 0: name })}
-        aria-busy={!attached && !failed}
+        aria-busy={loading}
         data-native-browser={attached ? 'attached' : failed ? 'failed' : 'waiting'}
       >
         {!attached && (
           <div className="live-screen-loading">
-            <Globe />
+            {loading ? <LoaderCircle className="busy-spinner" aria-hidden="true" /> : <Globe />}
             <span>{t(failed ? 'hostBrowser.nativeUnavailable' : 'hostBrowser.nativeLoading')}</span>
             {failed && (
               <button

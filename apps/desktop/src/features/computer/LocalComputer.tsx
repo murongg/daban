@@ -219,10 +219,8 @@ export function LocalComputer({ bot }: { bot: Bot }) {
       {consent && (
         <Dialog
           title={t('localComputer.consentTitle', { 0: bot.name })}
-          onClose={() => {
-            if (!busy) setConsent(undefined);
-          }}
-          motion
+          closeDisabled={busy}
+          onClose={() => setConsent(undefined)}
         >
           <div className="local-consent">
             <ShieldCheck size={24} />

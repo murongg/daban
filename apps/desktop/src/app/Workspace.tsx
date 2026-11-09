@@ -187,7 +187,10 @@ export function Workspace({
         </IconButton>
         <IconButton
           label={t('workspace.closeWorkspacePanel')}
-          onClick={() => dispatch({ type: 'panel', panel: null })}
+          onClick={() => {
+            document.getElementById('workspace-toggle')?.focus({ preventScroll: true });
+            dispatch({ type: 'panel', panel: null });
+          }}
         >
           <X />
         </IconButton>
