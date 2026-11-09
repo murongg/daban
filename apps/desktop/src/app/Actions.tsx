@@ -1,10 +1,12 @@
 import { MoreHorizontal } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { Button, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components';
+import type { ReactNode, RefObject } from 'react';
+import { Button, Menu, MenuItem, MenuTrigger } from 'react-aria-components';
+import { Popover } from '../components/controls/Popover';
 import { t, useLocale } from '../i18n/locale';
 
 export function Actions({
   items,
+  triggerRef,
 }: {
   items: {
     id: string;
@@ -13,18 +15,15 @@ export function Actions({
     disabled?: boolean;
     onSelect: () => unknown;
   }[];
+  triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   useLocale();
   return (
     <MenuTrigger>
-      <Button className="icon-button" aria-label={t('app.moreActions')}>
+      <Button ref={triggerRef} className="icon-button" aria-label={t('app.moreActions')}>
         <MoreHorizontal aria-hidden="true" />
       </Button>
-      <Popover
-        className="control-popover action-popover"
-        placement="bottom end"
-        data-daban-popup="true"
-      >
+      <Popover className="action-popover" placement="bottom end">
         <Menu
           aria-label={t('app.moreActions')}
           className="action-menu"

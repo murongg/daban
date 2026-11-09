@@ -1,4 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useRetention } from '../../components/collection/retention';
 import { t } from '../../i18n/locale';
@@ -97,61 +98,78 @@ function Window({
       ? entries.map((entry, index) => ({ key: entry.id, index, start: 31 }))
       : [];
   return (
-    <div
-      className="transcript"
-      role="log"
-      aria-label={t('chat.conversationRecords')}
-      aria-live={virtualizer.isScrolling ? 'off' : 'polite'}
-      ref={scroll.viewport}
-      onScroll={scroll.onScroll}
-      onPointerDownCapture={(event) => {
-        scroll.pause();
-        retained.onPointerDownCapture(event);
-        virtualizer.cancelScroll();
-      }}
-      onFocusCapture={(event) => {
-        scroll.pause();
-        virtualizer.cancelScroll();
-        retained.onFocusCapture(event);
-      }}
-      onBlurCapture={retained.onBlurCapture}
-    >
+    <div className="transcript-area">
       <div
-        className={`transcript-content${measured ? ' transcript-window' : ''}`}
-        ref={contentRef}
-        style={
-          measured || entries.length > 80
-            ? { height: virtualizer.getTotalSize(), position: 'relative' }
-            : undefined
-        }
+        className="transcript"
+        role="log"
+        tabIndex={-1}
+        aria-label={t('chat.conversationRecords')}
+        aria-live={virtualizer.isScrolling ? 'off' : 'polite'}
+        ref={scroll.viewport}
+        onScroll={scroll.onScroll}
+        onPointerDownCapture={(event) => {
+          scroll.pause();
+          retained.onPointerDownCapture(event);
+          virtualizer.cancelScroll();
+        }}
+        onFocusCapture={(event) => {
+          scroll.pause();
+          virtualizer.cancelScroll();
+          retained.onFocusCapture(event);
+        }}
+        onBlurCapture={retained.onBlurCapture}
       >
-        {visible.map((item) => {
-          const entry = entries[item.index]!;
-          return (
-            <div
-              key={item.key}
-              data-index={item.index}
-              data-transcript-entry={entry.id}
-              data-window-key={entry.id}
-              ref={measured ? virtualizer.measureElement : undefined}
-              className="transcript-row"
-              style={
-                measured
-                  ? {
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: `translateY(${item.start - 31}px)`,
-                    }
-                  : undefined
-              }
-            >
-              {entry.content}
-            </div>
-          );
-        })}
+        <div
+          className={`transcript-content${measured ? ' transcript-window' : ''}`}
+          ref={contentRef}
+          style={
+            measured || entries.length > 80
+              ? { height: virtualizer.getTotalSize(), position: 'relative' }
+              : undefined
+          }
+        >
+          {visible.map((item) => {
+            const entry = entries[item.index]!;
+            return (
+              <div
+                key={item.key}
+                data-index={item.index}
+                data-transcript-entry={entry.id}
+                data-window-key={entry.id}
+                ref={measured ? virtualizer.measureElement : undefined}
+                className="transcript-row"
+                style={
+                  measured
+                    ? {
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${item.start - 31}px)`,
+                      }
+                    : undefined
+                }
+              >
+                {entry.content}
+              </div>
+            );
+          })}
+        </div>
       </div>
+      {scroll.awayFromLatest && (
+        <button
+          type="button"
+          className="secondary transcript-return"
+          onClick={() => {
+            // Keep keyboard focus in the transcript when this button disappears.
+            scroll.viewport.current?.focus({ preventScroll: true });
+            scroll.resume();
+          }}
+        >
+          <ArrowDown aria-hidden="true" />
+          {t('chat.returnToLatest')}
+        </button>
+      )}
     </div>
   );
 }

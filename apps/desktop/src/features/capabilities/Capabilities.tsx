@@ -37,6 +37,8 @@ export function Capabilities({
       {connectionBot && (
         <Dialog
           title={t('capabilities.mcpForBot', { 0: connectionBot.name })}
+          // Dismissal can be refused while a draft is dirty. Keep the controls available for editing.
+          motion={!dirty}
           onClose={() => {
             if (dirty) {
               notify(t('capabilities.finishEditing'));

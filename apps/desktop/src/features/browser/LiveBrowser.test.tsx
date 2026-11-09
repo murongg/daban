@@ -117,6 +117,7 @@ it('ignores a delayed frame from the previous Bot and routes keyboard input thro
       <LiveBrowser {...props} />
     </RuntimeProvider>,
   );
+  await waitFor(() => expect(screen.getByRole('application')).toHaveAttribute('aria-busy', 'true'));
   const b = {
     ...state,
     bot: 'b',

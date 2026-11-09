@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { BrowserMount } from '../../../shared/browser';
 import { EmbeddedBrowser } from './EmbeddedBrowser';
@@ -60,6 +60,25 @@ it('mounts a real webpage with its exact lease and hides it when a dialog covers
     ),
   );
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  const plan = document.createElement('details');
+  plan.getBoundingClientRect = () => ({ ...bounds, x: 700, left: 700, right: 850, width: 150 });
+  plan.open = true;
+  try {
+    await act(async () => {
+      document.body.append(plan);
+    });
+    expect(invoke).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'show' }));
+    plan.getBoundingClientRect = () => bounds;
+    fireEvent.resize(window);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'hide' })),
+    );
+  } finally {
+    plan.remove();
+  }
+  await waitFor(() =>
+    expect(invoke).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'show' })),
+  );
   const dialog = document.createElement('div');
   dialog.setAttribute('role', 'dialog');
   document.body.append(dialog);
@@ -90,6 +109,6 @@ it('mounts a real webpage with its exact lease and hides it when a dialog covers
   expect(
     invoke.mock.calls.filter(([request]) => (request as { action: string }).action === 'show')
       .length,
-  ).toBe(3);
+  ).toBe(4);
   unmount();
 });

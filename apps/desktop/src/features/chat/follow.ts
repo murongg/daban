@@ -1,4 +1,7 @@
-import { type UIEvent, useCallback, useLayoutEffect, useRef } from 'react';
+import { type UIEvent, useCallback, useLayoutEffect, useRef, useState } from 'react';
+
+const atLatest = (element: HTMLDivElement) =>
+  element.scrollHeight - element.scrollTop - element.clientHeight < 80;
 
 export function useFollow(scope: string, request = '') {
   const viewport = useRef<HTMLDivElement>(null);
@@ -8,11 +11,15 @@ export function useFollow(scope: string, request = '') {
   const position = useRef(0);
   const selection = useRef(scope);
   const previousRequest = useRef('');
+  const [awayFromLatest, setAwayFromLatest] = useState(false);
   const update = useCallback(() => {
     const element = viewport.current;
-    if (!element || !following.current) return;
-    element.scrollTop = element.scrollHeight;
-    position.current = element.scrollTop;
+    if (!element) return;
+    if (following.current) {
+      element.scrollTop = element.scrollHeight;
+      position.current = element.scrollTop;
+    }
+    setAwayFromLatest(!following.current && !atLatest(element));
   }, []);
   const resume = useCallback(() => {
     following.current = true;
@@ -31,7 +38,8 @@ export function useFollow(scope: string, request = '') {
       following.current = false;
       attention.current?.scrollIntoView?.({ block: 'start' });
       position.current = viewport.current?.scrollTop || 0;
-    } else update();
+    }
+    update();
     selection.current = scope;
     previousRequest.current = request;
   });
@@ -47,11 +55,12 @@ export function useFollow(scope: string, request = '') {
 
   function onScroll(event: UIEvent<HTMLDivElement>) {
     const element = event.currentTarget;
-    const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+    const nearBottom = atLatest(element);
     // Growth can emit scroll events without the reader moving upward. Keep following in that case.
     if (element.scrollTop < position.current || nearBottom) following.current = nearBottom;
     position.current = element.scrollTop;
+    setAwayFromLatest(!following.current && !nearBottom);
   }
 
-  return { viewport, content, attention, onScroll, resume, pause, isFollowing };
+  return { viewport, content, attention, onScroll, resume, pause, isFollowing, awayFromLatest };
 }

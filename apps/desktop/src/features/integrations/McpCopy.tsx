@@ -112,12 +112,7 @@ export function McpCopy({
     }
   }
   return (
-    <Dialog
-      title={t('capabilities.copyMcp')}
-      onClose={() => {
-        if (!busy) onClose();
-      }}
-    >
+    <Dialog title={t('capabilities.copyMcp')} closeDisabled={busy} onClose={onClose}>
       <p className="dialog-description">{t('capabilities.mcpCopyHint', { 0: connection.name })}</p>
       <p className="field-help">{connection.origin}</p>
       <form

@@ -4,7 +4,7 @@ import {
   type RuntimeOwner,
   recoveryBlocked,
 } from '@daban/protocol';
-import { Monitor, Send, WifiOff } from 'lucide-react';
+import { LoaderCircle, Monitor, Send, WifiOff } from 'lucide-react';
 import {
   type KeyboardEvent,
   type PointerEvent,
@@ -61,6 +61,7 @@ export function LiveDesktop({
   } | null>(null);
   const moved = useRef(0);
   const ready = runtime.snapshot.phase === 'ready';
+  const loading = !image && ready && !error && (!bound || !!instance);
   useEffect(() => {
     let active = true,
       busy = false;
@@ -240,6 +241,7 @@ export function LiveDesktop({
         role="application"
         data-remote-keyboard={human ? 'true' : undefined}
         aria-label={t('livedesktop.computerScreen', { 0: name })}
+        aria-busy={loading}
         aria-describedby={human ? helpId : undefined}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The remote keyboard surface needs focus and provides an explicit Escape exit.
         tabIndex={0}
@@ -270,7 +272,7 @@ export function LiveDesktop({
           />
         ) : (
           <div className="live-screen-loading">
-            <Monitor />
+            {loading ? <LoaderCircle className="busy-spinner" aria-hidden="true" /> : <Monitor />}
             <span>{ready ? t('livedesktop.readingLinuxDesktop') : t('common.waitingRuntime')}</span>
           </div>
         )}

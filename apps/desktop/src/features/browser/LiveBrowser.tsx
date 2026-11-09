@@ -8,7 +8,7 @@ import {
   type RuntimeOwner,
   recoveryBlocked,
 } from '@daban/protocol';
-import { Globe, Keyboard, Send } from 'lucide-react';
+import { Globe, Keyboard, LoaderCircle, Send } from 'lucide-react';
 import { type KeyboardEvent, type PointerEvent, useEffect, useId, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { t, useLocale } from '../../i18n/locale';
@@ -53,6 +53,14 @@ export function LiveBrowser({
     active = state?.tabs.find((tab) => tab.id === state.active);
   const ready = runtime.snapshot.phase === 'ready',
     available = !!state;
+  const loading =
+    !frame?.image &&
+    ready &&
+    !!active &&
+    !state?.pending?.length &&
+    !active.suspended &&
+    !frame?.paused &&
+    !error;
   const scopeKey = `${bot}:${epoch}:${state?.instance}:${active?.id}:${active?.generation}`;
   const matches = (view?: BrowserView) =>
     view?.bot === bot &&
@@ -247,6 +255,7 @@ export function LiveBrowser({
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The remote keyboard surface needs focus and provides an explicit Escape exit.
         tabIndex={0}
         aria-label={t('livebrowser.browserScreen', { 0: name })}
+        aria-busy={loading}
         aria-describedby={human ? help : undefined}
         onKeyDown={keyboard}
         onPointerDown={(event) => pointer(event, 'down')}
@@ -282,7 +291,7 @@ export function LiveBrowser({
           />
         ) : (
           <div className="live-screen-loading">
-            <Globe />
+            {loading ? <LoaderCircle className="busy-spinner" aria-hidden="true" /> : <Globe />}
             <span>
               {frame?.paused || state?.pending?.length
                 ? t('livebrowser.webpageAwaitingAction')

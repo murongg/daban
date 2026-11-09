@@ -76,7 +76,8 @@
   height: 100%;
   background: var(--ink);
   border-radius: inherit;
-  transition: width 0.2s linear;
+  transform-origin: left;
+  transition: transform var(--motion-surface) ease-out;
 }
 .update-notes {
   margin-top: 22px;

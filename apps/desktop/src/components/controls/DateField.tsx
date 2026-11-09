@@ -17,9 +17,9 @@ import {
   Group,
   Heading,
   I18nProvider,
-  Popover,
 } from 'react-aria-components';
 import { getLocale, t, useLocale } from '../../i18n/locale';
+import { Popover } from './Popover';
 import './controls.css';
 
 export function DateField({
@@ -70,12 +70,7 @@ export function DateField({
           </Button>
         </Group>
         <FieldError className="control-error">{t('datefield.selectValidDate')}</FieldError>
-        <Popover
-          className="control-popover calendar-popover"
-          data-daban-popup="true"
-          placement="bottom start"
-          offset={5}
-        >
+        <Popover className="calendar-popover" placement="bottom start" offset={5}>
           <Dialog className="calendar-dialog" aria-label={t('datefield.choose', { 0: label })}>
             <Calendar>
               <header className="calendar-heading">

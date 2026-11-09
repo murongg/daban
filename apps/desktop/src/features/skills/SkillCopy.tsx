@@ -59,12 +59,7 @@ export function SkillCopy({
     }
   }
   return (
-    <Dialog
-      title={t('capabilities.copySkill')}
-      onClose={() => {
-        if (!busy) onClose();
-      }}
-    >
+    <Dialog title={t('capabilities.copySkill')} closeDisabled={busy} onClose={onClose}>
       <p className="dialog-description">{t('capabilities.copyHint', { 0: entry.name })}</p>
       <div className="field-label">
         {t('capabilities.chooseBot')}

@@ -621,9 +621,8 @@ function BotIntegrations({
       {archiving && (
         <Dialog
           title={t('integrations.archiveConnection')}
-          onClose={() => {
-            if (!busy) setArchiving(undefined);
-          }}
+          closeDisabled={busy}
+          onClose={() => setArchiving(undefined)}
         >
           {error && (
             <p className="form-error" role="alert">

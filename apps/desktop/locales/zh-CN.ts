@@ -594,6 +594,7 @@ export const chinese = {
     '对话操作待核对，历史和草稿保留。',
   'chat.conversationHistory': '历史对话',
   'chat.conversationRecords': '对话记录',
+  'chat.returnToLatest': '回到最新',
   'chat.downloadingFile': '正在下载文件',
   'chat.draftReadyReview': '草稿已就绪，等待你查看',
   'chat.editQueuedMessage': '编辑排队消息 {0}',

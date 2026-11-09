@@ -35,11 +35,12 @@ import {
   Sun,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { I18nProvider } from 'react-aria-components';
 import { isTaskReceipt } from '../../shared/receipt';
 import { IconButton } from '../components/controls/Button';
 import { Dialog } from '../components/controls/Dialog';
+import { useMediaQuery } from '../components/controls/motion';
 import { ImagePreview } from '../components/ImagePreview';
 import { Archive } from '../features/bots/Archive';
 import { Avatar } from '../features/bots/Avatar';
@@ -220,37 +221,55 @@ function Workbench() {
   }, []);
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarOverlay = useMediaQuery('(max-width: 700px)');
   const [modal, setModal] = useState<Modal>(null);
+  const actionTrigger = useRef<HTMLButtonElement>(null);
+  const actionOpener = useRef<HTMLButtonElement | null>(null);
+  function openActionModal(next: NonNullable<Modal>) {
+    actionOpener.current = actionTrigger.current;
+    setModal(next);
+  }
+  useEffect(() => {
+    if (modal || !actionOpener.current) return;
+    const opener = actionOpener.current;
+    actionOpener.current = null;
+    // Menu items unmount, so the owning trigger is the stable return target.
+    if (opener.isConnected && !document.querySelector('[data-daban-dialog]'))
+      opener.focus({ preventScroll: true });
+  }, [modal]);
 
-  const [toast, setToast] = useState('');
-  const [undo, setUndo] = useState<{
-    bot: string;
-    revision: number;
-    title: string;
-    version: number;
+  const [toast, setToast] = useState<{
+    text: string;
+    dismissed?: true;
+    undo?: { bot: string; revision: number; title: string; version: number };
   }>();
+  const undo = toast?.undo;
   const [verifyTick, setVerifyTick] = useState(0);
   const [inboxFocus, setInboxFocus] = useState<string>();
   const search = useRef<HTMLInputElement>(null);
+  const sidebarToggle = useRef<HTMLButtonElement>(null);
+  const previousSidebarOpen = useRef(false);
   const storageFailed = useRef(false);
   const ingested = useRef(new Map<string, string>());
   const notify = useCallback((text: string) => {
-    setToast(text);
-    setUndo(undefined);
+    setToast({ text });
   }, []);
   const trash = useTrash(state, dispatch, (ack: ConversationAck, bot: string) => {
     if (ack.conversation.version !== ack.receipt.version) {
       notify(t('trash.changed'));
       return;
     }
-    notify(t(ack.conversation.trashed ? 'trash.moved' : 'trash.restored'));
-    if (ack.conversation.trashed)
-      setUndo({
-        bot,
-        revision: ack.conversation.revision,
-        title: ack.conversation.title,
-        version: ack.conversation.version,
-      });
+    setToast({
+      text: t(ack.conversation.trashed ? 'trash.moved' : 'trash.restored'),
+      undo: ack.conversation.trashed
+        ? {
+            bot,
+            revision: ack.conversation.revision,
+            title: ack.conversation.title,
+            version: ack.conversation.version,
+          }
+        : undefined,
+    });
   });
   useAttention(state, dispatch, !!modal || settingsOpen || !!trash.issue);
   const work = useWork(state, dispatch, notify);
@@ -936,18 +955,31 @@ function Workbench() {
   useEffect(() => {
     if (!toast) return;
     const timeout = setTimeout(
-      () => {
-        setToast('');
-        setUndo(undefined);
-      },
-      undo ? 12000 : 4500,
+      () =>
+        setToast((current) => {
+          if (current !== toast) return current;
+          return toast.dismissed ? undefined : { ...toast, dismissed: true };
+        }),
+      toast.dismissed ? 200 : toast.undo ? 12000 : 4500,
     );
     return () => clearTimeout(timeout);
-  }, [toast, undo]);
+  }, [toast]);
+  useLayoutEffect(() => {
+    if (sidebarOverlay) {
+      if (sidebarOpen) search.current?.focus({ preventScroll: true });
+      else if (previousSidebarOpen.current) sidebarToggle.current?.focus({ preventScroll: true });
+    }
+    previousSidebarOpen.current = sidebarOpen;
+  }, [sidebarOpen, sidebarOverlay]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       // Local editors share Dialog without owning the main modal state.
-      if (document.querySelector('[role="dialog"], [data-daban-popup]')) return;
+      if (
+        document.querySelector(
+          '[role="dialog"]:not([data-exiting]), [data-daban-popup]:not([data-exiting])',
+        )
+      )
+        return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (modal) return;
@@ -960,12 +992,15 @@ function Workbench() {
       }
       if (e.key === 'Escape' && !modal) {
         setSidebarOpen(false);
+        if (sidebarOpen && sidebarOverlay) return;
+        if (document.getElementById('bot-workspace')?.contains(document.activeElement))
+          document.getElementById('workspace-toggle')?.focus({ preventScroll: true });
         dispatch({ type: 'panel', panel: null });
       }
     }
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
-  }, [modal, dispatch]);
+  }, [modal, dispatch, sidebarOpen, sidebarOverlay]);
   const computerBot =
     modal?.type === 'computer' ? state.bots.find((b) => b.id === modal.bot) : undefined;
   return (
@@ -989,13 +1024,17 @@ function Workbench() {
         onTrash={trash.move}
         onChats={openChats}
         open={sidebarOpen}
+        inert={sidebarOverlay && !sidebarOpen}
         close={() => setSidebarOpen(false)}
       />
-      <main className="main">
+      <main className="main" inert={sidebarOverlay && sidebarOpen}>
         <header className="chat-header">
           <IconButton
+            ref={sidebarToggle}
             className="mobile-menu"
             label={t('app.openSidebar')}
+            aria-controls="sidebar"
+            aria-expanded={sidebarOpen}
             onClick={() => setSidebarOpen(true)}
           >
             <Menu />
@@ -1057,6 +1096,8 @@ function Workbench() {
                 )}
                 <button
                   type="button"
+                  id="workspace-toggle"
+                  aria-controls={workspaceVisible ? 'bot-workspace' : undefined}
                   className={`header-action ${workspaceVisible ? 'active' : ''}`}
                   aria-pressed={workspaceVisible}
                   onClick={() =>
@@ -1068,6 +1109,7 @@ function Workbench() {
                 </button>
                 <Actions
                   key={bot.id}
+                  triggerRef={actionTrigger}
                   items={[
                     ...(!bot.members && (!runtime.enabled || runtime.snapshot.protocolVersion >= 46)
                       ? [
@@ -1083,7 +1125,7 @@ function Workbench() {
                             label: t('conversations.rename'),
                             icon: <Pencil />,
                             onSelect: () =>
-                              setModal({
+                              openActionModal({
                                 type: 'chat-title',
                                 bot: bot.id,
                                 revision: chatVersion,
@@ -1099,7 +1141,7 @@ function Workbench() {
                             label: t('app.editGroup'),
                             icon: <Pencil />,
                             disabled: historyOnly,
-                            onSelect: () => setModal({ type: 'group', bot: bot.id }),
+                            onSelect: () => openActionModal({ type: 'group', bot: bot.id }),
                           },
                           {
                             id: 'archive-group',
@@ -1110,7 +1152,7 @@ function Workbench() {
                                 : t('common.archiveGroup'),
                             icon: <ArchiveIcon />,
                             disabled: !runtime.enabled || runtime.snapshot.protocolVersion < 28,
-                            onSelect: () => setModal({ type: 'archive', bot: bot.id }),
+                            onSelect: () => openActionModal({ type: 'archive', bot: bot.id }),
                           },
                         ]
                       : bot.kind === 'chat'
@@ -1125,7 +1167,7 @@ function Workbench() {
                                 runtime.snapshot.protocolVersion < 29 ||
                                 !boundary,
                               onSelect: () =>
-                                setModal({
+                                openActionModal({
                                   type: 'chat-history',
                                   bot: bot.id,
                                   initialRevision: boundary - 1,
@@ -1137,7 +1179,7 @@ function Workbench() {
                               label: t('app.editBotProfile'),
                               icon: <Pencil />,
                               disabled: historyOnly || bot.kind === 'chat',
-                              onSelect: () => setModal({ type: 'profile', bot: bot.id }),
+                              onSelect: () => openActionModal({ type: 'profile', bot: bot.id }),
                             },
                           ]),
                     {
@@ -1660,14 +1702,20 @@ function Workbench() {
         onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
       />
       {toast && (
-        <div className="toast" role="status" aria-live="polite">
+        <div
+          className="toast"
+          role="status"
+          aria-live="polite"
+          hidden={toast.dismissed}
+          inert={toast.dismissed}
+        >
           <Info />
-          <span>{toast}</span>
+          <span>{toast.text}</span>
           {undo && (
             <button
               type="button"
               className="text-button"
-              disabled={trash.busy}
+              disabled={trash.busy || toast.dismissed}
               onClick={() => trash.restore(undo.bot, undo.revision, undo.title, undo.version)}
             >
               {t('trash.undo')}

@@ -19,11 +19,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { type Dispatch, useState } from 'react';
+import { type Dispatch, useLayoutEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
+import { reducedMotionQuery } from '../../components/controls/motion';
 import { Pane } from '../../components/controls/Pane';
 import { Select } from '../../components/controls/Select';
 import { getLocale, t, useLocale } from '../../i18n/locale';
@@ -70,6 +71,11 @@ export function Tasks({
   const board = cache.mode === 'board' && cache.filter !== 'trash';
   const [confirm, setConfirm] = useState<{ key: string; id: string; revision: number }>();
   const [expanded, setExpanded] = useState(false);
+  const returnToList = useRef(false);
+  const collection = useRef<HTMLDivElement>(null);
+  const detailTitle = useRef<HTMLHeadingElement>(null);
+  const resumeDraft = useRef<HTMLButtonElement>(null);
+  const newTask = useRef<HTMLButtonElement>(null);
   // A saved revision change invalidates consent, including a trash/restore round trip.
   const confirming =
     !!draft?.base &&
@@ -81,6 +87,23 @@ export function Tasks({
   const commentPending = !!draft?.base && !!commentCard(state.comments, draft.base.id).pending;
   const readOnly = !work.available || sealed || work.reading;
   const hasEditor = work.editorVisible && (!!draft || work.reading);
+  useLayoutEffect(() => {
+    if (hasEditor) {
+      const list = collection.current;
+      const focused = document.activeElement;
+      // In the compact layout the row that opened the editor is no longer reachable.
+      if (
+        list &&
+        getComputedStyle(list).display === 'none' &&
+        (list.contains(focused) || focused === document.body)
+      )
+        detailTitle.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (!returnToList.current) return;
+    returnToList.current = false;
+    (resumeDraft.current ?? newTask.current)?.focus({ preventScroll: true });
+  }, [hasEditor]);
   const latest = work.latest?.key === draft?.key ? work.latest?.item : undefined;
   const formId = draft ? `shared-work-${draft.key}` : undefined;
   const saveDisabled =
@@ -147,6 +170,7 @@ export function Tasks({
         <div className="tasks-intro">
           <p>{t('tasks.shareOneDoListAllBotsSaving')}</p>
           <button
+            ref={newTask}
             type="button"
             className="primary"
             disabled={!work.available}
@@ -282,7 +306,12 @@ export function Tasks({
           </div>
         )}
         {draft && !work.editorVisible && (
-          <button type="button" className="text-button" onClick={() => work.setEditorVisible(true)}>
+          <button
+            ref={resumeDraft}
+            type="button"
+            className="text-button"
+            onClick={() => work.setEditorVisible(true)}
+          >
             {draft.title
               ? t('tasks.continueDraft', { 0: draft.title })
               : t('tasks.continueUntitledDraft')}
@@ -292,7 +321,7 @@ export function Tasks({
       <div
         className={`work-layout ${hasEditor ? 'has-editor' : ''} ${hasEditor && expanded ? 'editor-expanded' : ''}`}
       >
-        <div className="work-collection">
+        <div ref={collection} className="work-collection">
           {!work.available ? (
             <div className="task-empty">
               <h2>
@@ -400,7 +429,9 @@ export function Tasks({
             resizable={!expanded}
           >
             <div className="task-editor-heading">
-              <h2>{draft?.base ? t('tasks.taskDetails') : t('tasks.newTask')}</h2>
+              <h2 ref={detailTitle} tabIndex={-1}>
+                {draft?.base ? t('tasks.taskDetails') : t('tasks.newTask')}
+              </h2>
               <div className="task-editor-actions">
                 <IconButton
                   label={t(expanded ? 'tasks.collapseEditor' : 'tasks.expandEditor')}
@@ -417,7 +448,12 @@ export function Tasks({
                     aria-controls={`task-comments-${draft.base.id}`}
                     onClick={() => {
                       const target = document.getElementById(`task-comments-${draft.base!.id}`);
-                      target?.scrollIntoView({ block: 'start' });
+                      target?.scrollIntoView({
+                        block: 'start',
+                        behavior: window.matchMedia?.(reducedMotionQuery).matches
+                          ? 'auto'
+                          : 'smooth',
+                      });
                       target?.focus({ preventScroll: true });
                     }}
                   >
@@ -450,6 +486,7 @@ export function Tasks({
                 <IconButton
                   label={t('tasks.closeEditor')}
                   onClick={() => {
+                    returnToList.current = true;
                     setExpanded(false);
                     work.setEditorVisible(false);
                   }}

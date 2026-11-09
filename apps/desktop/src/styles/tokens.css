@@ -25,6 +25,9 @@
   --code-keyword: #704c9f;
   --code-string: #386a51;
   --code-number: #8b5a24;
+  --motion-feedback: 120ms;
+  --motion-surface: 180ms;
+  --motion-ease: cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;

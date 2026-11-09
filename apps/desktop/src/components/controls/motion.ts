@@ -1,20 +1,34 @@
-import { type RefObject, useCallback, useLayoutEffect, useRef } from 'react';
+import { type RefObject, useCallback, useLayoutEffect, useRef, useState } from 'react';
 
-const reducedMotion = () =>
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+export const reducedMotionQuery = '(prefers-reduced-motion: reduce)';
+
+export function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => window.matchMedia?.(query).matches === true);
+  useLayoutEffect(() => {
+    const media = window.matchMedia?.(query);
+    const sync = () => setMatches(media?.matches === true);
+    sync();
+    media?.addEventListener?.('change', sync);
+    return () => media?.removeEventListener?.('change', sync);
+  }, [query]);
+  return matches;
+}
 
 export function useDialogMotion(
   surface: RefObject<HTMLElement | null>,
   backdrop: RefObject<HTMLElement | null>,
   enabled: boolean,
   active: boolean,
+  blocked: boolean,
   onClose: () => unknown,
 ) {
   const close = useRef(onClose);
   close.current = onClose;
+  const allowEntry = useRef(enabled);
+  allowEntry.current = enabled;
   const animations = useRef<Animation[]>([]);
-  const ticket = useRef(0);
-  const closing = useRef(false);
+  const entry = useRef<'new' | 'shown' | 'resumed'>('new');
+  const finishExit = useRef<() => unknown>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const cancel = useCallback(() => {
     clearTimeout(timer.current);
@@ -26,9 +40,22 @@ export function useDialogMotion(
     animations.current = [];
   }, []);
   useLayoutEffect(() => {
+    if (!active) {
+      if (entry.current === 'shown') entry.current = 'resumed';
+      return;
+    }
     const element = surface.current;
     const background = backdrop.current;
-    if (enabled && active && !reducedMotion() && element?.animate && background?.animate) {
+    const preference = window.matchMedia?.(reducedMotionQuery);
+    const firstAppearance = entry.current !== 'resumed';
+    if (firstAppearance) entry.current = 'shown';
+    if (
+      allowEntry.current &&
+      firstAppearance &&
+      !preference?.matches &&
+      element?.animate &&
+      background?.animate
+    ) {
       try {
         animations.current.push(
           background.animate([{ opacity: 0 }, { opacity: 1 }], {
@@ -37,39 +64,56 @@ export function useDialogMotion(
           }),
         );
         animations.current.push(
-          element.animate(
-            [
-              { opacity: 0, transform: 'translateY(8px) scale(0.98)' },
-              { opacity: 1, transform: 'none' },
-            ],
-            { duration: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
-          ),
+          // Native browser views use the final DOM bounds while the dialog is appearing.
+          element.animate([{ opacity: 0 }, { opacity: 1 }], {
+            duration: 180,
+            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+          }),
         );
       } catch {
         cancel();
       }
     }
+    const reduce = () => {
+      if (!preference?.matches) return;
+      if (finishExit.current) finishExit.current();
+      else if (!element?.hasAttribute('inert')) cancel();
+    };
+    preference?.addEventListener?.('change', reduce);
     return () => {
-      ticket.current++;
-      closing.current = false;
+      preference?.removeEventListener?.('change', reduce);
+      finishExit.current = undefined;
+      element?.removeAttribute('inert');
       cancel();
     };
-  }, [surface, backdrop, enabled, active, cancel]);
+  }, [surface, backdrop, active, cancel]);
+  useLayoutEffect(() => {
+    if ((enabled && !blocked) || !finishExit.current) return;
+    finishExit.current = undefined;
+    cancel();
+    surface.current?.removeAttribute('inert');
+  }, [blocked, enabled, cancel, surface]);
+
   return useCallback(() => {
-    if (!active || closing.current) return;
     const element = surface.current;
     const background = backdrop.current;
-    if (!enabled || reducedMotion() || !element?.animate || !background?.animate) {
+    if (!active || blocked || element?.hasAttribute('inert')) return;
+    if (
+      !enabled ||
+      window.matchMedia?.(reducedMotionQuery).matches ||
+      !element?.animate ||
+      !background?.animate
+    ) {
       cancel();
       close.current();
       return;
     }
-    closing.current = true;
-    const current = ++ticket.current;
+    // The backdrop still owns the modal layer until unmount, but its controls lose input immediately.
+    element.setAttribute('inert', '');
     const finish = () => {
       // Suspension, replacement and unmount retire old animation callbacks before they can close newer UI.
-      if (ticket.current !== current) return;
-      ticket.current++;
+      if (finishExit.current !== finish) return;
+      finishExit.current = undefined;
       clearTimeout(timer.current);
       timer.current = undefined;
       // Cancelling here restores opacity before React removes the modal, producing a one-frame flash.
@@ -77,8 +121,8 @@ export function useDialogMotion(
       for (const animation of animations.current) animation.onfinish = null;
       close.current();
     };
-    const style = getComputedStyle(element);
-    const start = { opacity: style.opacity || '1', transform: style.transform || 'none' };
+    finishExit.current = finish;
+    const start = getComputedStyle(element).opacity || '1';
     const opacity = getComputedStyle(background).opacity || '1';
     cancel();
     try {
@@ -86,7 +130,7 @@ export function useDialogMotion(
         background.animate([{ opacity }, { opacity: 0 }], { duration: 140, fill: 'forwards' }),
       );
       animations.current.push(
-        element.animate([start, { opacity: 0, transform: 'translateY(4px) scale(0.985)' }], {
+        element.animate([{ opacity: start }, { opacity: 0 }], {
           duration: 140,
           easing: 'ease-in',
           fill: 'forwards',
@@ -98,5 +142,5 @@ export function useDialogMotion(
     } catch {
       finish();
     }
-  }, [surface, backdrop, enabled, active, cancel]);
+  }, [surface, backdrop, enabled, active, blocked, cancel]);
 }

@@ -1,6 +1,6 @@
 // biome-ignore-all lint/a11y/noStaticElementInteractions: The backdrop only handles pointer dismissal; the dialog provides Escape and focus management.
 import { X } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useId, useRef } from 'react';
+import { type ReactNode, type SyntheticEvent, useCallback, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { t, useLocale } from '../../i18n/locale';
 import { IconButton } from './Button';
@@ -37,6 +37,14 @@ const topDialog = (exclude?: HTMLElement | null) =>
     .filter((element) => element !== exclude)
     .at(-1);
 const openers = new WeakMap<HTMLElement, { current: HTMLElement | null }>();
+
+function blockDismissedAction(event: SyntheticEvent<HTMLElement>) {
+  // React events from portalled controls can still reach their dialog after its DOM becomes inert.
+  if (!event.currentTarget.hasAttribute('inert')) return;
+  event.preventDefault();
+  event.stopPropagation();
+}
+
 export function Dialog({
   title,
   onClose,
@@ -44,7 +52,7 @@ export function Dialog({
   wide = false,
   className = '',
   active = true,
-  motion = false,
+  motion = true,
   closeDisabled = false,
 }: {
   title: string;
@@ -60,10 +68,8 @@ export function Dialog({
   const label = useId();
   const ref = useRef<HTMLDivElement>(null);
   const backdrop = useRef<HTMLDivElement>(null);
-  const animateDismiss = useDialogMotion(ref, backdrop, motion, active, onClose);
-  const dismiss = useCallback(() => {
-    if (!closeDisabled) animateDismiss();
-  }, [closeDisabled, animateDismiss]);
+  const lastFocused = useRef<HTMLElement>(null);
+  const dismiss = useDialogMotion(ref, backdrop, motion, active, closeDisabled, onClose);
   const previous = useRef<HTMLElement | null>(null);
   const attach = useCallback((element: HTMLDivElement | null) => {
     ref.current = element;
@@ -79,11 +85,22 @@ export function Dialog({
     if (root) root.inert = true;
     const element = ref.current;
     const autofocus = element?.querySelector<HTMLElement>('[data-autofocus]');
-    (autofocus && visible(autofocus) ? autofocus : tabStops(element)[0])?.focus();
+    const remembered = lastFocused.current;
+    // Returning from a nested dialog should put focus back at the action that opened it.
+    if (
+      remembered &&
+      element?.contains(remembered) &&
+      visible(remembered) &&
+      !remembered.matches(':disabled, [aria-disabled="true"]')
+    ) {
+      remembered.focus({ preventScroll: true });
+    } else {
+      (autofocus && visible(autofocus) ? autofocus : tabStops(element)[0])?.focus();
+    }
     function handle(event: KeyboardEvent) {
       if (topDialog() !== element) return;
       // Portalled controls own their keyboard layer until their popup has closed.
-      if (document.querySelector('[data-daban-popup]')) return;
+      if (document.querySelector('[data-daban-popup]:not([data-exiting])')) return;
       if (event.key === 'Escape') {
         // A controlled remote screen owns Escape until it moves focus back to the surrounding dialog.
         if (
@@ -148,6 +165,14 @@ export function Dialog({
       <div
         ref={attach}
         className={`dialog ${wide ? 'wide' : ''} ${className}`}
+        onClickCapture={blockDismissedAction}
+        onKeyDownCapture={blockDismissedAction}
+        onSubmitCapture={blockDismissedAction}
+        onFocusCapture={(event) => {
+          // Focus events from a portalled child must not replace the parent's saved control.
+          if (event.target instanceof HTMLElement && event.currentTarget.contains(event.target))
+            lastFocused.current = event.target;
+        }}
         {...(active
           ? {
               role: 'dialog',

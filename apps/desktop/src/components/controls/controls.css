@@ -84,6 +84,20 @@
   font: inherit;
   max-width: calc(100vw - 24px);
 }
+@media (prefers-reduced-motion: no-preference) {
+  .control-popover {
+    transition: opacity var(--motion-feedback) ease-out;
+  }
+  .control-popover[data-entering],
+  .control-popover[data-exiting] {
+    opacity: 0;
+  }
+  .control-popover[data-exiting] {
+    /* biome-ignore lint/correctness/noUnknownProperty: Electron Chromium supports interactivity, which keeps the exiting popover out of the focus order. */
+    interactivity: inert;
+    pointer-events: none;
+  }
+}
 .select-popover {
   min-width: var(--trigger-width);
 }
