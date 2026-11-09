@@ -1,5 +1,5 @@
 import { isBotProfilePatch } from '@daban/protocol';
-import type { ToolRun } from './computer-tools.js';
+import type { AgentToolRun } from './agent-tools.js';
 import { Fault } from './control.js';
 import type { BotProfiles } from './profiles.js';
 
@@ -35,8 +35,19 @@ export class MemoryTools {
   readonly list = memoryToolList;
   readonly fields = memoryFields;
   constructor(readonly profiles: BotProfiles) {}
-  async invoke(run: Pick<ToolRun, 'bot' | 'abort'>, name: string, args: Record<string, unknown>) {
-    const bot = run.bot,
+  listFor(assistant?: string) {
+    return assistant ? this.list.filter((tool) => tool.name === 'bot_memory_read') : this.list;
+  }
+  async invoke(
+    run: Pick<AgentToolRun, 'bot' | 'abort' | 'assistant'>,
+    name: string,
+    args: Record<string, unknown>,
+  ) {
+    if (run.assistant) {
+      if (name !== 'bot_memory_read') throw new Fault('INVALID_TOOL_ARGS', 400);
+      this.profiles.assertActive(run.assistant);
+    }
+    const bot = run.assistant ?? run.bot,
       signal = run.abort.signal;
     if (
       name !== 'bot_memory_read' &&

@@ -119,7 +119,10 @@ export const Message = memo(function Message({
           thinking={recordedThinking}
         />
       )}
-      <div className="bubble">
+      <div
+        className="bubble"
+        data-chat-excerpt={!message.streaming && !message.error ? '' : undefined}
+      >
         {message.role === 'bot' ? (
           <Markdown
             text={message.error ? taskError(message.error) : message.text}

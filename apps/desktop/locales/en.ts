@@ -215,6 +215,15 @@ export const english = {
   'conversations.rename': 'Rename conversation',
   'conversations.saveTitle': 'Save',
   'conversations.plainContext': 'Conversation · Tools available',
+  'conversations.botContext': '{0} · Independent conversation',
+  'conversations.responder': 'Responder',
+  'conversations.openWithExcerpt': 'Start a new chat with selected text',
+  'conversations.excerptLabel': 'Quoted from the previous conversation',
+  'conversations.excerptTooLong': 'The selected text is too long. Select a shorter excerpt.',
+  'conversations.generalAssistant': 'General assistant',
+  'conversations.assistantUnavailable': 'The selected Bot is unavailable.',
+  'conversations.assistantUpgrade':
+    'Update the background component to send with the selected Bot.',
   'conversations.connectToSend': 'Connect to the workspace to send. Your draft is retained.',
   'conversations.updateToSend': 'Update the background component to send. Your draft is retained.',
   'vm.managed':

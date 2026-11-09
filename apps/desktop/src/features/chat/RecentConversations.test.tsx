@@ -25,6 +25,7 @@ it('exposes a new-chat button beside the recent-conversations title, including a
 
 it('shows five recent conversations, with keyboard access to the rest', async () => {
   const state = demoState();
+  state.bots.find((bot) => bot.id === state.selected)!.kind = 'chat';
   state.messages = {
     [state.selected]: Array.from({ length: 7 }, (_, revision) => ({
       id: `mock-message-${revision}`,
@@ -56,6 +57,7 @@ it('shows five recent conversations, with keyboard access to the rest', async ()
 
 it('searches all recent conversations without folding matching rows', () => {
   const state = demoState();
+  state.bots.find((bot) => bot.id === state.selected)!.kind = 'chat';
   state.messages = {
     [state.selected]: Array.from({ length: 7 }, (_, revision) => ({
       id: `mock-message-${revision}`,

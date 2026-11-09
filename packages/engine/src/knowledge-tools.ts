@@ -114,6 +114,13 @@ const number = (value: unknown, fallback: number, max: number, min = 1) => {
     throw new Fault('INVALID_KNOWLEDGE', 400);
   return Number(result);
 };
+const sharedKnowledge = new Set([
+  'bot_knowledge_search',
+  'bot_knowledge_read',
+  'bot_knowledge_history',
+  'bot_knowledge_export',
+]);
+
 export class KnowledgeTools {
   readonly surface = 'knowledge';
   readonly fields = fields;
@@ -121,10 +128,14 @@ export class KnowledgeTools {
   constructor(
     readonly store: Knowledge,
     readonly exportFile?: (run: AgentToolRun, name: string, content: string) => Promise<unknown>,
+    readonly assertAssistant?: (bot: string) => unknown,
   ) {
     this.list = exportFile
       ? knowledgeToolList
       : knowledgeToolList.filter((tool) => tool.name !== 'bot_knowledge_export');
+  }
+  listFor(assistant?: string) {
+    return assistant ? this.list.filter((tool) => sharedKnowledge.has(tool.name)) : this.list;
   }
   private meta(document: KnowledgeDocument): KnowledgeFile {
     const { content: _content, ...file } = document;
@@ -132,6 +143,12 @@ export class KnowledgeTools {
   }
   async invoke(run: AgentToolRun, name: string, args: Record<string, unknown>) {
     run.abort.signal.throwIfAborted();
+    if (run.assistant) {
+      // The reply identity grants reads of its library; task files and all writes keep their own scope.
+      if (!sharedKnowledge.has(name)) throw new Fault('INVALID_TOOL_ARGS', 400);
+      this.assertAssistant?.(run.assistant);
+    }
+    const library = run.assistant ?? run.bot;
     const clean = run.redact || ((value: string) => value),
       cause = { kind: 'bot' as const, runId: run.id, signal: run.abort.signal };
     let result: unknown;
@@ -150,11 +167,11 @@ export class KnowledgeTools {
       const matcher = query
         ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu')
         : undefined;
-      const files = await this.store.list(run.bot, args.includeDeleted === true);
+      const files = await this.store.list(library, args.includeDeleted === true);
       const matches: (KnowledgeFile & { preview?: { offset: number; content: string } })[] = [];
       for (const file of files) {
         run.abort.signal.throwIfAborted();
-        const document = await this.store.read(run.bot, file.id),
+        const document = await this.store.read(library, file.id),
           text = clean(document.content),
           match = matcher?.exec(text);
         if (matcher && !match && !matcher.test(clean(file.path))) continue;
@@ -183,7 +200,7 @@ export class KnowledgeTools {
       if (!validAgentId(args.id)) throw new Fault('INVALID_KNOWLEDGE', 400);
       if (name === 'bot_knowledge_read') {
         const document = await this.store.read(
-          run.bot,
+          library,
           args.id,
           args.version === undefined ? undefined : number(args.version, 1, Number.MAX_SAFE_INTEGER),
         );
@@ -201,7 +218,7 @@ export class KnowledgeTools {
       } else if (name === 'bot_knowledge_history')
         result = {
           versions: await this.store.versions(
-            run.bot,
+            library,
             args.id,
             number(args.before, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
             number(args.limit, 10, 20),
@@ -229,7 +246,7 @@ export class KnowledgeTools {
           );
         else if (name === 'bot_knowledge_export') {
           if (!this.exportFile) throw new Fault('KNOWLEDGE_EXPORT_UNAVAILABLE', 503);
-          const document = await this.store.read(run.bot, args.id);
+          const document = await this.store.read(library, args.id);
           if (document.deleted || document.revision !== revision)
             throw new Fault('KNOWLEDGE_CONFLICT');
           const target =

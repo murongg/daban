@@ -2,6 +2,7 @@ import {
   agentId,
   agentTask,
   browserApprovalProtocol,
+  chatAssistantProtocol,
   isModelId,
   modelRecoveryBlocked,
   type RuntimeTask,
@@ -44,13 +45,16 @@ import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
 import {
+  chatAssistant,
   conversationModel,
   conversationPending,
   conversationState,
   draftFolders,
   draftPrompt,
   draftTextLimit,
+  responderLocked,
 } from './conversations';
+import { Excerpt } from './Excerpt';
 import { Execution } from './Execution';
 import { FolderReferences } from './FolderReferences';
 import { useFollow } from './follow';
@@ -58,8 +62,14 @@ import { useHistory } from './history';
 import { useInputs } from './inputs';
 import { Message } from './Message';
 import { Plan } from './Plan';
+import { Responder } from './Responder';
 import { type DisplayMessage, visibleMessages } from './response';
 import { Transcript, type TranscriptEntry } from './Transcript';
+
+function resizeDraft(editor: HTMLTextAreaElement) {
+  editor.style.height = 'auto';
+  editor.style.height = `${Math.min(160, editor.scrollHeight)}px`;
+}
 
 function progress(task: RuntimeTask) {
   if (task.phase === 'waiting') return t('common.waitingReply');
@@ -110,6 +120,7 @@ export function Conversation({
   pending = false,
   onLifecycle,
   onNewChat,
+  onExcerpt,
   onTrashRecovery,
 }: {
   state: State;
@@ -129,6 +140,7 @@ export function Conversation({
   pending?: boolean;
   onLifecycle?: () => unknown;
   onNewChat?: () => unknown;
+  onExcerpt?: (draft: string) => unknown;
   onTrashRecovery?: () => unknown;
 }) {
   useLocale();
@@ -165,10 +177,18 @@ export function Conversation({
       (item) => item.bot === target && ['connecting', 'stopping'].includes(item.phase),
     ) === true;
   const live = runtime.enabled && !bot.members;
+  const assistant = chatAssistant(state, bot);
+  const unavailableAssistant = !!bot.assistant && (!assistant || assistant.archived);
+  const assistantUnsupported =
+    !!bot.assistant && runtime.snapshot.protocolVersion < chatAssistantProtocol;
   const chatUnsupported = bot.kind === 'chat' && runtime.snapshot.protocolVersion < 46;
   const sendBlocked =
-    live &&
-    (runtime.snapshot.phase !== 'ready' || !runtime.snapshot.model.configured || chatUnsupported);
+    unavailableAssistant ||
+    (live &&
+      (runtime.snapshot.phase !== 'ready' ||
+        !runtime.snapshot.model.configured ||
+        chatUnsupported ||
+        assistantUnsupported));
   const currentTask = live ? agentTask(runtime.snapshot, bot.id) : undefined;
   const task =
     currentTask?.conversationId || (currentTask?.chatRevision ?? 0) !== revision
@@ -180,9 +200,10 @@ export function Conversation({
     !currentTask.conversationId &&
     (currentTask.chatRevision ?? 0) !== revision;
   const modelPicker = live && runtime.snapshot.protocolVersion >= 14;
+  const preferredModel = assistant?.model ?? bot.model;
   const configuredModel =
     conversationModel(state, bot.id, revision) ||
-    bot.model ||
+    preferredModel ||
     (isModelId(runtime.snapshot.model.model) ? runtime.snapshot.model.model : undefined);
   const shownModel = task?.running ? task.model : configuredModel;
   const modelName = shownModel
@@ -202,12 +223,17 @@ export function Conversation({
             0: modelName,
             1: configuredModel !== task.model ? t('chat.nextTask', { 0: nextModelName }) : '',
           })
-        : `${modelName} · ${conversationModel(state, bot.id, revision) ? t('conversations.model') : bot.model ? t('chat.botSettings') : t('common.followWorkspace')}`;
+        : `${modelName} · ${conversationModel(state, bot.id, revision) ? t('conversations.model') : preferredModel ? t('chat.botSettings') : t('common.followWorkspace')}`;
     }
   }
   const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
-    if (bot.kind === 'chat') input.current?.focus();
+    const editor = input.current;
+    if (bot.kind === 'chat' && editor) {
+      resizeDraft(editor);
+      editor.focus();
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+    }
   }, [bot.kind]);
   const refocus = useRef(false);
   useEffect(() => {
@@ -487,13 +513,23 @@ export function Conversation({
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
       <Transcript scope={`${bot.id}:${revision}`} entries={rows} scroll={scroll} />
       <div className="composer-wrap">
-        {live && bot.kind === 'chat' && (runtime.snapshot.phase !== 'ready' || chatUnsupported) && (
+        {onExcerpt && <Excerpt viewport={scroll.viewport} open={onExcerpt} />}
+        {live &&
+          bot.kind === 'chat' &&
+          (runtime.snapshot.phase !== 'ready' || chatUnsupported || assistantUnsupported) && (
+            <p className="inline-note" role="status">
+              {t(
+                runtime.snapshot.phase !== 'ready'
+                  ? 'conversations.connectToSend'
+                  : assistantUnsupported && !chatUnsupported
+                    ? 'conversations.assistantUpgrade'
+                    : 'conversations.updateToSend',
+              )}
+            </p>
+          )}
+        {unavailableAssistant && (
           <p className="inline-note" role="status">
-            {t(
-              runtime.snapshot.phase !== 'ready'
-                ? 'conversations.connectToSend'
-                : 'conversations.updateToSend',
-            )}
+            {t('conversations.assistantUnavailable')}
           </p>
         )}
         {busyElsewhere && (
@@ -776,8 +812,7 @@ export function Conversation({
             onPaste={paste}
             onChange={(e) => {
               dispatch({ type: 'draft', bot: bot.id, text: e.target.value });
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`;
+              resizeDraft(e.currentTarget);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -815,6 +850,16 @@ export function Conversation({
               tabIndex={-1}
               aria-label={t('common.chooseAttachment')}
             />
+            {bot.kind === 'chat' && (
+              <Responder
+                chat={bot}
+                bots={state.bots}
+                assistant={assistant}
+                locked={responderLocked(state, bot.id) || !!currentTask}
+                disabled={readOnly || pending}
+                dispatch={dispatch}
+              />
+            )}
             <Tooltip
               label={
                 modelPicker

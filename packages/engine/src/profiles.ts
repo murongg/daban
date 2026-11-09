@@ -235,6 +235,16 @@ export class BotProfiles {
     if (!profile) throw new Fault('BOT_PROFILE_NOT_FOUND', 404);
     return profile;
   }
+  private resolveAssistant(id: string) {
+    this.assertActive(id);
+    const profile = this.required(id);
+    if (profile.kind === 'chat') throw new Fault('INVALID_BOT_PROFILE', 400);
+    return profile;
+  }
+  assistantFor(chat: string) {
+    const id = this.records.get(chat)?.assistant;
+    return id ? structuredClone(this.resolveAssistant(id)) : undefined;
+  }
   assertActive(id: string) {
     if (!validAgentId(id)) throw new Fault('INVALID_BOT_PROFILE', 400);
     if (this.corrupt.has(id)) throw new Fault('BOT_PROFILE_CORRUPT');
@@ -450,7 +460,10 @@ export class BotProfiles {
           throw new Fault('BOT_REQUEST_ID_REUSED');
       }
       // Client migration creates missing records only; a late import must never overwrite a newer edit.
+      if (existing && value.assistant !== undefined && value.assistant !== existing.assistant)
+        throw new Fault('BOT_PROFILE_CONFLICT');
       if (existing) return structuredClone(existing);
+      if (value.assistant) this.resolveAssistant(value.assistant);
       if (accepted && this.records.size >= 2000) throw new Fault('BOT_LIMIT');
       const now = new Date().toISOString();
       return this.commit(

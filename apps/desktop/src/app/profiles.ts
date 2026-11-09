@@ -7,6 +7,7 @@ export function profileInput(bot: Bot, memory: string): BotProfileInput {
   return {
     id: agentId(bot.id),
     ...(bot.kind ? { kind: bot.kind } : {}),
+    ...(bot.assistant ? { assistant: bot.assistant } : {}),
     name: bot.name,
     instructions: bot.role,
     memory,
