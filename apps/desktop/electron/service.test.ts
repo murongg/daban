@@ -109,6 +109,7 @@ vi.mock('./daemon', async (importOriginal) => {
 vi.mock('./native-daemon', () => ({
   NativeDaemon: class {
     readonly scope: string;
+    private closed = false;
     constructor(
       readonly config: import('./daemon').DaemonConfig,
       readonly mode: 'native' | 'vm' = 'native',
@@ -119,9 +120,11 @@ vi.mock('./native-daemon', () => ({
     async ensure() {
       if (this.mode === 'vm') await mocks.daemonEnsure();
       const client = this.mode === 'native' ? await mocks.nativeEnsure() : agentClient(this.config);
+      if (this.closed) throw Error('RUNTIME_CLOSED');
       return { client, snapshot: await client.status() };
     }
     close() {
+      this.closed = true;
       return this.mode === 'native' ? mocks.nativeClose() : mocks.daemonClose();
     }
   },
@@ -961,36 +964,41 @@ it('never falls back to guest APIs when an agent is configured but unavailable o
   }
 });
 
-it('does not attach a late agent client after closing during daemon startup', async () => {
-  const fixture = await agentFixture();
-  let release: () => unknown = () => {};
-  mocks.daemonEnsure.mockImplementationOnce(
-    () =>
-      new Promise<unknown>((done) => {
-        release = () => done(undefined);
-      }),
-  );
-  const service = runtimeService(
-    fixture.root,
-    'file:///mock/index.html',
-    '/mock/resources',
-    undefined,
-    fixture.config,
-  );
-  try {
-    const connecting = service.connect();
-    await vi.waitFor(() => expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1));
-    await service.close();
-    release();
-    await connecting;
-    expect(fixture.requests).toHaveLength(0);
-    expect(mocks.load).not.toHaveBeenCalled();
-  } finally {
-    release();
-    await service.close();
-    await fixture.close();
-  }
-});
+it.each(['darwin', 'win32'] as const)(
+  'does not attach a late %s agent client after closing during daemon startup',
+  async (platform) => {
+    const fixture = await agentFixture();
+    let release: () => unknown = () => {};
+    mocks.daemonEnsure.mockImplementationOnce(
+      () =>
+        new Promise<unknown>((done) => {
+          release = () => done(undefined);
+        }),
+    );
+    const service = runtimeService(
+      fixture.root,
+      'file:///mock/index.html',
+      '/mock/resources',
+      undefined,
+      fixture.config,
+      undefined,
+      platform,
+    );
+    try {
+      const connecting = service.connect();
+      await vi.waitFor(() => expect(mocks.daemonEnsure).toHaveBeenCalledTimes(1));
+      await service.close();
+      release();
+      await connecting;
+      expect(fixture.requests).toHaveLength(0);
+      expect(mocks.load).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await service.close();
+      await fixture.close();
+    }
+  },
+);
 
 it('creates first-run executor configuration through legacy Mac agent bootstrap without invoking legacy VM setup', async () => {
   const fixture = await agentFixture();
