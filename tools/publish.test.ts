@@ -56,6 +56,7 @@ async function fixture(prerelease = false) {
 function remote(hideDraft = false) {
   const value = { draft: true, assets: [] as Asset[] };
   let exists = false;
+  let draftMisses = 0;
   let source = commit;
   const calls: string[][] = [];
   let fail = '';
@@ -69,7 +70,14 @@ function remote(hideDraft = false) {
         return '';
       }
       if (args[1].includes('/commits/')) return JSON.stringify({ sha: source });
-      if (args[1].includes('/releases?')) return exists ? JSON.stringify(value) : '';
+      if (args[1].includes('/releases?')) {
+        if (!exists) return '';
+        if (draftMisses > 0 && value.draft) {
+          draftMisses -= 1;
+          return '';
+        }
+        return JSON.stringify(value);
+      }
       if (hideDraft && value.draft)
         throw Object.assign(new Error('SYNTHETIC_DRAFT_NOT_FOUND'), { stderr: 'HTTP 404' });
       if (!exists) throw Object.assign(new Error('SYNTHETIC_NOT_FOUND'), { stderr: 'HTTP 404' });
@@ -109,6 +117,9 @@ function remote(hideDraft = false) {
     run,
     seed: () => {
       exists = true;
+    },
+    delayDraft: (reads: number) => {
+      draftMisses = reads;
     },
     failNext: (name: string) => {
       fail = name;
@@ -167,6 +178,18 @@ test('finds and resumes a draft when the tag endpoint returns 404', async (t) =>
   expect(server.calls.filter((a) => a[1] === 'create')).toHaveLength(0);
   expect(server.calls.filter((a) => a[1] === 'upload')).toHaveLength(8);
   expect(server.calls.some((a) => a.includes('--paginate'))).toBe(true);
+});
+
+test('publishes when a newly created draft is missing from the first two lookups', async (t) => {
+  const pub = await api();
+  const f = await fixture();
+  t.onTestFinished(() => rm(f.root, { recursive: true, force: true }));
+  const server = remote(true);
+  server.delayDraft(2);
+  await pub.publishClient(f.tag, commit, f.directory, f.notes, server.run);
+  expect(server.value.draft).toBe(false);
+  expect(server.value.assets).toHaveLength(11);
+  expect(server.calls.filter((a) => a[1] === 'create')).toHaveLength(1);
 });
 
 test('a tag moved during upload keeps the complete release private', async (t) => {
