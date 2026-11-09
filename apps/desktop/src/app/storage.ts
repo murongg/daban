@@ -130,6 +130,13 @@ export function restore(raw: string | null): State {
         ([key, title]) => conversationKey(key) && typeof title === 'string' && title.length <= 120,
       ),
     );
+    s.conversationPlacements = Object.fromEntries(
+      Object.entries(record(s.conversationPlacements) ? s.conversationPlacements : {}).filter(
+        ([key, placement]) =>
+          conversationKey(key) &&
+          (placement === 'recent' || placement === 'pinned' || placement === 'archived'),
+      ),
+    );
     s.conversationStates = Object.fromEntries(
       Object.entries(record(s.conversationStates) ? s.conversationStates : {}).filter(
         ([key, value]) =>

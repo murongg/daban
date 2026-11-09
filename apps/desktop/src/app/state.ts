@@ -234,6 +234,7 @@ export interface QueuedTask {
   sending?: boolean;
   verify?: QueuedInsertTarget;
 }
+export type ConversationPlacement = 'recent' | 'pinned' | 'archived';
 export interface State {
   conversationStates?: Record<string, ConversationState>;
   conversationRequests?: Record<string, ConversationRequest>;
@@ -241,6 +242,7 @@ export interface State {
   conversationDrafts?: Record<string, ConversationDraft>;
   conversationModels?: Record<string, ModelId>;
   conversationTitles?: Record<string, string>;
+  conversationPlacements?: Partial<Record<string, ConversationPlacement>>;
   sampleRevision?: 1 | 2;
   comments?: CommentsState;
   notes?: Record<string, NotesState | undefined>;
@@ -385,6 +387,7 @@ export type Action =
   | { type: 'chats'; items: ChatState[]; keepSelection?: boolean }
   | { type: 'chat-select'; bot: string; revision: number }
   | { type: 'chat-assistant'; bot: string; assistant?: string }
+  | { type: 'conversation-place'; bot: string; revision: number; placement: ConversationPlacement }
   | { type: 'chat-open'; bot: string; chat: ChatState; previous: number }
   | { type: 'chat-model'; bot: string; revision: number; model?: ModelId }
   | { type: 'chat-title'; bot: string; revision: number; title: string }
@@ -442,6 +445,7 @@ export function initialState(): State {
     conversationDrafts: {},
     conversationModels: {},
     conversationTitles: {},
+    conversationPlacements: {},
     conversationStates: {},
     conversationRequests: {},
     sampleRevision: 2,
@@ -582,6 +586,22 @@ export function reduce(state: State, action: Action): State {
     case 'conversation-pending':
     case 'conversation-clear':
       return reduceTrash(state, action);
+    case 'conversation-place': {
+      const bot = state.bots.find((entry) => entry.id === action.bot);
+      if (
+        bot?.members ||
+        bot?.archived ||
+        !Number.isSafeInteger(action.revision) ||
+        action.revision < 0
+      )
+        return state;
+      const key = conversationKey(action.bot, action.revision);
+      if (state.conversationPlacements?.[key] === action.placement) return state;
+      return {
+        ...state,
+        conversationPlacements: { ...state.conversationPlacements, [key]: action.placement },
+      };
+    }
     case 'conversation-sync':
     case 'conversation-result': {
       const chats = action.type === 'conversation-result' ? [action.ack.chat] : action.chats;

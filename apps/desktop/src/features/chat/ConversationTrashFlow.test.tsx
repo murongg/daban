@@ -136,10 +136,53 @@ function setup(
 async function trash(from: 'chat' | 'bot' = 'bot') {
   if (from === 'chat') {
     const recent = await screen.findByRole('navigation', { name: '最近对话列表' });
-    await userEvent.click(within(recent).getByRole('button', { name: `整理对话 ${topic}` }));
+    const row = await within(recent).findByRole('button', { name: new RegExp(`^${topic}`) });
+    row.focus();
+    await userEvent.keyboard('{Shift>}{F10}{/Shift}');
   } else await userEvent.click(await screen.findByRole('button', { name: '更多操作' }));
   await userEvent.click(await screen.findByRole('menuitem', { name: '移到回收站' }));
 }
+
+it('pins and archives the exact conversation locally, and restores it after reopening', async () => {
+  const { invoke, snapshot } = setup({ local: true, selectedRevision: 1 });
+  const current = 'SYNTHETIC CURRENT TOPIC';
+  const bot = agentId('research');
+  snapshot.chats!.conversations = [
+    { bot, revision: 1, title: current, updatedAt: '2026-01-02T00:00:00Z' },
+    { bot, revision: 0, title: topic, updatedAt: '2026-01-01T00:00:00Z' },
+  ];
+  const view = render(<App />);
+  const recent = async () =>
+    within(await screen.findByRole('navigation', { name: '最近对话列表' }));
+  const title = new RegExp(`^${topic}`);
+  const pin = await (await recent()).findByRole('button', {
+    name: `置顶 ${topic}`,
+    pressed: false,
+  });
+  await userEvent.click(pin);
+  const rows = () => screen.getByRole('navigation', { name: '最近对话列表' });
+  expect(rows().querySelector('.recent-conversation')).toHaveTextContent(topic);
+  expect(
+    (await recent()).getByRole('button', { name: `置顶 ${topic}`, pressed: true }),
+  ).toHaveFocus();
+
+  await userEvent.click((await recent()).getByRole('button', { name: `归档 ${topic}` }));
+  expect((await recent()).queryByRole('button', { name: title })).not.toBeInTheDocument();
+  expect(
+    (await recent()).getByRole('button', { name: new RegExp(`^${current}`), current: 'page' }),
+  ).toBeInTheDocument();
+  view.unmount();
+  render(<App />);
+  expect((await recent()).queryByRole('button', { name: title })).not.toBeInTheDocument();
+
+  await userEvent.click(await screen.findByText('已归档对话'));
+  const archive = within(screen.getByRole('region', { name: '已归档对话' }));
+  expect(await archive.findByRole('button', { name: title })).toBeVisible();
+  await userEvent.click(archive.getByRole('button', { name: `恢复 ${topic}` }));
+  expect((await recent()).getByRole('button', { name: title })).toBeVisible();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'conversation.action')).toBe(false);
+});
+
 it('trashes from the sidebar, undoes, and restores through settings while preserving the old editor', async () => {
   const { invoke } = setup({ local: true });
   render(<App />);

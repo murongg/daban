@@ -173,6 +173,13 @@ export function recentConversations(state: State, status?: ChatStatus) {
     if (!rows.has(key) && (bot.kind === 'chat' || state.conversationTitles?.[key]))
       add(bot.id, revision, '', '');
   }
+  // Empty Bot conversations usually disappear when leaving the editor. Keep the ones organized explicitly.
+  for (const key of Object.keys(state.conversationPlacements ?? {})) {
+    if (rows.has(key)) continue;
+    const split = key.lastIndexOf(':');
+    const bot = state.bots.find((bot) => bot.id === key.slice(0, split));
+    if (bot && !bot.members && !bot.archived) add(bot.id, Number(key.slice(split + 1)), '', '');
+  }
   return [...rows.values()].sort((a, b) => {
     const editing = (row: typeof a) => !row.updatedAt && row.bot === state.selected;
     return (

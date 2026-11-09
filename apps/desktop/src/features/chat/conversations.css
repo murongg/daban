@@ -7,13 +7,17 @@
 .recent-conversations {
   padding-bottom: 16px;
 }
+.recent-conversations .recent-toggle {
+  padding-inline: 11px;
+  font-size: 14px;
+  font-weight: 400;
+}
 .recent-conversation {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
   width: 100%;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 36px;
+  padding: 8px 11px;
   border: 0;
   border-radius: 12px;
   background: transparent;
@@ -25,13 +29,6 @@
 }
 .recent-entry.selected {
   background: var(--selected);
-}
-.recent-conversation > svg {
-  width: 16px;
-  height: 16px;
-  margin-top: 2px;
-  flex-shrink: 0;
-  color: var(--muted);
 }
 .recent-conversation-copy {
   display: flex;
@@ -72,18 +69,44 @@
   min-width: 0;
   flex: 1;
 }
-.recent-menu {
-  margin-right: 4px;
+.recent-actions {
+  display: flex;
+  gap: 2px;
+  margin-inline-end: 5px;
   flex-shrink: 0;
+}
+.recent-actions .recent-action {
+  width: 28px;
+  height: 28px;
   opacity: 0;
 }
-.recent-entry:hover .recent-menu,
-.recent-entry:focus-within .recent-menu,
-.recent-menu[aria-expanded="true"] {
+.recent-actions .recent-action svg {
+  width: 15px;
+  height: 15px;
+}
+.recent-progress {
+  margin-inline-end: 11px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.recent-entry:hover .recent-actions .recent-action,
+.recent-entry:focus-within .recent-actions .recent-action,
+.recent-actions .recent-action[aria-pressed="true"] {
   opacity: 1;
 }
+.recent-actions .recent-action[aria-pressed="true"] svg {
+  fill: currentColor;
+}
 @media (hover: none) {
-  .recent-menu {
+  .recent-actions .recent-action {
     opacity: 1;
   }
+}
+.recent-archive {
+  padding: 8px 11px;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
 }
