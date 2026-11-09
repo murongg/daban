@@ -101,7 +101,11 @@ export function restore(raw: string | null): State {
       if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
-    for (const bot of bots) if (record(bot) && bot.kind !== 'chat') delete bot.kind;
+    for (const bot of bots) {
+      if (bot.kind !== 'chat') delete bot.kind;
+      if (bot.kind !== 'chat' || !validAgentId(bot.assistant) || bot.assistant === agentId(bot.id))
+        delete bot.assistant;
+    }
     const conversationKey = (key: string) => {
       const split = key.lastIndexOf(':');
       return (

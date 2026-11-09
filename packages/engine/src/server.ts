@@ -6,7 +6,9 @@ import { arch, platform, release } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
+  type BotProfile,
   botBundleLimit,
+  chatAssistantProtocol,
   type ExecutionSnapshot,
   type Group,
   type GroupPage,
@@ -116,6 +118,13 @@ async function groupStatus(groups: Groups | undefined, modern: boolean) {
   return modern
     ? status
     : { ...status, items: status.items.filter((group) => !group.archived).map(legacyGroup) };
+}
+
+function clientProfile(profile: BotProfile, protocol: number) {
+  if (protocol >= chatAssistantProtocol || !profile.assistant) return profile;
+  // Older clients validate profile keys strictly when reading the status snapshot.
+  const { assistant: _assistant, ...legacy } = profile;
+  return legacy;
 }
 
 async function chatStatus(models: ModelRuns, conversationAware: boolean, trashAware: boolean) {
@@ -1675,12 +1684,15 @@ export async function startPrototype({
             if (req.method === 'GET')
               return json(
                 res,
-                (await models.profiles.list()).filter(
-                  (profile) => conversationAware || profile.kind !== 'chat',
-                ),
+                (await models.profiles.list())
+                  .filter((profile) => conversationAware || profile.kind !== 'chat')
+                  .map((profile) => clientProfile(profile, groupVersion)),
               );
             if (req.method === 'POST')
-              return json(res, await models.profiles.register(await body(req)));
+              return json(
+                res,
+                clientProfile(await models.profiles.register(await body(req)), groupVersion),
+              );
             throw new Fault('METHOD_NOT_ALLOWED', 405);
           }
           if (req.method === 'GET' && url.pathname === '/api/state') {
@@ -1775,9 +1787,9 @@ export async function startPrototype({
                   }
                 : { available: false, documentParsing: false },
               profiles: models
-                ? (await models.profiles.list()).filter(
-                    (profile) => conversationAware || profile.kind !== 'chat',
-                  )
+                ? (await models.profiles.list())
+                    .filter((profile) => conversationAware || profile.kind !== 'chat')
+                    .map((profile) => clientProfile(profile, groupVersion))
                 : [],
               interactions: models ? await models.interactions.list() : [],
               schedules: schedules ? await schedules.status() : { available: false, items: [] },
@@ -1880,7 +1892,13 @@ export async function startPrototype({
             if (action === 'profile' && models) {
               if (Object.keys(data).some((key) => !['revision', 'patch'].includes(key)))
                 throw new Fault('INVALID_BOT_PROFILE', 400);
-              return json(res, await models.profiles.update(id, data.revision, data.patch));
+              return json(
+                res,
+                clientProfile(
+                  await models.profiles.update(id, data.revision, data.patch),
+                  groupVersion,
+                ),
+              );
             }
             if (action === 'model' && models && typeof data.running === 'boolean') {
               if ((host || runtime instanceof Computers) && data.running && data.task === undefined)

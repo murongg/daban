@@ -5,6 +5,88 @@ import { expect, test } from 'vitest';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
+test('uses the assigned Bot profile and knowledge in a separate chat context', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-chat-assistant-'));
+  const settings = new ModelSettings(path.join(root, 'credentials.json'));
+  const prompts: string[] = [];
+  const bot = 'mock-writer';
+  const chat = 'mock-independent-chat';
+  const profile = { name: 'Synthetic writer', instructions: '', memory: '', color: 'mint' };
+  class Harness {
+    async start() {}
+    async close() {}
+    session(id = `mock-session-${prompts.length}`) {
+      return {
+        id,
+        run: async (prompt: string | object[]) => {
+          prompts.push(JSON.stringify(prompt));
+          return { sessionId: id, finalResponse: 'SYNTHETIC ANSWER' };
+        },
+      };
+    }
+    async resumeSession(id: string) {
+      return this.session(id);
+    }
+  }
+  const models = new ModelRuns({
+    settings,
+    Harness,
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'shared'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await settings.save({ apiKey: 'synthetic-model-key' });
+    await models.ready;
+    await models.profiles.register({
+      ...profile,
+      id: bot,
+      instructions: 'SYNTHETIC WRITING PERSONA',
+      memory: 'SYNTHETIC PREFERENCES',
+      model: 'deepseek-v4-pro',
+    });
+    await models.profiles.register({ ...profile, id: chat, kind: 'chat', assistant: bot });
+    await expect(
+      models.profiles.register({ ...profile, id: 'mock-nested', kind: 'chat', assistant: chat }),
+    ).rejects.toMatchObject({ code: 'INVALID_BOT_PROFILE' });
+    const document = await models.knowledge.write(bot, {
+      path: 'mock-guide.md',
+      revision: 0,
+      content: 'SYNTHETIC WRITING GUIDE',
+    });
+    await models.start(bot, { requestId: 'mock-private', prompt: 'SYNTHETIC PRIVATE CHAT' });
+    await models.jobs.get(bot)!.done;
+    await models.start(chat, { requestId: 'mock-assigned', prompt: 'SYNTHETIC INDEPENDENT CHAT' });
+    const run = models.jobs.get(chat)!;
+    expect(run.model).toBe('deepseek-v4-pro');
+    expect(
+      JSON.stringify(await models.tools.invoke(run, 'bot_knowledge_read', { id: document.id })),
+    ).toContain('SYNTHETIC WRITING GUIDE');
+    expect(
+      await models.tools.invoke(run, 'bot_knowledge_write', {
+        path: 'mock-guide.md',
+        revision: 1,
+        content: 'SYNTHETIC REPLACEMENT',
+      }),
+    ).toMatchObject({ isError: true });
+    expect(
+      await models.tools.invoke(run, 'bot_memory_write', {
+        revision: 1,
+        content: 'SYNTHETIC REPLACEMENT',
+      }),
+    ).toMatchObject({ isError: true });
+    await run.done;
+    expect(prompts.at(-1)).toContain('SYNTHETIC WRITING PERSONA');
+    expect(prompts.at(-1)).toContain('SYNTHETIC PREFERENCES');
+    expect(prompts.at(-1)).not.toContain('SYNTHETIC PRIVATE CHAT');
+    expect((await models.chatHistory(bot, 0)).items).toHaveLength(1);
+    expect((await models.chatHistory(chat, 0)).items).toHaveLength(1);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('trashed contexts reject new tasks and normal history until restored without restarting old work', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-trashed-context-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));

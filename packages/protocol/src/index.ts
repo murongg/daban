@@ -64,7 +64,8 @@ import {
   isConversationState,
 } from './conversations.js';
 
-export const managedProtocol = 50;
+export const chatAssistantProtocol = 51;
+export const managedProtocol = chatAssistantProtocol;
 export type RuntimeBot = string;
 export type RuntimeOwner = 'agent' | 'human' | 'handoff';
 export const diagnosticIds = {
@@ -2212,6 +2213,7 @@ export function isGroupSend(value: unknown): value is GroupSend {
 }
 export interface BotProfileInput {
   kind?: 'chat';
+  assistant?: string;
   id: string;
   name: string;
   instructions: string;
@@ -2710,14 +2712,16 @@ function profileFields(value: Record<string, unknown>) {
     typeof value.color === 'string' &&
     ['mint', 'violet', 'orange', 'blue', 'teal', 'pink'].includes(value.color) &&
     (value.model === undefined || isModelId(value.model)) &&
-    (value.kind === undefined || value.kind === 'chat')
+    (value.kind === undefined || value.kind === 'chat') &&
+    (value.assistant === undefined ||
+      (value.kind === 'chat' && validAgentId(value.assistant) && value.assistant !== value.id))
   );
 }
 export function isBotProfileInput(value: unknown): value is BotProfileInput {
   return (
     profileObject(value) &&
     Object.keys(value).every((key) =>
-      ['id', 'name', 'instructions', 'memory', 'color', 'model', 'kind'].includes(key),
+      ['id', 'name', 'instructions', 'memory', 'color', 'model', 'kind', 'assistant'].includes(key),
     ) &&
     profileFields(value)
   );
@@ -2739,6 +2743,7 @@ export function isBotProfile(value: unknown): value is BotProfile {
         'archived',
         'lifecycle',
         'kind',
+        'assistant',
       ].includes(key),
     ) &&
     profileFields(value) &&

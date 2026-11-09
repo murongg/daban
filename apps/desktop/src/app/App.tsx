@@ -5,6 +5,7 @@ import {
   type BotProfile,
   type BotProfileInput,
   type ConversationAck,
+  chatAssistantProtocol,
   computerTarget,
   type DocumentOriginal,
   type Group,
@@ -53,6 +54,7 @@ import { ChatHistory } from '../features/chat/ChatHistory';
 import { Conversation } from '../features/chat/Conversation';
 import { TrashProblem } from '../features/chat/ConversationTrash';
 import {
+  chatAssistant,
   conversationModel,
   conversationPending,
   conversationState,
@@ -308,6 +310,7 @@ function Workbench() {
   useProfiles(state, dispatch, notify);
   useGroups(state, dispatch, notify);
   const bot = state.bots.find((b) => b.id === state.selected);
+  const assistant = chatAssistant(state, bot);
   const target = bot ? computerTarget(runtime.snapshot, bot.id) : undefined;
   const computer = target ? runtime.snapshot.bots[target] : undefined;
   const task = bot ? agentTask(runtime.snapshot, bot.id) : undefined;
@@ -341,7 +344,7 @@ function Workbench() {
           (row) => row.bot === bot.id && row.revision === chatVersion,
         )?.title
       : undefined;
-  function createChat() {
+  function createChat(draft = '') {
     // The editor is local until its first send; workspace startup must not prevent saving a draft.
     dispatch({
       type: 'create',
@@ -350,6 +353,7 @@ function Workbench() {
       role: '',
       color: 'mint',
       kind: 'chat',
+      draft,
     });
     setSidebarOpen(false);
     closeModal();
@@ -461,9 +465,11 @@ function Workbench() {
   }, [runtime.enabled, runtime.snapshot, state.bots, state.runtimeRequests, dispatch]);
   function imagesUnsupported(botId: string, files: WorkspaceFile[]) {
     if (!files.some((file) => imageMime(file.upload?.name || file.name))) return false;
+    const entry = state.bots.find((bot) => bot.id === botId);
     const model =
       conversationModel(state, botId, chatRevision(state, botId, runtime.snapshot.chats)) ||
-      state.bots.find((entry) => entry.id === botId)?.model ||
+      chatAssistant(state, entry)?.model ||
+      entry?.model ||
       runtime.snapshot.model.model;
     return (
       !isModelId(model) || !modelHasVision(model, modelCatalog(runtime.snapshot.model.connections))
@@ -475,6 +481,18 @@ function Workbench() {
     queued?: QueuedTask,
   ): Promise<TaskRunResult> {
     const skipped: TaskRunResult = { outcome: 'skipped' };
+    const entry = state.bots.find((bot) => bot.id === botId);
+    if (entry?.assistant) {
+      const selectedAssistant = chatAssistant(state, entry);
+      if (!selectedAssistant || selectedAssistant.archived) {
+        notify(t('conversations.assistantUnavailable'));
+        return skipped;
+      }
+      if (runtime.snapshot.protocolVersion < chatAssistantProtocol) {
+        notify(t('conversations.assistantUpgrade'));
+        return skipped;
+      }
+    }
     if (recoveryBlocked(runtime.snapshot)) {
       notify(t('app.runtimeRecoveryNeedsVerificationNewTasksPaused'));
       return skipped;
@@ -567,13 +585,13 @@ function Workbench() {
           : [...state.attachments[botId]];
     dispatch({ type: 'runtime-pending', bot: botId, task, refs });
     try {
-      if (runtime.snapshot.protocolVersion >= 3) {
-        const entry = state.bots.find((bot) => bot.id === botId);
-        if (entry)
-          await runtime.command({
-            type: 'bot.register',
-            profile: profileInput(entry, state.memories[botId]),
-          });
+      if (entry && runtime.snapshot.protocolVersion >= 3) {
+        const profile = await runtime.command<BotProfile>({
+          type: 'bot.register',
+          profile: profileInput(entry, state.memories[botId]),
+        });
+        if (entry.kind === 'chat' && runtime.snapshot.protocolVersion >= chatAssistantProtocol)
+          dispatch({ type: 'profiles', profiles: [profile] });
       }
       const receipt = await runtime.command({ type: 'task.start', bot: target, task });
       let finished = false;
@@ -610,6 +628,9 @@ function Workbench() {
           'INVALID_BOT_PROFILE',
           'BOT_PROFILE_CONFLICT',
           'BOT_PROFILE_CORRUPT',
+          'BOT_PROFILE_NOT_FOUND',
+          'BOT_ARCHIVED',
+          'BOT_CHANGING',
           'ATTACHMENT_NOT_FOUND',
           'ATTACHMENT_TRASHED',
           'ATTACHMENT_CORRUPT',
@@ -969,7 +990,7 @@ function Workbench() {
           setSidebarOpen(false);
           setModal({ type: 'create', group: !!group });
         }}
-        onNewChat={createChat}
+        onNewChat={() => createChat()}
         onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
         onTrash={trash.move}
         onChats={openChats}
@@ -987,7 +1008,9 @@ function Workbench() {
           </IconButton>
           {state.view === 'chat' && bot ? (
             <>
-              {bot.kind === 'chat' ? (
+              {assistant ? (
+                <Avatar bot={assistant} />
+              ) : bot.kind === 'chat' ? (
                 <MessageSquare className="chat-symbol" aria-hidden="true" />
               ) : (
                 <Avatar bot={bot} />
@@ -995,7 +1018,11 @@ function Workbench() {
               <div className="chat-identity">
                 <h1>{bot.kind === 'chat' ? title || t('conversations.untitled') : bot.name}</h1>
                 <p className="chat-subtitle">
-                  {bot.kind === 'chat' ? t('conversations.plainContext') : subtitle}
+                  {assistant
+                    ? t('conversations.botContext', { 0: assistant.name })
+                    : bot.kind === 'chat'
+                      ? t('conversations.plainContext')
+                      : subtitle}
                 </p>
               </div>
               <span className="spacer" />
@@ -1103,7 +1130,13 @@ function Workbench() {
                                 !runtime.enabled ||
                                 runtime.snapshot.protocolVersion < 29 ||
                                 !boundary,
-                              onSelect: () => setModal({ type: 'chat-history', bot: bot.id }),
+                              onSelect: () =>
+                                setModal({
+                                  type: 'chat-history',
+                                  bot: bot.id,
+                                  initialRevision: boundary - 1,
+                                  includeCurrent: runtime.snapshot.protocolVersion >= 46,
+                                }),
                             },
                             {
                               id: 'profile',
@@ -1241,6 +1274,7 @@ function Workbench() {
                   onContinue={() => continueTask(bot.id)}
                   onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
                   onNewChat={newConversation}
+                  onExcerpt={createChat}
                   onTrashRecovery={() => dispatch({ type: 'view', view: 'settings' })}
                   pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
                   onModel={() => {
@@ -1266,7 +1300,7 @@ function Workbench() {
             </div>
           ) : (
             <Welcome
-              chat={createChat}
+              chat={() => createChat()}
               create={() => setModal({ type: 'create', group: false })}
               explore={() => dispatch({ type: 'view', view: 'gallery' })}
             />
@@ -1378,6 +1412,10 @@ function Workbench() {
               runtime.snapshot.protocolVersion >= 46
                 ? {
                     revision: chatRevision(state, modal.bot, runtime.snapshot.chats),
+                    inheritedModel: chatAssistant(
+                      state,
+                      state.bots.find((bot) => bot.id === modal.bot),
+                    )?.model,
                     model: conversationModel(
                       state,
                       modal.bot,

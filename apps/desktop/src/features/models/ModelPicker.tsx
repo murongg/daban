@@ -22,7 +22,7 @@ export function ModelPicker({
   dispatch: Dispatch<Action>;
   close: () => unknown;
   notify: (message: string) => unknown;
-  conversation?: { revision: number; model?: ModelId };
+  conversation?: { revision: number; model?: ModelId; inheritedModel?: ModelId };
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -42,6 +42,8 @@ export function ModelPicker({
     };
   }, []);
   const choices = modelChoices(runtime.snapshot.model.connections, model);
+  const inherited = conversation ? (conversation.inheritedModel ?? bot.model) : undefined;
+  const defaultModel = inherited ?? runtime.snapshot.model.model;
   const selectedAvailable =
     model === '' || choices.some((entry) => entry.value === model && !entry.disabled);
   return (
@@ -119,21 +121,10 @@ export function ModelPicker({
             options={[
               {
                 value: '',
-                label: modelName(
-                  conversation && bot.model ? bot.model : runtime.snapshot.model.model,
-                  runtime.snapshot.model.connections,
-                ),
-                description: t(
-                  conversation && bot.model ? 'chat.botSettings' : 'common.followWorkspace',
-                ),
-                icon: modelIcon(
-                  conversation && bot.model ? bot.model : runtime.snapshot.model.model,
-                  runtime.snapshot.model.connections,
-                ),
-                detail: modelInputs(
-                  runtime.snapshot.model.model,
-                  runtime.snapshot.model.connections,
-                ),
+                label: modelName(defaultModel, runtime.snapshot.model.connections),
+                description: t(inherited ? 'chat.botSettings' : 'common.followWorkspace'),
+                icon: modelIcon(defaultModel, runtime.snapshot.model.connections),
+                detail: modelInputs(defaultModel, runtime.snapshot.model.connections),
               },
               ...choices,
             ]}

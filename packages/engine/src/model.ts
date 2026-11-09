@@ -838,8 +838,10 @@ export class ModelRuns {
       offered: (run) => this.tools.list(run.bot, run.model, run.conversationId, run),
     });
     this.attachments = new Attachments(path.join(dir, 'attachments.sqlite'));
-    this.tools.knowledge = new KnowledgeTools(this.knowledge, (run, name, content) =>
-      this.tools.writeText(run, name, content, true),
+    this.tools.knowledge = new KnowledgeTools(
+      this.knowledge,
+      (run, name, content) => this.tools.writeText(run, name, content, true),
+      (bot) => this.profiles.assertActive(bot),
     );
     this.notes = new Notes(path.join(dir, 'notes.sqlite'), (bot) => {
       if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
@@ -1058,10 +1060,22 @@ export class ModelRuns {
       const conversations = new Map<string, TaskRecord>();
       for (const record of records)
         conversations.set(sessionKey(bot, record.conversationId, record.chatRevision), record);
-      const profile = await this.profiles.get(bot).catch((error) => {
-        if (errorCode(error) === 'BOT_PROFILE_CORRUPT') return undefined;
-        throw error;
-      });
+      let profile: BotProfile | undefined;
+      try {
+        profile = this.profiles.assistantFor(bot) ?? (await this.profiles.get(bot));
+      } catch (error) {
+        // A missing or inactive responder disables session reuse while leaving its transcript readable.
+        if (
+          ![
+            'BOT_PROFILE_CORRUPT',
+            'BOT_PROFILE_NOT_FOUND',
+            'BOT_ARCHIVED',
+            'BOT_CHANGING',
+            'INVALID_BOT_PROFILE',
+          ].includes(errorCode(error) ?? '')
+        )
+          throw error;
+      }
       // An interrupted session is never silently replayed; its files/history remain visible for an explicit new request.
       // Missing model metadata is legacy Flash; an explicit unknown route must never be resumed as Flash.
       for (const [key, latest] of conversations) {
@@ -1688,6 +1702,7 @@ export class ModelRuns {
     // Recovery may begin during retry reads; fence immediately before publishing a new job.
     if (!this.admission()) throw new Fault('RUNTIME_RECOVERY_PENDING');
     this.profiles.assertActive(bot);
+    const assistant = this.profiles.assistantFor(bot);
     const boundary = scope
       ? undefined
       : this.chats.assertCurrent(bot, task ? task.chatRevision : this.chats.current(bot).revision);
@@ -1728,6 +1743,7 @@ export class ModelRuns {
       persona: '',
       inputs: [],
       bot,
+      assistant: assistant?.id,
       id,
       intentId: intentId || id,
       requestId: task?.requestId || id,
@@ -1765,7 +1781,7 @@ export class ModelRuns {
       job.integrations = task
         ? await this.integrations.capture(bot)
         : { available: true, key: '', connections: [], warnings: [] };
-      job.profile = await this.profiles.get(bot);
+      job.profile = assistant ?? (await this.profiles.get(bot));
       job.persona = personaKey(job.profile);
       // Capture the per-turn override and fallback together without changing the Bot's saved choice.
       const captured = await this.settings.capture(task?.model ?? job.profile?.model);
@@ -2419,6 +2435,9 @@ export class ModelRuns {
             !!this.tools.options.nativeOnly,
             !!this.tools.linux?.enabled,
           ) +
+          (job.assistant
+            ? '\nThis independent conversation can read the selected Bot’s long-term memory and knowledge. Manage changes to those resources from the Bot workspace.'
+            : '') +
           (job.skills?.available === false
             ? '\nThe skill service is unavailable for this turn. Ordinary conversation and existing tools remain available. Do not claim to have loaded or executed a skill.'
             : '') +
