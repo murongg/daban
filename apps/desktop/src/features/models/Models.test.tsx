@@ -95,7 +95,7 @@ it('keeps the write-only key outside persisted state and clears unsubmitted secr
   expect(screen.getByLabelText('API Key')).toHaveValue('');
   await userEvent.type(screen.getByLabelText('API Key'), 'synthetic-private-draft');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-private-draft');
-  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭' }));
   await open();
   expect(screen.getByLabelText('API Key')).toHaveValue('');
 });

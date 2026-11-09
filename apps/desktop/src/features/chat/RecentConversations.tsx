@@ -31,7 +31,6 @@ export function RecentConversations({
   const [expanded, setExpanded] = useState(false);
   const overflowId = useId();
   const expandId = `${overflowId}-toggle`;
-  const archiveId = useId();
   const placementFocus = useRef<string>(null);
   useLayoutEffect(() => {
     const id = placementFocus.current;
@@ -41,7 +40,6 @@ export function RecentConversations({
     (
       document.getElementById(id) ??
       document.getElementById(expandId) ??
-      document.getElementById(archiveId) ??
       document.getElementById('recent-new-chat')
     )?.focus();
   });
@@ -77,17 +75,17 @@ export function RecentConversations({
       );
     },
   );
-  if (!rows.length && !onNewChat) return null;
   const pinned: typeof rows = [];
   const ordinary: typeof rows = [];
-  const archived: typeof rows = [];
   for (const row of rows) {
     const placement = state.conversationPlacements?.[conversationKey(row.bot, row.revision)];
-    if (placement === 'archived') archived.push(row);
-    else if (placement === 'pinned') pinned.push(row);
+    // Archived rows leave the recent list but remain reachable through sidebar search.
+    if (placement === 'archived' && !needle) continue;
+    if (placement === 'pinned') pinned.push(row);
     else ordinary.push(row);
   }
   const recent = [...pinned, ...ordinary];
+  if (!recent.length && !onNewChat) return null;
   const limit = Math.max(previewLimit, pinned.length);
   const canExpand = !needle && recent.length > limit;
   function place(row: (typeof rows)[number], placement: ConversationPlacement, focusId: string) {
@@ -213,7 +211,7 @@ export function RecentConversations({
                   <IconButton
                     className="recent-action"
                     label={t('conversations.archiveNamed', { 0: row.title })}
-                    onClick={() => place(row, 'archived', archiveId)}
+                    onClick={() => place(row, 'archived', focusId)}
                   >
                     <Archive aria-hidden="true" />
                   </IconButton>
@@ -265,16 +263,6 @@ export function RecentConversations({
             </>
           )}
         </nav>
-      )}
-      {!!archived.length && (
-        <section aria-label={t('conversations.archived')}>
-          <details open={needle ? true : undefined}>
-            <summary id={archiveId} className="recent-archive">
-              {t('conversations.archived')}
-            </summary>
-            {renderRows(archived, 'archived')}
-          </details>
-        </section>
       )}
       {menu && onTrash && (
         <SidebarMenu

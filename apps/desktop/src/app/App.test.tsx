@@ -109,7 +109,7 @@ describe('daban client', () => {
   });
   it('creates a Bot and validates its required name', async () => {
     render(<App />);
-    await userEvent.click(screen.getByRole('button', { name: '新建 Bot' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
     const dialog = screen.getByRole('dialog');
     const name = within(dialog).getByRole('textbox', { name: '名称' });
     expect(name).toBeRequired();
@@ -217,7 +217,7 @@ describe('daban client', () => {
   });
   it('closes the create dialog with Escape', async () => {
     render(<App />);
-    await userEvent.click(screen.getByRole('button', { name: '新建 Bot' }));
+    await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });

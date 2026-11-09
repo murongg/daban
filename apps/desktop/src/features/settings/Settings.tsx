@@ -40,6 +40,7 @@ export function Settings({
   state,
   dispatch,
   onClose,
+  inline = false,
   active = true,
   onLifecycle,
   onRecovery,
@@ -48,6 +49,7 @@ export function Settings({
   state: State;
   dispatch: Dispatch<Action>;
   onClose: () => unknown;
+  inline?: boolean;
   active?: boolean;
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
@@ -328,6 +330,48 @@ export function Settings({
       ),
     },
   ];
+  const content = (
+    <Tabs
+      orientation="vertical"
+      selectedKey={category}
+      onSelectionChange={(key) => setCategory(String(key))}
+      className="settings-layout"
+    >
+      <TabList
+        aria-label={t('settings.settingsCategories')}
+        className="settings-nav"
+        items={sections}
+      >
+        {(section) => (
+          <Tab
+            id={section.id}
+            className="settings-tab"
+            data-autofocus={category === section.id || undefined}
+          >
+            <section.icon aria-hidden="true" />
+            <span>{section.label}</span>
+          </Tab>
+        )}
+      </TabList>
+      {/* Keep editors mounted across categories and clear private key drafts when leaving Settings. */}
+      {sections.map((section) => (
+        <TabPanel
+          key={section.id}
+          id={section.id}
+          shouldForceMount
+          hidden={category !== section.id}
+          className="settings-panel"
+        >
+          <header className="settings-heading">
+            <h3>{section.label}</h3>
+            <p>{section.description}</p>
+          </header>
+          {section.content}
+        </TabPanel>
+      ))}
+    </Tabs>
+  );
+  if (inline) return content;
   return (
     <Dialog
       title={t('settings.title')}
@@ -336,45 +380,7 @@ export function Settings({
       className="settings-dialog"
       motion
     >
-      <Tabs
-        orientation="vertical"
-        selectedKey={category}
-        onSelectionChange={(key) => setCategory(String(key))}
-        className="settings-layout"
-      >
-        <TabList
-          aria-label={t('settings.settingsCategories')}
-          className="settings-nav"
-          items={sections}
-        >
-          {(section) => (
-            <Tab
-              id={section.id}
-              className="settings-tab"
-              data-autofocus={category === section.id || undefined}
-            >
-              <section.icon aria-hidden="true" />
-              <span>{section.label}</span>
-            </Tab>
-          )}
-        </TabList>
-        {/* Keep editors mounted while switching categories; closing this dialog still clears private key drafts. */}
-        {sections.map((section) => (
-          <TabPanel
-            key={section.id}
-            id={section.id}
-            shouldForceMount
-            hidden={category !== section.id}
-            className="settings-panel"
-          >
-            <header className="settings-heading">
-              <h3>{section.label}</h3>
-              <p>{section.description}</p>
-            </header>
-            {section.content}
-          </TabPanel>
-        ))}
-      </Tabs>
+      {content}
     </Dialog>
   );
 }
