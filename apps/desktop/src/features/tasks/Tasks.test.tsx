@@ -170,6 +170,38 @@ function connect(records: WorkItem[] = [], protocol = 36) {
 const tasks = async () =>
   userEvent.click(await screen.findByRole('button', { name: /^任务(?:\s|$)/ }));
 
+it('groups the task detail actions as named icon buttons', async () => {
+  const live = connect([item('mock-actions', '合成操作任务')]);
+  render(<App />);
+  await tasks();
+  await userEvent.click(await screen.findByRole('button', { name: '查看 合成操作任务' }));
+  const description = await screen.findByRole('textbox', { name: '任务说明' });
+
+  const pane = within(screen.getByRole('complementary', { name: '任务详情' }));
+  const expand = pane.getByRole('button', { name: '展开任务详情' });
+  const discussion = pane.getByRole('button', { name: '查看讨论' });
+  const discard = pane.getByRole('button', { name: '放弃修改' });
+  const save = pane.getByRole('button', { name: '保存任务' });
+  const close = pane.getByRole('button', { name: '关闭任务详情' });
+  for (const button of [expand, discussion, discard, save, close]) {
+    expect(button).toHaveTextContent(/^$/);
+    expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    expect(button.parentElement).toBe(expand.parentElement);
+  }
+  expect(expand.parentElement).not.toContainElement(
+    pane.getByRole('heading', { name: '任务详情' }),
+  );
+  expect(save).toBeDisabled();
+  expect(discard).toBeDisabled();
+  await userEvent.type(description, ' MOCK UNSAVED EDIT');
+  await userEvent.click(discard);
+  expect(description).toHaveValue('MOCK SHARED DETAIL');
+  expect(live.write).not.toHaveBeenCalled();
+  await userEvent.click(close);
+  expect(screen.queryByRole('complementary', { name: '任务详情' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '查看 合成操作任务' })).toBeVisible();
+});
+
 it('expands task details without losing the current edits or changing the saved layout', async () => {
   const live = connect([item('mock-expand', '合成展开任务')]);
   render(<App />);
@@ -310,7 +342,10 @@ it('confirms trash and restores the same card while preserving a locally edited 
   render(<App />);
   await tasks();
   await userEvent.click(await screen.findByRole('button', { name: '查看 合成可恢复任务' }));
-  await userEvent.click(await screen.findByRole('button', { name: '移入回收站' }));
+  const trash = await screen.findByRole('button', { name: '移入回收站' });
+  expect(trash).toHaveTextContent(/^$/);
+  expect(trash.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  await userEvent.click(trash);
   expect(live.write).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: '确认移入' }));
   await waitFor(() => expect(live.entries.get('mock-trash')?.deleted).toBe(true));

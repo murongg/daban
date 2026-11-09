@@ -3297,7 +3297,7 @@ export const english = {
   'state.startFirstMessage': 'Start with your first message',
   'state.taskFinishedCheckOutputFiles': 'Task finished. Check the output files.',
   'state.taskStoppedSavedFilesRetained': 'Task stopped. Saved files are retained.',
-  'tasks.backTasks': 'Back to tasks',
+  'tasks.closeEditor': 'Close task details',
   'tasks.blocked': 'Blocked',
   'tasks.board': 'Board',
   'tasks.closed': 'Closed',

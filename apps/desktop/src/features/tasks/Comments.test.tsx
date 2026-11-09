@@ -436,7 +436,10 @@ it('keeps failed discussion loads distinct from empty history and never accepts 
   expect(screen.queryByText('还没有讨论')).not.toBeInTheDocument();
   live.discussion.mockImplementation(readDiscussion);
   live.add('mock-alpha', '合成可恢复历史');
-  await userEvent.click(screen.getByRole('button', { name: '刷新讨论' }));
+  const refresh = screen.getByRole('button', { name: '刷新讨论' });
+  expect(refresh).toHaveTextContent(/^$/);
+  expect(refresh.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  await userEvent.click(refresh);
   expect(await screen.findByText('合成可恢复历史')).toBeVisible();
   live.writeComment.mockImplementationOnce(async (request) => ({
     ...live.saveComment(request),

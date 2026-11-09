@@ -1,9 +1,10 @@
 import type { WorkAuthor, WorkItem } from '@daban/protocol';
-import { RefreshCw } from 'lucide-react';
+import { LoaderCircle, RefreshCw } from 'lucide-react';
 import { type Dispatch, Fragment } from 'react';
 import { useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
+import { IconButton } from '../../components/controls/Button';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { commentCard } from './comments-state';
 import { useComments } from './discussion';
@@ -200,16 +201,14 @@ export function Comments({
     >
       <div className="comment-heading">
         <h3>{t('comments.discussionTitle', { 0: item.title })}</h3>
-        <button
-          type="button"
-          className="text-button"
+        <IconButton
+          label={t('comments.refreshDiscussion')}
+          aria-busy={discussion.loading}
           disabled={!discussion.available || discussion.loading}
           onClick={() => discussion.load().catch(() => {})}
-          aria-label={t('comments.refreshDiscussion')}
         >
-          <RefreshCw aria-hidden="true" />
-          {discussion.loading ? t('common.loading') : t('common.refresh')}
-        </button>
+          {discussion.loading ? <LoaderCircle className="setup-spinner" /> : <RefreshCw />}
+        </IconButton>
       </div>
       <p className="field-help">{t('comments.sharedAllBotsPostingCommentDoesNot')}</p>
       {!discussion.available && (

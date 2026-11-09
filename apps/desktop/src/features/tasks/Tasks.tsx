@@ -13,8 +13,11 @@ import {
   Minimize2,
   Plus,
   RefreshCw,
+  RotateCcw,
+  Save,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import { type Dispatch, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
@@ -22,7 +25,6 @@ import type { Action, State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
 import { Select } from '../../components/controls/Select';
-import { Tooltip } from '../../components/controls/Tooltip';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Comments } from './Comments';
 import { commentCard } from './comments-state';
@@ -396,21 +398,19 @@ export function Tasks({
           >
             <div className="task-editor-heading">
               <h2>{draft?.base ? t('tasks.taskDetails') : t('tasks.newTask')}</h2>
-              <IconButton
-                label={t(expanded ? 'tasks.collapseEditor' : 'tasks.expandEditor')}
-                className="task-expand"
-                aria-pressed={expanded}
-                aria-controls="task-detail-editor"
-                onClick={() => setExpanded((current) => !current)}
-              >
-                {expanded ? <Minimize2 /> : <Maximize2 />}
-              </IconButton>
-              {draft?.base && !work.reading && (
-                <Tooltip label={t('tasks.viewDiscussion')}>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label={t('tasks.viewDiscussion')}
+              <div className="task-editor-actions">
+                <IconButton
+                  label={t(expanded ? 'tasks.collapseEditor' : 'tasks.expandEditor')}
+                  className="task-expand"
+                  aria-pressed={expanded}
+                  aria-controls="task-detail-editor"
+                  onClick={() => setExpanded((current) => !current)}
+                >
+                  {expanded ? <Minimize2 /> : <Maximize2 />}
+                </IconButton>
+                {draft?.base && !work.reading && (
+                  <IconButton
+                    label={t('tasks.viewDiscussion')}
                     aria-controls={`task-comments-${draft.base.id}`}
                     onClick={() => {
                       const target = document.getElementById(`task-comments-${draft.base!.id}`);
@@ -418,25 +418,42 @@ export function Tasks({
                       target?.focus({ preventScroll: true });
                     }}
                   >
-                    <MessageSquare aria-hidden="true" />
-                  </button>
-                </Tooltip>
-              )}
-              {draft && (
-                <button className="primary" type="submit" form={formId} disabled={saveDisabled}>
-                  {t('tasks.saveTask')}
-                </button>
-              )}
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => {
-                  setExpanded(false);
-                  work.setEditorVisible(false);
-                }}
-              >
-                {t('tasks.backTasks')}
-              </button>
+                    <MessageSquare />
+                  </IconButton>
+                )}
+                {draft && (
+                  <IconButton
+                    label={t('tasks.discardChanges')}
+                    disabled={sealed || !workDirty(draft)}
+                    onClick={() => {
+                      setConfirm(undefined);
+                      work.discard();
+                    }}
+                  >
+                    <RotateCcw />
+                  </IconButton>
+                )}
+                {draft && (
+                  <IconButton
+                    label={t('tasks.saveTask')}
+                    className="primary"
+                    type="submit"
+                    form={formId}
+                    disabled={saveDisabled}
+                  >
+                    <Save />
+                  </IconButton>
+                )}
+                <IconButton
+                  label={t('tasks.closeEditor')}
+                  onClick={() => {
+                    setExpanded(false);
+                    work.setEditorVisible(false);
+                  }}
+                >
+                  <X />
+                </IconButton>
+              </div>
             </div>
             {work.reading && (
               <p role="status" className="field-help">
@@ -575,38 +592,27 @@ export function Tasks({
                       </div>
                     </div>
                   )}
-                  <div className="task-actions">
-                    <button
-                      type="button"
-                      className="text-button"
-                      disabled={sealed || !workDirty(draft)}
-                      onClick={() => {
-                        setConfirm(undefined);
-                        work.discard();
-                      }}
-                    >
-                      {t('tasks.discardChanges')}
-                    </button>
-                  </div>
                 </form>
                 {draft.base && (
                   <div className="task-history">
-                    <p className="task-meta">
-                      {t('tasks.createdUpdatedBy', {
-                        0: author(draft.base.createdBy),
-                        1: author(draft.base.updatedBy),
-                      })}
-                    </p>
-                    <p className="task-meta">
-                      <time dateTime={draft.base.updatedAt}>
-                        {draft.base.completedAt
-                          ? t('tasks.updatedAndCompletedAt', {
-                              0: time(draft.base.updatedAt),
-                              1: time(draft.base.completedAt),
-                            })
-                          : t('tasks.updatedAt', { 0: time(draft.base.updatedAt) })}
-                      </time>
-                    </p>
+                    <div>
+                      <p className="task-meta">
+                        {t('tasks.createdUpdatedBy', {
+                          0: author(draft.base.createdBy),
+                          1: author(draft.base.updatedBy),
+                        })}
+                      </p>
+                      <p className="task-meta">
+                        <time dateTime={draft.base.updatedAt}>
+                          {draft.base.completedAt
+                            ? t('tasks.updatedAndCompletedAt', {
+                                0: time(draft.base.updatedAt),
+                                1: time(draft.base.completedAt),
+                              })
+                            : t('tasks.updatedAt', { 0: time(draft.base.updatedAt) })}
+                        </time>
+                      </p>
+                    </div>
                     {draft.base.deleted ? (
                       <button
                         type="button"
@@ -638,9 +644,8 @@ export function Tasks({
                         </div>
                       </div>
                     ) : (
-                      <button
-                        type="button"
-                        className="text-button"
+                      <IconButton
+                        label={t('common.moveTrash')}
                         disabled={
                           !work.available ||
                           work.blocked ||
@@ -656,9 +661,8 @@ export function Tasks({
                           })
                         }
                       >
-                        <Trash2 aria-hidden="true" />
-                        {t('common.moveTrash')}
-                      </button>
+                        <Trash2 />
+                      </IconButton>
                     )}
                   </div>
                 )}

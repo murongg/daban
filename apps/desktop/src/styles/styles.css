@@ -5059,7 +5059,6 @@ textarea.skill-source {
   top: -20px;
   z-index: 1;
   flex-wrap: wrap;
-  justify-content: space-between;
   padding-bottom: 12px;
   padding-top: 20px;
   margin-top: -20px;
@@ -5070,6 +5069,15 @@ textarea.skill-source {
   margin: 0;
   font-size: 14px;
   font-weight: 500;
+}
+.task-editor-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.task-editor-actions .primary {
+  padding: 0;
+  color: var(--on-strong);
 }
 .task-editor form {
   display: grid;
@@ -5104,9 +5112,22 @@ textarea.skill-source {
   overflow: auto;
 }
 .task-history {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+.task-history .task-meta {
+  margin: 0;
+}
+.task-history .task-meta + .task-meta {
+  margin-top: 4px;
+}
+.task-history .task-confirm {
+  grid-column: 1 / -1;
 }
 .task-discussion {
   margin-top: 28px;
@@ -5129,10 +5150,6 @@ textarea.skill-source {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.comment-heading svg {
-  width: 14px;
-  height: 14px;
 }
 .comment-history {
   /* Reserve room for task chrome and composition in short desktop windows. */
