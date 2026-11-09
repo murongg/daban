@@ -1018,8 +1018,10 @@ it('places a running group member transcript before the streaming reply', async 
   expectExecutionBefore('合成群流式回复');
 });
 
-it('shows actual attempts and unknown billing without reading private SDK content', async () => {
-  bridge(() => ({ ...scope, state: 'complete', items: [] }));
+it('shows model history and billing only when hovering or clicking the info icon', async () => {
+  const user = userEvent.setup();
+  const backend = bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  backend.snapshot.model.connections = [];
   const props = {
     scope,
     phase: 'completed' as const,
@@ -1048,15 +1050,34 @@ it('shows actual attempts and unknown billing without reading private SDK conten
       <Execution {...props} />
     </RuntimeProvider>,
   );
-  expect(await screen.findByText('费用用量未确认；失败请求也可能产生费用。')).toBeInTheDocument();
-  expect(screen.getByText(/实际模型/)).toBeInTheDocument();
-  const previousAttempts = screen.getByText('模型尝试').closest('details');
-  expect(previousAttempts).not.toHaveAttribute('open');
-  expect(previousAttempts).toHaveTextContent('认证失败');
+  const process = screen.getByText('执行过程');
+  const disclosure = process.closest('details');
+  const info = screen.getByRole('button', { name: '模型信息' });
+  expect(screen.queryByText(/模型：/)).not.toBeInTheDocument();
+  expect(screen.queryByText('计费用量未确认')).not.toBeInTheDocument();
+
+  await user.hover(info);
+  const tooltip = await screen.findByRole('tooltip');
+  expect(tooltip.textContent?.split('\n')).toEqual([
+    '模型：deepseek-v4-pro',
+    '切换前：deepseek-flash · 认证失败',
+    '计费用量未确认',
+  ]);
+
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  await user.click(info);
+  expect(screen.getByRole('tooltip')).toBeVisible();
+  expect(disclosure).not.toHaveAttribute('open');
+
+  await user.click(process);
+  expect(disclosure).toHaveAttribute('open');
 });
 
-it('keeps a single model attempt compact while retaining its status and billing note', () => {
-  bridge(() => ({ ...scope, state: 'complete', items: [] }));
+it('shows a single model attempt when the info icon receives keyboard focus', async () => {
+  const user = userEvent.setup();
+  const backend = bridge(() => ({ ...scope, state: 'complete', items: [] }));
+  backend.snapshot.model.connections = [];
   render(
     <RuntimeProvider>
       <Execution
@@ -1075,10 +1096,20 @@ it('keeps a single model attempt compact while retaining its status and billing 
     </RuntimeProvider>,
   );
 
-  const attempts = screen.getByRole('region', { name: '模型尝试' });
-  expect(attempts).toHaveTextContent(/实际模型：.*执行中/);
-  expect(attempts.querySelector('ol')).not.toBeInTheDocument();
-  expect(attempts).toHaveTextContent('费用用量未确认；失败请求也可能产生费用。');
+  const info = screen.getByRole('button', { name: '模型信息' });
+  const matches = info.matches.bind(info);
+  vi.spyOn(info, 'matches').mockImplementation(
+    (selector) => selector === ':focus-visible' || matches(selector),
+  );
+  await user.tab();
+  await user.tab();
+  expect(info).toHaveFocus();
+  expect(screen.getByRole('tooltip').textContent?.split('\n')).toEqual([
+    '模型：deepseek-v4-pro',
+    '计费用量未确认',
+  ]);
+  await user.keyboard('{Escape}');
+  expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
 });
 
 it('requires receipt inspection instead of direct continuation after an unknown tool outcome', async () => {

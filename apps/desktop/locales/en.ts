@@ -3583,9 +3583,10 @@ export const english = {
     'The previous attempt could not be confirmed stopped, so the fallback was not started.',
   'models.fenceUnavailable':
     'Tool ownership could not be durably confirmed. The tool was not executed; inspect the task record.',
-  'models.attempts': 'Model attempts',
-  'models.actualModel': 'Actual model: {0}',
-  'models.usageUnknown': 'Billable usage is unconfirmed. Failed requests may still incur charges.',
+  'models.info': 'Model info',
+  'models.actualModel': 'Model: {0}',
+  'models.previousModel': 'Previous model: {0}',
+  'models.usageUnknown': 'Billable usage unconfirmed',
   'models.failure.auth': 'authentication failed',
   'models.failure.quota': 'quota exhausted',
   'models.failure.rateLimit': 'rate limited',

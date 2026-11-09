@@ -17,7 +17,15 @@ import './controls.css';
 type Trigger = ReactElement<
   HTMLAttributes<HTMLElement> & RefAttributes<HTMLElement> & { disabled?: boolean }
 >;
-export function Tooltip({ label, children }: { label?: string; children: Trigger }) {
+export function Tooltip({
+  label,
+  children,
+  showOnPress = false,
+}: {
+  label?: string;
+  children: Trigger;
+  showOnPress?: boolean;
+}) {
   useLocale();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement>(null);
@@ -90,7 +98,11 @@ export function Tooltip({ label, children }: { label?: string; children: Trigger
         },
         onPointerDown(event) {
           children.props.onPointerDown?.(event);
-          close();
+          if (!showOnPress) close();
+        },
+        onClick(event) {
+          children.props.onClick?.(event);
+          if (showOnPress && !disabled) setOpen(true);
         },
         onFocus(event) {
           children.props.onFocus?.(event);

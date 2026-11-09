@@ -919,29 +919,24 @@ textarea.field {
   margin-left: auto;
   font-size: 11px;
 }
-.execution-model-meta {
+.execution-block {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 12px;
-  row-gap: 2px;
-  margin: 0 0 6px;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: 100%;
 }
-.execution-model-meta > p {
-  margin: 0;
+.execution-block > .execution {
+  flex: 1;
+  min-width: 0;
 }
-.execution-model-current {
-  color: var(--muted);
+.execution-info {
+  width: 28px;
+  height: 28px;
+  margin-top: 4px;
 }
-.execution-attempts > summary {
-  cursor: pointer;
-}
-.execution-attempts > ol {
-  margin: 4px 0 0;
-  padding-left: 18px;
-}
-.execution-usage-note {
-  color: var(--muted);
+.execution-info svg {
+  width: 14px;
+  height: 14px;
 }
 .execution-chevron {
   flex-shrink: 0;

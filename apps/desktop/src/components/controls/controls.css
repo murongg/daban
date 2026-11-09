@@ -318,6 +318,7 @@
   font: inherit;
   font-size: 11px;
   line-height: 1.6;
+  white-space: pre-line;
   overflow-wrap: anywhere;
 }
 input.file-picker-name {
