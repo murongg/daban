@@ -22,7 +22,10 @@ interface Limits {
 interface Provider {
   id: string;
   available: () => boolean;
-  fetch: (input: { url: string }, signal?: AbortSignal) => Promise<unknown>;
+  fetch: (
+    input: { url: string; followRedirects?: false },
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
 }
 type NativeProvider = new (
   limits: Limits & { userAgent: string },
@@ -36,13 +39,17 @@ export function createFetcher(
   request: Fetch = fetch,
 ): Provider {
   const native = new Factory(limits);
+  const linkLimits = { ...limits, maxRedirects: 0 };
+  const linked = new Factory(linkLimits);
   return {
     id: native.id,
     available: () => native.available(),
     async fetch(input, caller = new AbortController().signal) {
       const signal = AbortSignal.any([caller, AbortSignal.timeout(limits.timeoutMs)]);
+      // An inferred grant covers the observed URL only, even when a redirect stays on this site.
+      const noRedirects = input.followRedirects === false;
       try {
-        return await native.fetch(input, signal);
+        return await (noRedirects ? linked : native).fetch(input, signal);
       } catch (error) {
         if (
           !error ||
@@ -60,7 +67,7 @@ export function createFetcher(
         )
           throw error;
         // Native validation handles all normal DNS/IPv6 cases. Only validated IPv4 fallback answers enter this resolver seam.
-        const fallback = new Factory(limits, async (target) => {
+        const fallback = new Factory(noRedirects ? linkLimits : limits, async (target) => {
           if (target !== host) throw error;
           return addresses;
         });

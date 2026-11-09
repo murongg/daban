@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import type { SearchResult } from '@daban/protocol';
+import type { ApprovalMode, SearchResult } from '@daban/protocol';
 import { runtimeRequire } from './dsh.js';
 import { ModelRuns } from './model.js';
 import { apply as policy } from './policy.js';
@@ -18,6 +18,9 @@ import { apply as webReader } from './web-read.js';
 const sdkFile = createRequire(import.meta.url).resolve('@deepseek-ai/dsh-sdk-client');
 const sourceUrl = 'https://source.example.test/original?edition=synthetic';
 const snippetUrl = 'https://snippet.example.test/untrusted';
+const chapterUrl = 'https://source.example.test/docs/chapter';
+const nextChapterUrl = 'https://source.example.test/docs/next';
+const manualUrl = 'https://source.example.test/docs/manual-entry';
 const searchKey = 'synthetic-independent-brave-key';
 const modelKey = 'synthetic-custom-inference-key';
 const suppliedResult = () =>
@@ -132,6 +135,7 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult(), le
   async function start(
     requestId: string,
     prompt = 'Synthetic research with optional public web tools.',
+    approvalMode?: ApprovalMode,
   ) {
     const started = new Promise<unknown>((resolve) => {
       entered = () => resolve(undefined);
@@ -139,7 +143,7 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult(), le
     gate = new Promise<unknown>((resolve) => {
       release = () => resolve(undefined);
     });
-    await models.start('mock-search-bot', { requestId, prompt });
+    await models.start('mock-search-bot', { requestId, prompt, approvalMode });
     await started;
     const job = models.jobs.get('mock-search-bot');
     assert.ok(job?.sessionId);
@@ -179,7 +183,7 @@ async function fixture(supplier: typeof fetch = async () => suppliedResult(), le
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Job = Awaited<ReturnType<Fixture['start']>>;
 
-async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
+async function pipeline(f: Fixture, job: Job, urls: string[] = [], allowOnce?: string) {
   assert.ok(job.sessionId);
   const requireDsh = runtimeRequire(sdkFile);
   const cordis = (await import(pathToFileURL(requireDsh.resolve('@deepseek-ai/cordis')).href)) as {
@@ -206,6 +210,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   const rootAgent = { id: 'mock-search-root', session: { id: job.sessionId } };
   const approvals: string[] = [];
   const reads: string[] = [];
+  const exactReads: string[] = [];
   const rpcs: Rpc[] = [];
   const bridgeErrors: string[] = [];
   ctx.provide('systemPrompt', { tools: () => {}, section: () => {}, getSectionOrder: () => 1 });
@@ -217,7 +222,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   ctx.provide('approval', {
     request: async (request: { reason: string }) => {
       approvals.push(request.reason);
-      return 'rejected';
+      return request.reason === JSON.stringify({ url: allowOnce }) ? 'allowed-once' : 'rejected';
     },
   });
   await ctx.plugin(tools.ToolRuntime);
@@ -248,7 +253,13 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   };
   policy(
     ctx as unknown as Parameters<typeof policy>[0],
-    { ...bridge, limit: job.limit, urls, attemptId: job.attemptId },
+    {
+      ...bridge,
+      limit: job.limit,
+      urls,
+      attemptId: job.attemptId,
+      approvalMode: job.task?.approvalMode,
+    },
     request,
   );
   await searchProvider(
@@ -266,13 +277,28 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
   ctx.web.registerFetchProvider({
     id: 'synthetic-http',
     available: () => true,
-    fetch: async (input: { url: string }, signal: AbortSignal) => {
+    fetch: async (input: { url: string; followRedirects?: false }, signal: AbortSignal) => {
       signal.throwIfAborted();
       reads.push(input.url);
+      if (input.followRedirects === false) exactReads.push(input.url);
+      const body =
+        input.url === sourceUrl
+          ? {
+              kind: 'html',
+              content: `<main><p>SYNTHETIC ORIGINAL ARTICLE</p><a href="/docs/chapter#intro">Chapter</a><a href="/docs/chapter?page=2">Query</a><a href="/account/sign-out">Sign out</a><a href="${snippetUrl}">Other site</a><a hidden href="/docs/hidden">Hidden</a><code>https://source.example.test/docs/plain</code></main>`,
+            }
+          : input.url === chapterUrl
+            ? { kind: 'html', content: '<main><a href="/docs/next">Next chapter</a></main>' }
+            : input.url === manualUrl
+              ? {
+                  kind: 'html',
+                  content: '<main><a href="/docs/manual-child">Manual child</a></main>',
+                }
+              : { kind: 'text', content: 'SYNTHETIC ORIGINAL ARTICLE' };
       return {
         url: input.url,
         statusCode: 200,
-        body: { kind: 'text', content: 'SYNTHETIC ORIGINAL ARTICLE' },
+        body,
         truncated: false,
       };
     },
@@ -301,6 +327,7 @@ async function pipeline(f: Fixture, job: Job, urls: string[] = []) {
     ctx,
     approvals,
     reads,
+    exactReads,
     rpcs,
     bridgeErrors,
     execute,
@@ -434,6 +461,10 @@ test('saved legacy settings, independent Brave and exact-source reading work wit
     );
     assert.equal(p.approvals.length, 2);
     assert.deepEqual(p.reads, [sourceUrl]);
+    const chapter = await p.execute('web_fetch', { url: chapterUrl }, 'mock-read-linked-chapter');
+    assert.equal(chapter.isError, false, JSON.stringify(chapter));
+    assert.deepEqual(p.reads, [sourceUrl, chapterUrl]);
+    assert.equal(p.approvals.length, 2);
     await f.finish();
     const record = await f.models.journal.read('mock-search-bot', job.id);
     assert.deepEqual(record?.search, { provider: 'brave', revision: 1 });
@@ -463,6 +494,10 @@ test('saved legacy settings, independent Brave and exact-source reading work wit
       true,
     );
     assert.deepEqual(p.reads, [], 'source authority does not survive a resumed task');
+    assert.equal(
+      (await p.execute('web_fetch', { url: chapterUrl }, 'mock-old-link')).isError,
+      true,
+    );
     await f.finish();
     await p.close();
     const explicit = await f.start(
@@ -488,6 +523,68 @@ test('saved legacy settings, independent Brave and exact-source reading work wit
       await reopened.saved({ kind: 'configure', requestId: 'mock-disable-search' }),
       await f.search.saved({ kind: 'configure', requestId: 'mock-disable-search' }),
     );
+  } finally {
+    await p?.close();
+    await f.close();
+  }
+});
+
+test('auto follows only observed public document links while strict mode still asks', async () => {
+  const f = await fixture();
+  let p: Awaited<ReturnType<typeof pipeline>> | undefined;
+  try {
+    const job = await f.start('mock-follow-links', `Read ${sourceUrl}`, 'auto');
+    p = await pipeline(f, job, [sourceUrl], manualUrl);
+    assert.equal(
+      (await p.execute('web_fetch', { url: sourceUrl }, 'mock-open-source')).isError,
+      false,
+    );
+    for (const [index, url] of [
+      `${chapterUrl}?page=2`,
+      'https://source.example.test/account/sign-out',
+      snippetUrl,
+      'https://source.example.test/docs/hidden',
+      'https://source.example.test/docs/plain',
+      nextChapterUrl,
+    ].entries()) {
+      assert.equal(
+        (await p.execute('web_fetch', { url }, `mock-unapproved-${index}`)).isError,
+        true,
+      );
+      assert.equal(p.approvals.at(-1), JSON.stringify({ url }));
+    }
+    assert.equal(
+      (await p.execute('web_fetch', { url: chapterUrl }, 'mock-first-link')).isError,
+      false,
+    );
+    assert.equal(
+      (await p.execute('web_fetch', { url: nextChapterUrl }, 'mock-second-link')).isError,
+      false,
+    );
+    assert.equal(p.approvals.length, 6);
+    assert.deepEqual(p.reads, [sourceUrl, chapterUrl, nextChapterUrl]);
+    assert.deepEqual(p.exactReads, [chapterUrl, nextChapterUrl]);
+    assert.equal((await p.execute('web_fetch', { url: manualUrl }, 'mock-manual')).isError, false);
+    const manualChild = 'https://source.example.test/docs/manual-child';
+    assert.equal(
+      (await p.execute('web_fetch', { url: manualChild }, 'mock-manual-child')).isError,
+      true,
+    );
+    assert.deepEqual(p.approvals.slice(-2), [
+      JSON.stringify({ url: manualUrl }),
+      JSON.stringify({ url: manualChild }),
+    ]);
+    await f.finish();
+    await p.close();
+    const strict = await f.start('mock-ask-links', `Read ${sourceUrl}`, 'ask');
+    p = await pipeline(f, strict, [sourceUrl]);
+    assert.equal(
+      (await p.execute('web_fetch', { url: sourceUrl }, 'mock-strict-source')).isError,
+      true,
+    );
+    assert.deepEqual(p.approvals, [JSON.stringify({ url: sourceUrl })]);
+    assert.deepEqual(p.reads, []);
+    await f.finish();
   } finally {
     await p?.close();
     await f.close();
