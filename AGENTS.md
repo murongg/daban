@@ -34,6 +34,13 @@
 - Give icon-only buttons a localized accessible name and a tooltip on hover and keyboard focus when enabled. Preserve loading feedback, disabled states, and destructive-action confirmations.
 - Verify the layout at the narrowest supported pane width and check that each action is reachable and usable by keyboard.
 
+### Resizable Panels
+
+- Add a draggable divider when users work with two visible panes and benefit from trading space between them, such as chat and the Bot workspace or the task list and detail editor. Keep category rails, single-column pages, and equal-width board columns simple. For short-lived dialogs with a list and preview, try stacking them at narrow widths first.
+- Reuse `Pane` in `apps/desktop/src/components/controls/Pane.tsx` for resizable panes. Keep the divider visible and focusable, give it a localized accessible name, and support pointer drag, arrow keys, and Home/End. Keep its hit area out of Electron's window drag region.
+- Reserve usable width for both panes and keep pointer, keyboard, and CSS limits in agreement. Preserve the existing overlay or single-column layout when space is tight, and hide the divider when only one pane is available. Remember widths independently as local UI preferences. Clamp the displayed width to the available space while retaining the saved preference and any in-progress edits.
+- Verify rendered widths in a browser at wide and narrow sizes. Cover dragging, keyboard limits, reopening or reloading, and switching between split and expanded views without losing edits.
+
 ## Readability and Linting
 
 - Do not handwrite minified source or pack independent statements onto one line. Use normal indentation, line breaks, and clear code blocks.
