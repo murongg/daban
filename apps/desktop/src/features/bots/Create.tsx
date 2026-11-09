@@ -4,19 +4,13 @@ import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, Color, State } from '../../app/state';
 import { Select } from '../../components/controls/Select';
-import { type MessageKey, t, useLocale } from '../../i18n/locale';
+import { t, useLocale } from '../../i18n/locale';
 import { modelChoices, modelIcon, modelInputs, modelName } from '../models/model-options';
-import { Avatar, colors } from './Avatar';
+import { Avatar } from './Avatar';
+import { AvatarPicker } from './AvatarPicker';
+import type { AvatarExpression } from './appearance';
 import type { BotPreset } from './presets';
 
-const colorNames: Record<Color, MessageKey> = {
-  mint: 'create.mint',
-  violet: 'create.softViolet',
-  orange: 'create.warmOrange',
-  blue: 'create.blue',
-  teal: 'create.teal',
-  pink: 'create.pink',
-};
 export function Create({
   state,
   dispatch,
@@ -46,6 +40,7 @@ export function Create({
   const [name, setName] = useState(preset?.name ?? '');
   const [role, setRole] = useState(preset?.instructions ?? '');
   const [color, setColor] = useState<Color>(preset?.color ?? 'violet');
+  const [expression, setExpression] = useState<AvatarExpression>('original');
   const [members, setMembers] = useState<string[]>([]);
   const [error, setError] = useState('');
   // Retries keep this identity; preset catalog IDs must never become shared runtime Bot IDs.
@@ -134,6 +129,9 @@ export function Create({
                   ...(isGroup ? { members } : {}),
                   ...(!isGroup && isModelId(model) ? { model } : {}),
                 });
+                // A runtime snapshot can create this Bot before the local create action is applied.
+                if (!isGroup && expression !== 'original')
+                  dispatch({ type: 'avatar-expression', bot: id, expression });
                 dispatch({ type: 'select', bot: id });
                 close();
                 notify(isGroup ? t('create.groupCreated') : t('create.botCreatedCanStartChatting'));
@@ -145,6 +143,15 @@ export function Create({
             }}
           >
             <div className="form-stack">
+              {!isGroup && (
+                <AvatarPicker
+                  color={color}
+                  expression={expression}
+                  disabled={saving}
+                  onColorChange={setColor}
+                  onExpressionChange={setExpression}
+                />
+              )}
               <label className="field-label">
                 {t('common.name')}
                 <input
@@ -211,24 +218,6 @@ export function Create({
                       {t('create.canAddMoreInstructionsConversationLater')}
                     </span>
                   </label>
-                  <div className="field-label">
-                    <span>{t('create.chooseColor')}</span>
-                    <fieldset className="avatar-choices" aria-label={t('create.botColor')}>
-                      {(Object.keys(colors) as Color[]).map((value) => (
-                        <button
-                          type="button"
-                          className="avatar-choice"
-                          disabled={saving}
-                          aria-label={t(colorNames[value])}
-                          aria-pressed={color === value}
-                          key={value}
-                          onClick={() => setColor(value)}
-                        >
-                          <Avatar bot={{ color: value }} />
-                        </button>
-                      ))}
-                    </fieldset>
-                  </div>
                   <div className="field-label">
                     {t('common.modelBot')}
                     <Select

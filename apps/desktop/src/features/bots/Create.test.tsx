@@ -71,3 +71,35 @@ it('keeps importing as an action outside the creation tablist', async () => {
   expect(onImport).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('tab', { name: '新建 Bot' })).toHaveAttribute('aria-selected', 'true');
 });
+
+it('previews color and expression independently and saves them for the new Bot', async () => {
+  const persist = vi.fn(async () => ({}));
+  const dispatch = vi.fn();
+  render(
+    <Create
+      state={demoState()}
+      dispatch={dispatch}
+      close={vi.fn()}
+      notify={vi.fn()}
+      persist={persist}
+    />,
+  );
+  const expressions = screen.getByRole('group', { name: '表情' });
+  expect(within(expressions).getAllByRole('button')).toHaveLength(12);
+  await userEvent.click(within(expressions).getByRole('button', { name: '爱心眼' }));
+  expect(screen.getByRole('img', { name: '头像预览：淡紫，爱心眼' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: '蓝色' }));
+  await userEvent.click(screen.getByRole('button', { name: '眨眼' }));
+  expect(screen.getByRole('img', { name: '头像预览：蓝色，眨眼' })).toBeVisible();
+  expect(screen.getByRole('button', { name: '蓝色' })).toHaveAttribute('aria-pressed', 'true');
+
+  await userEvent.type(screen.getByRole('textbox', { name: '名称' }), 'Synthetic Bot');
+  await userEvent.click(screen.getByRole('button', { name: '创建 Bot' }));
+
+  expect(persist).toHaveBeenCalledWith(
+    expect.objectContaining({ name: 'Synthetic Bot', color: 'blue' }),
+  );
+  expect(dispatch).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'avatar-expression', expression: 'wink' }),
+  );
+});

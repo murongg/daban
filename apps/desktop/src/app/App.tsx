@@ -333,6 +333,11 @@ function Workbench() {
   const target = bot ? computerTarget(runtime.snapshot, bot.id) : undefined;
   const computer = target ? runtime.snapshot.bots[target] : undefined;
   const task = bot ? agentTask(runtime.snapshot, bot.id) : undefined;
+  const avatarWorking =
+    runtime.snapshot.phase === 'ready' &&
+    task?.running &&
+    task.phase === 'running' &&
+    computer?.owner !== 'human';
   const pendingLifecycle = bot
     ? lifecycleRequest(
         state,
@@ -1042,11 +1047,11 @@ function Workbench() {
           {state.view === 'chat' && bot ? (
             <>
               {assistant ? (
-                <Avatar bot={assistant} />
+                <Avatar bot={assistant} working={avatarWorking} />
               ) : bot.kind === 'chat' ? (
                 <MessageSquare className="chat-symbol" aria-hidden="true" />
               ) : (
-                <Avatar bot={bot} />
+                <Avatar bot={bot} working={avatarWorking} />
               )}
               <div className="chat-identity">
                 <h1>{bot.kind === 'chat' ? title || t('conversations.untitled') : bot.name}</h1>

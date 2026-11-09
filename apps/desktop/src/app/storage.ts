@@ -17,6 +17,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { readMentions } from '../../shared/mentions';
+import { avatarExpressions } from '../features/bots/appearance';
 import { draftPrompt, draftTextLimit } from '../features/chat/conversations';
 import { restoreNotes } from '../features/notes/notes-state';
 import { restoreComments } from '../features/tasks/comments-state';
@@ -96,9 +97,12 @@ export function restore(raw: string | null): State {
       )
     )
       return initialState();
-    // A damaged optional model cache must not discard the user's otherwise valid messages and drafts.
-    for (const bot of s.bots)
+    // Damaged optional preferences must not discard the user's otherwise valid messages and drafts.
+    for (const bot of s.bots) {
       if (record(bot) && bot.model !== undefined && !isModelId(bot.model)) delete bot.model;
+      if (record(bot) && !avatarExpressions.some((expression) => expression === bot.expression))
+        delete bot.expression;
+    }
     const bots = s.bots;
     const ids = bots.map((b) => b.id as string);
     for (const bot of bots) {

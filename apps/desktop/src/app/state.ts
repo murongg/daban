@@ -39,6 +39,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import { type Mention, readMentions, rebaseMentions, resolveMentions } from '../../shared/mentions';
+import type { AvatarExpression } from '../features/bots/appearance';
 import {
   type ConversationDraft,
   conversationEditor,
@@ -175,6 +176,7 @@ export interface Bot {
   name: string;
   role: string;
   color: Color;
+  expression?: AvatarExpression;
   preview: string;
   time: string;
   members?: string[];
@@ -399,7 +401,14 @@ export type Action =
   | { type: 'knowledge-load'; bot: string; previous?: KnowledgeDraft; document: KnowledgeDocument }
   | { type: 'reply-draft'; id: string; question: string; selected?: string[]; custom?: string }
   | { type: 'profiles'; profiles: BotProfile[] }
-  | { type: 'profile-local'; bot: string; name: string; instructions: string }
+  | {
+      type: 'profile-local';
+      bot: string;
+      name: string;
+      instructions: string;
+      color: Color;
+    }
+  | { type: 'avatar-expression'; bot: string; expression: AvatarExpression }
   | { type: 'runtime-pending'; bot: string; task: TaskRequest; refs?: string[] }
   | {
       type: 'approval-mode';
@@ -1063,8 +1072,16 @@ export function reduce(state: State, action: Action): State {
                 ...bot,
                 name: action.name.trim().slice(0, 30),
                 role: action.instructions.slice(0, 4000),
+                color: action.color,
               }
             : bot,
+        ),
+      };
+    case 'avatar-expression':
+      return {
+        ...state,
+        bots: state.bots.map((bot) =>
+          bot.id === action.bot ? { ...bot, expression: action.expression } : bot,
         ),
       };
     case 'approval-mode':
