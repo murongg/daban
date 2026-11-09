@@ -12,9 +12,11 @@ import {
   searchRequiresKey,
   validSearchKey,
 } from '@daban/protocol';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { clientCache } from '../../app/cache';
 import { useRuntime } from '../../app/Runtime';
+import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
 import { Select } from '../../components/controls/Select';
 import { getLocale, type MessageKey, t, useLocale } from '../../i18n/locale';
@@ -65,13 +67,14 @@ function sameRequest(left: SearchReceiptQuery | undefined, right: SearchReceiptQ
 
 export function Search() {
   useLocale();
+  const id = useId();
   const runtime = useRuntime();
   const supported = runtime.snapshot.searchSettings === true;
   const available = supported && runtime.enabled && runtime.snapshot.phase === 'ready';
   const [status, setStatus] = useState<SearchStatus>();
   const [draft, setDraft] = useState<Draft>();
   const [pending, setPending] = useState(readPending);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'submit' | 'recover'>();
   const [replacementRequired, setReplacementRequired] = useState(false);
   const [confirmation, setConfirmation] = useState<SearchStatus>();
   const [notice, setNotice] = useState<MessageKey>();
@@ -163,7 +166,7 @@ export function Search() {
   useEffect(() => {
     live.current = true;
     const ticket = scope.current;
-    setBusy(false);
+    setBusy(undefined);
     if (available) {
       const query = readPending();
       const load = async () => {
@@ -188,7 +191,7 @@ export function Search() {
       clientCache().setItem(pendingKey, JSON.stringify(query));
       outcomes.current++;
       setPending(query);
-      setBusy(true);
+      setBusy('submit');
       setError(undefined);
       setNotice(undefined);
       return true;
@@ -232,7 +235,7 @@ export function Search() {
         }
       }
     } finally {
-      if (live.current && ticket === scope.current) setBusy(false);
+      if (live.current && ticket === scope.current) setBusy(undefined);
     }
   }
   async function check() {
@@ -262,7 +265,7 @@ export function Search() {
     } catch {
       if (ticket === scope.current) await recover(query);
     } finally {
-      if (live.current && ticket === scope.current) setBusy(false);
+      if (live.current && ticket === scope.current) setBusy(undefined);
     }
   }
 
@@ -280,101 +283,78 @@ export function Search() {
       (draft.enabled && (!status.credentialConfigured || replacementRequired)));
   const validKey = !!draft && (!draft.key || validSearchKey(draft.key));
   const conflict = !!draft && !!status && draft.revision !== status.revision;
+  // The receipt is recorded before dispatch, while recovery is only offered once submission stops.
+  const checking = busy === 'submit' && pending?.kind === 'check';
+  const saving = busy === 'submit' && pending?.kind === 'configure';
 
   return (
     <div className="search-settings">
-      <div className="setting-row">
-        <div>
-          <div className="setting-label">
-            {status ? providerNames[status.provider] : t('search.title')}
-          </div>
-          {status ? (
-            <>
-              <p className="setting-description" role="status">
-                {t(
-                  !searchRequiresKey(status.provider) &&
-                    (status.health === 'forbidden' || status.health === 'unauthorized')
-                    ? 'search.healthKeylessForbidden'
-                    : healthMessages[status.health],
-                  { 0: providerNames[status.provider] },
-                )}
-              </p>
-              <p className="field-help">
-                {t(
-                  !searchRequiresKey(status.provider)
-                    ? 'search.keylessCredential'
-                    : status.credentialSource === 'legacy-linked'
-                      ? 'search.legacyCredential'
-                      : status.credentialSource === 'independent'
-                        ? 'search.independentCredential'
-                        : 'search.noCredential',
-                )}
-              </p>
-              {status.checkedAt && (
-                <p className="field-help">
-                  {t('search.checkedAt', {
-                    0: new Date(status.checkedAt).toLocaleString(getLocale()),
-                  })}
-                </p>
-              )}
-              {status.retryAfter !== undefined && (
-                <p className="field-help">{t('search.retryAfter', { 0: status.retryAfter })}</p>
-              )}
-            </>
-          ) : (
-            <p className="setting-description">{t('search.loading')}</p>
-          )}
-        </div>
-        <button type="button" className="secondary" onClick={refresh}>
-          {t('search.refresh')}
-        </button>
-      </div>
       {draft && status && (
         <form
-          className="inline-form"
+          className="search-form"
           onSubmit={async (event) => {
             event.preventDefault();
             await save();
           }}
         >
-          <fieldset className="model-fields" disabled={busy || !!pending}>
-            <label className="search-enabled">
+          <fieldset className="model-fields" disabled={!!busy || !!pending}>
+            <div className="search-enable">
+              <div>
+                <label className="setting-label" htmlFor={`${id}-enabled`}>
+                  {t('search.enabled')}
+                </label>
+                <p className="field-help" id={`${id}-scope`}>
+                  {t('search.fetchIndependent')}
+                </p>
+              </div>
               <input
+                id={`${id}-enabled`}
+                aria-describedby={`${id}-scope`}
                 type="checkbox"
                 checked={draft.enabled}
                 onChange={(event) => {
                   edited.current = true;
                   setDraft({ ...draft, enabled: event.target.checked });
                 }}
-              />{' '}
-              {t('search.enabled')}
-            </label>
-            <div className="field-label">
-              {t('search.provider')}
-              <Select
-                label={t('search.provider')}
-                value={draft.provider}
-                disabled={busy || !!pending}
-                onValueChange={(value) => {
-                  if (isSearchProvider(value)) {
-                    edited.current = true;
-                    setDraft({ ...draft, provider: value, key: '' });
-                    setConfirmation(undefined);
-                  }
-                }}
-                options={[
-                  { value: 'bing', label: t('search.bingOption') },
-                  { value: 'duckduckgo', label: t('search.duckduckgoOption') },
-                  { value: 'deepseek', label: 'DeepSeek' },
-                  { value: 'brave', label: 'Brave' },
-                ]}
               />
             </div>
-            {searchRequiresKey(draft.provider) ? (
-              <div className="search-key">
-                <label className="field-label">
+            <div className="search-field">
+              <span className="setting-label">{t('search.provider')}</span>
+              <div className="search-input">
+                <Select
+                  label={t('search.provider')}
+                  value={draft.provider}
+                  disabled={!!busy || !!pending}
+                  onValueChange={(value) => {
+                    if (isSearchProvider(value)) {
+                      edited.current = true;
+                      setDraft({ ...draft, provider: value, key: '' });
+                      setConfirmation(undefined);
+                    }
+                  }}
+                  options={[
+                    { value: 'bing', label: t('search.bingOption') },
+                    { value: 'duckduckgo', label: t('search.duckduckgoOption') },
+                    { value: 'deepseek', label: 'DeepSeek' },
+                    { value: 'brave', label: 'Brave' },
+                  ]}
+                />
+                {!searchRequiresKey(draft.provider) && (
+                  <p className="field-help">
+                    {t('search.keylessHint', { 0: providerNames[draft.provider] })}
+                  </p>
+                )}
+              </div>
+            </div>
+            {searchRequiresKey(draft.provider) && (
+              <div className="search-field">
+                <label className="setting-label" htmlFor={`${id}-key`}>
                   {t('search.key')}
+                </label>
+                <div className="search-input">
                   <input
+                    id={`${id}-key`}
+                    aria-describedby={`${id}-key-hint`}
                     className="field"
                     type="password"
                     autoComplete="off"
@@ -387,15 +367,11 @@ export function Search() {
                       setDraft({ ...draft, key: event.target.value });
                     }}
                   />
-                </label>
-                <p className="field-help">
-                  {t(requiredKey ? 'search.keyReplacementHint' : 'search.keyHint')}
-                </p>
+                  <p className="field-help" id={`${id}-key-hint`}>
+                    {t(requiredKey ? 'search.keyReplacementHint' : 'search.keyHint')}
+                  </p>
+                </div>
               </div>
-            ) : (
-              <p className="field-help">
-                {t('search.keylessHint', { 0: providerNames[draft.provider] })}
-              </p>
             )}
           </fieldset>
           {conflict && (
@@ -404,7 +380,7 @@ export function Search() {
               <button
                 type="button"
                 className="secondary"
-                disabled={busy || !!pending}
+                disabled={!!busy || !!pending}
                 onClick={() => {
                   setDraft({ ...draft, revision: status.revision });
                   setError(undefined);
@@ -414,61 +390,130 @@ export function Search() {
               </button>
             </div>
           )}
-          <div className="inline-form-actions">
+          <div className="search-actions">
+            {notice === 'search.saved' && !dirty && (
+              <p className="field-help" role="status">
+                {t(notice)}
+              </p>
+            )}
             <button
               type="submit"
-              className="primary"
+              className={dirty || saving ? 'primary' : 'secondary'}
               disabled={
-                busy || !!pending || !dirty || conflict || !validKey || (requiredKey && !draft.key)
+                !!busy ||
+                !!pending ||
+                !dirty ||
+                conflict ||
+                !validKey ||
+                (requiredKey && !draft.key)
               }
             >
-              {t(busy && pending?.kind === 'configure' ? 'search.saving' : 'search.save')}
+              {t(saving ? 'search.saving' : 'search.save')}
             </button>
+          </div>
+        </form>
+      )}
+      <section className="search-status" aria-labelledby={`${id}-status`}>
+        <div className="search-status-header">
+          <div className="search-status-title">
+            <h4 id={`${id}-status`}>{t('search.statusTitle')}</h4>
+            {status && <span>{providerNames[status.provider]}</span>}
+          </div>
+          <div className="search-status-actions">
+            <IconButton label={t('search.refresh')} onClick={refresh}>
+              <RefreshCw />
+            </IconButton>
+            {status && (
+              <button
+                type="button"
+                className="secondary"
+                disabled={
+                  !!busy ||
+                  !!pending ||
+                  dirty ||
+                  !status.enabled ||
+                  (searchRequiresKey(status.provider) && !status.credentialConfigured)
+                }
+                onClick={() => setConfirmation(status)}
+              >
+                {t('search.check')}
+              </button>
+            )}
+          </div>
+        </div>
+        <p
+          className="search-result"
+          data-health={checking ? undefined : status?.health}
+          role="status"
+        >
+          {checking
+            ? t('search.checking')
+            : status
+              ? t(
+                  !searchRequiresKey(status.provider) &&
+                    (status.health === 'forbidden' || status.health === 'unauthorized')
+                    ? 'search.healthKeylessForbidden'
+                    : healthMessages[status.health],
+                  { 0: providerNames[status.provider] },
+                )
+              : t('search.loading')}
+        </p>
+        {status && (
+          <>
+            <div className="search-status-details field-help">
+              {searchRequiresKey(status.provider) && (
+                <span>
+                  {t(
+                    status.credentialSource === 'legacy-linked'
+                      ? 'search.legacyCredential'
+                      : status.credentialSource === 'independent'
+                        ? 'search.independentCredential'
+                        : 'search.noCredential',
+                  )}
+                </span>
+              )}
+              {status.checkedAt && !checking && (
+                <span>
+                  {t('search.checkedAt', {
+                    0: new Date(status.checkedAt).toLocaleString(getLocale()),
+                  })}
+                </span>
+              )}
+            </div>
+            {status.retryAfter !== undefined && !checking && (
+              <p className="field-help">{t('search.retryAfter', { 0: status.retryAfter })}</p>
+            )}
+            <p className="field-help">{t(dirty ? 'search.saveFirst' : 'search.testScope')}</p>
+          </>
+        )}
+        {pending && busy !== 'submit' && (
+          <div className="search-recovery">
+            <p className="field-help" role="status">
+              {t(notice === 'search.claimed' ? notice : 'search.pending')}
+            </p>
             <button
               type="button"
               className="secondary"
-              disabled={
-                busy ||
-                !!pending ||
-                dirty ||
-                !status.enabled ||
-                (searchRequiresKey(status.provider) && !status.credentialConfigured)
-              }
-              onClick={() => setConfirmation(status)}
+              disabled={!!busy}
+              onClick={async () => {
+                const ticket = scope.current;
+                setBusy('recover');
+                await recover(pending);
+                if (ticket === scope.current) await refresh();
+                if (live.current && ticket === scope.current) setBusy(undefined);
+              }}
             >
-              {t(busy && pending?.kind === 'check' ? 'search.checking' : 'search.check')}
+              {t('search.receipt')}
             </button>
           </div>
-          {dirty && <p className="field-help">{t('search.saveFirst')}</p>}
-        </form>
-      )}
-      <p className="inline-note">{t('search.fetchIndependent')}</p>
-      <p className="field-help">{t('search.testScope')}</p>
-      {pending && (
-        <div className="inline-note">
-          <p>{t('search.pending')}</p>
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={async () => {
-              const ticket = scope.current;
-              setBusy(true);
-              await recover(pending);
-              if (ticket === scope.current) await refresh();
-              if (live.current && ticket === scope.current) setBusy(false);
-            }}
-          >
-            {t('search.receipt')}
-          </button>
-        </div>
-      )}
+        )}
+      </section>
       {error && (
         <p className="form-error" role="alert">
           {t(error)}
         </p>
       )}
-      {notice && (
+      {notice && notice !== 'search.saved' && notice !== 'search.claimed' && (
         <p className="inline-note" role="status">
           {t(notice)}
         </p>

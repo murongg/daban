@@ -146,6 +146,38 @@ test('a search test requires explicit cost confirmation and dispatches only once
     state.runtime.command.mock.calls.filter(([command]) => command.type === 'search.check'),
   ).toHaveLength(1);
 });
+test('an active search test announces progress before offering receipt recovery', async () => {
+  const user = userEvent.setup();
+  let finishCheck: (value: SearchReceipt) => unknown = () => {};
+  let requestId = '';
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return initial();
+    if (command.type === 'search.check') {
+      requestId = command.input.requestId;
+      return new Promise<SearchReceipt>((resolve) => {
+        finishCheck = resolve;
+      });
+    }
+    throw new Error('Unexpected synthetic command');
+  });
+  render(<Search />);
+  await user.click(await screen.findByRole('button', { name: '测试搜索' }));
+  await user.click(screen.getByRole('button', { name: '确认并测试一次' }));
+  expect(screen.getByRole('status')).toHaveTextContent('正在测试搜索…');
+  expect(screen.queryByRole('button', { name: '查询操作回执' })).not.toBeInTheDocument();
+
+  await act(async () => {
+    finishCheck({
+      kind: 'check',
+      requestId,
+      phase: 'settled',
+      revision: 2,
+      checkRevision: 2,
+      status: initial({ checkRevision: 2, health: 'ready' }),
+    });
+  });
+  expect(screen.getByRole('status')).toHaveTextContent('最近一次搜索成功');
+});
 test('Escape dismisses the test confirmation and restores focus without dispatching', async () => {
   const user = userEvent.setup();
   render(<Search />);
