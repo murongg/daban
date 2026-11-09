@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import { type UpdateDriver, Updates } from './updates';
 
-function fixture() {
+function fixture(changelogFetch?: typeof fetch) {
   const events = new EventEmitter();
   const driver = Object.assign(events, {
     autoDownload: true,
@@ -20,12 +20,67 @@ function fixture() {
     version: '1.0.0',
     supported: true,
     driver: driver as unknown as UpdateDriver,
+    changelogFetch,
     save,
     prepare,
     restore,
   });
   return { events, driver, save, prepare, restore, owner };
 }
+it('loads the versioned changelogs once without waiting to download the update', async () => {
+  let finish: (response: Response) => unknown = () => {};
+  const fetcher = vi.fn<typeof fetch>(async (url) =>
+    String(url).endsWith('.zh-CN.md')
+      ? new Promise((resolve) => {
+          finish = resolve;
+        })
+      : new Response('**v1.1.0**\n\n- Synthetic English changes'),
+  );
+  const { owner, events } = fixture(fetcher);
+  const release = { version: '1.1.0', releaseNotes: 'Synthetic fallback' };
+  events.emit('update-available', release);
+  events.emit('update-available', release);
+  expect(owner.status()).toMatchObject({ phase: 'available', notes: 'Synthetic fallback' });
+  await owner.invoke({ type: 'download' });
+
+  await vi.waitFor(() =>
+    expect(owner.status()).toMatchObject({ changelogs: { en: '- Synthetic English changes' } }),
+  );
+  finish(new Response('**v1.1.0**\r\n\r\n- 合成更新日志'));
+  await vi.waitFor(() =>
+    expect(owner.status()).toMatchObject({
+      changelogs: { en: '- Synthetic English changes', 'zh-CN': '- 合成更新日志' },
+    }),
+  );
+  const assets = fetcher.mock.calls.map(([url]) => new URL(String(url)));
+  expect(assets.every((url) => url.protocol === 'https:')).toBe(true);
+  expect(assets.map((url) => url.pathname.split('/').slice(-2).join('/')).sort()).toEqual([
+    'v1.1.0/CHANGELOG.en.md',
+    'v1.1.0/CHANGELOG.zh-CN.md',
+  ]);
+});
+
+it('keeps fallback notes when localized assets are unavailable and ignores a superseded release', async () => {
+  let finish: (response: Response) => unknown = () => {};
+  const fetcher = vi.fn<typeof fetch>(async (url) => {
+    if (String(url).includes('/v1.1.0/') && String(url).endsWith('.en.md'))
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    if (String(url).endsWith('.en.md')) return new Response(null, { status: 404 });
+    return new Response('x'.repeat(100001));
+  });
+  const { owner, events } = fixture(fetcher);
+  events.emit('update-available', { version: '1.1.0', releaseNotes: 'Synthetic old release' });
+  events.emit('update-available', { version: '1.2.0', releaseNotes: 'Synthetic fallback' });
+  finish(new Response('- Synthetic old changes'));
+  // Let the response streams and owner callbacks settle before inspecting the active release.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(owner.status()).toMatchObject({ nextVersion: '1.2.0', notes: 'Synthetic fallback' });
+  expect(owner.status()).not.toHaveProperty('changelogs.en');
+  expect(owner.status()).not.toHaveProperty('changelogs.zh-CN');
+});
+
 it('checks and downloads only on request and never installs on ordinary quit', async () => {
   const { owner, driver, events } = fixture();
   expect(driver.autoDownload).toBe(false);

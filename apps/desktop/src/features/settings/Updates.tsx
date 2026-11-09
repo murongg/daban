@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -8,7 +9,8 @@ import {
   RotateCw,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import TurndownService from 'turndown';
 import type { UpdateError, UpdatePhase } from '../../../shared/updates';
 import { useRuntime } from '../../app/Runtime';
 import { Markdown } from '../../components/content/Markdown';
@@ -43,16 +45,37 @@ const errors: Record<UpdateError, MessageKey> = {
   AGENT_LEGACY_RESTART_REQUIRED: 'agentUpgrade.required',
 };
 export function UpdatesPanel({
+  showVersion = true,
   onDialogChange,
 }: {
+  showVersion?: boolean;
   onDialogChange?: (open: boolean) => unknown;
 } = {}) {
-  useLocale();
+  const locale = useLocale();
   const { enabled, status, command } = useUpdates();
   const runtime = useRuntime();
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState('');
   const busy = ['checking', 'downloading', 'preparing', 'installing'].includes(status.phase);
+  const canCheck =
+    enabled &&
+    !['unsupported', 'available', 'downloading', 'downloaded', 'preparing', 'installing'].includes(
+      status.phase,
+    );
+  const changelog = status.changelogs?.[locale];
+  const notes = useMemo(() => {
+    if (changelog) return changelog;
+    const text = status.notes;
+    if (!text || !/^\s*<[a-z][\w-]*(?:\s|\/?>)/i.test(text)) return text;
+    // GitHub's Atom feed supplies HTML. Convert it before Markdown applies its link policy.
+    const fragment = DOMPurify.sanitize(text, {
+      USE_PROFILES: { html: true },
+      RETURN_DOM_FRAGMENT: true,
+    });
+    return new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' }).turndown(
+      fragment,
+    );
+  }, [changelog, status.notes]);
   useEffect(() => {
     onDialogChange?.(confirm);
     return () => {
@@ -71,17 +94,16 @@ export function UpdatesPanel({
     }
   };
   return (
-    <div className="settings-section update-panel">
-      <div className="setting-row">
-        <div>
-          <div className="setting-label">{t('updates.title')}</div>
-          <p className="setting-description">{t('updates.version', { 0: status.version })}</p>
-        </div>
-        {enabled &&
-          status.phase !== 'unsupported' &&
-          !['available', 'downloading', 'downloaded', 'preparing', 'installing'].includes(
-            status.phase,
-          ) && (
+    <div className={showVersion ? 'settings-section update-panel' : 'update-panel'}>
+      {(showVersion || canCheck) && (
+        <div className="setting-row">
+          {showVersion && (
+            <div>
+              <div className="setting-label">{t('updates.title')}</div>
+              <p className="setting-description">{t('updates.version', { 0: status.version })}</p>
+            </div>
+          )}
+          {canCheck && (
             <button
               type="button"
               className="secondary"
@@ -92,7 +114,8 @@ export function UpdatesPanel({
               {t('updates.check')}
             </button>
           )}
-      </div>
+        </div>
+      )}
       <div className="update-status" role="status">
         {busy ? (
           <LoaderCircle className="update-spin" />
@@ -107,24 +130,6 @@ export function UpdatesPanel({
             : t(phases[status.phase], { 0: status.nextVersion ?? '' })}
         </span>
       </div>
-      {status.phase === 'downloading' && (
-        <div className="update-download">
-          <div
-            className="update-progress"
-            role="progressbar"
-            aria-label={t('updates.downloadProgress')}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(status.percent ?? 0)}
-          >
-            <span style={{ width: `${status.percent ?? 0}%` }} />
-          </div>
-          <span className="muted">{Math.round(status.percent ?? 0)}%</span>
-          <IconButton label={t('updates.cancelDownload')} onClick={() => run('cancel')}>
-            <X />
-          </IconButton>
-        </div>
-      )}
       {(error || status.error) && (
         <p className="form-error" role="alert">
           {error || (status.error ? t(errors[status.error]) : '')}
@@ -142,11 +147,14 @@ export function UpdatesPanel({
           {t('updates.restart')}
         </button>
       )}
-      {status.notes && (
-        <details className="update-notes">
-          <summary>{t('updates.releaseNotes')}</summary>
+      {notes && (
+        <section className="update-notes">
+          <h3>
+            {t('updates.releaseNotes')}{' '}
+            {status.nextVersion && <span className="muted">v{status.nextVersion}</span>}
+          </h3>
           <Markdown
-            text={status.notes}
+            text={notes}
             openLink={(url) =>
               runtime
                 .command({ type: 'link.open', url })
@@ -154,7 +162,25 @@ export function UpdatesPanel({
             }
             notify={setError}
           />
-        </details>
+        </section>
+      )}
+      {status.phase === 'downloading' && (
+        <div className="update-download">
+          <div
+            className="update-progress"
+            role="progressbar"
+            aria-label={t('updates.downloadProgress')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(status.percent ?? 0)}
+          >
+            <span style={{ width: `${status.percent ?? 0}%` }} />
+          </div>
+          <span className="muted">{Math.round(status.percent ?? 0)}%</span>
+          <IconButton label={t('updates.cancelDownload')} onClick={() => run('cancel')}>
+            <X />
+          </IconButton>
+        </div>
       )}
       {confirm && (
         <Dialog title={t('updates.confirmTitle')} onClose={() => setConfirm(false)} motion>
@@ -263,13 +289,19 @@ export function UpdateButton() {
         </IconButton>
       )}
       {open && (
-        <Dialog title={t('updates.title')} onClose={() => setOpen(false)} active={!nested} motion>
+        <Dialog
+          title={t('updates.title')}
+          onClose={() => setOpen(false)}
+          active={!nested}
+          className="update-dialog"
+          motion
+        >
           {error && !status.error && (
             <p className="form-error" role="alert">
               {error}
             </p>
           )}
-          <UpdatesPanel onDialogChange={setNested} />
+          <UpdatesPanel showVersion={false} onDialogChange={setNested} />
         </Dialog>
       )}
     </>
@@ -311,8 +343,14 @@ export function UpdateNotice() {
         </aside>
       )}
       {open && (
-        <Dialog title={t('updates.title')} onClose={() => setOpen(false)} active={!nested} motion>
-          <UpdatesPanel onDialogChange={setNested} />
+        <Dialog
+          title={t('updates.title')}
+          onClose={() => setOpen(false)}
+          active={!nested}
+          className="update-dialog"
+          motion
+        >
+          <UpdatesPanel showVersion={false} onDialogChange={setNested} />
         </Dialog>
       )}
     </>

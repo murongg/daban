@@ -9,6 +9,7 @@ import type {
   UpdateStatus,
 } from '../../../shared/updates';
 import { Sidebar } from '../../app/Sidebar';
+import { setLocale } from '../../i18n/locale';
 import { demoState } from '../../test/fixtures';
 import { UpdateNotice, UpdatesPanel } from './Updates';
 import { UpdateProvider, useUpdateSave } from './update';
@@ -113,6 +114,61 @@ it('downloads and installs from the sidebar in one click after dismissing the no
   await waitFor(() => expect(live.invoke).toHaveBeenCalledWith({ type: 'install' }));
   expect(live.invoke.mock.calls.filter(([command]) => command.type === 'install')).toHaveLength(1);
   expect(screen.queryByRole('dialog', { name: '重启安装更新？' })).not.toBeInTheDocument();
+});
+
+it.each([
+  ['Markdown', '- [Synthetic release note](https://example.test/release)'],
+  [
+    'GitHub HTML',
+    `<p><strong>Synthetic changes</strong></p>
+    <details><summary>Details</summary><ul>
+      <li><a href="https://example.test/release">Synthetic release note</a></li>
+      <li><a href="javascript:alert(1)">Unsafe link</a></li>
+    </ul></details>`,
+  ],
+])('shows %s release notes directly in the update dialog during download', async (_, notes) => {
+  fixture({ phase: 'available', version: '1.0.0', nextVersion: '1.1.0', notes });
+  render(
+    <UpdateProvider>
+      <SidebarFixture />
+    </UpdateProvider>,
+  );
+
+  await userEvent.click(await screen.findByRole('button', { name: '更新并重启' }));
+
+  const dialog = within(screen.getByRole('dialog', { name: '应用更新' }));
+  expect(dialog.getByRole('heading', { name: '更新日志 v1.1.0' })).toBeVisible();
+  expect(dialog.queryByText('当前版本 1.0.0')).not.toBeInTheDocument();
+  const link = dialog.getByRole('link', { name: 'Synthetic release note' });
+  expect(link).toBeVisible();
+  expect(link).toHaveAttribute('href', 'https://example.test/release');
+  expect(dialog.queryByRole('link', { name: 'Unsafe link' })).not.toBeInTheDocument();
+  const progress = dialog.getByRole('progressbar');
+  expect(progress).toBeVisible();
+  expect(link.compareDocumentPosition(progress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it('shows only the changelog matching the current interface language', async () => {
+  fixture({
+    phase: 'available',
+    version: '1.0.0',
+    nextVersion: '1.1.0',
+    notes: 'Synthetic release fallback',
+    changelogs: { en: '- Synthetic English changes', 'zh-CN': '- 合成更新日志' },
+  });
+  render(
+    <UpdateProvider>
+      <SidebarFixture />
+    </UpdateProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '更新并重启' }));
+  const dialog = within(screen.getByRole('dialog'));
+  expect(dialog.getByText('合成更新日志')).toBeVisible();
+  expect(dialog.queryByText('Synthetic English changes')).not.toBeInTheDocument();
+  expect(dialog.queryByText('Synthetic release fallback')).not.toBeInTheDocument();
+  await act(() => setLocale('en'));
+  expect(dialog.getByText('Synthetic English changes')).toBeVisible();
+  expect(dialog.queryByText('合成更新日志')).not.toBeInTheDocument();
 });
 
 it('fills the sidebar progress ring from live download percentages and removes it after cancellation', async () => {
@@ -257,7 +313,7 @@ it('shows download progress and requires explicit confirmation before restarting
       <UpdatesPanel />
     </UpdateProvider>,
   );
-  expect(await screen.findByText(/1.1.0/)).toBeVisible();
+  expect(await screen.findByText('发现新版本 1.1.0')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: '下载更新' }));
   await act(async () =>
     live.emit({

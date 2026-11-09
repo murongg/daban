@@ -1,6 +1,13 @@
 import { CancellationToken } from 'builder-util-runtime';
 import type { AppUpdater } from 'electron-updater';
-import type { UpdateCommand, UpdateError, UpdateStatus } from '../shared/updates';
+import type { Locale } from '../shared/locale';
+import {
+  type UpdateCommand,
+  type UpdateError,
+  type UpdateStatus,
+  updateNotesLimit,
+} from '../shared/updates';
+import { readChangelog } from './changelog';
 
 export type UpdateDriver = Pick<
   AppUpdater,
@@ -18,6 +25,7 @@ interface Options {
   version: string;
   supported: boolean;
   driver?: UpdateDriver;
+  changelogFetch?: typeof fetch;
   changed?: (status: UpdateStatus) => unknown;
   save?: () => Promise<unknown>;
   prepare?: () => Promise<unknown>;
@@ -30,6 +38,7 @@ export class Updates {
   private downloading?: Promise<UpdateStatus>;
   private installation?: Promise<UpdateStatus>;
   private cancellation?: CancellationToken;
+  private changelogRequest?: { version: string; pending: Set<Locale> };
   private closed = false;
   private readonly listeners: [string, (...args: unknown[]) => unknown][] = [];
   constructor(private readonly options: Options) {
@@ -62,15 +71,17 @@ export class Updates {
         return;
       const notes =
         'releaseNotes' in info && typeof info.releaseNotes === 'string'
-          ? info.releaseNotes.slice(0, 100000)
+          ? info.releaseNotes.slice(0, updateNotesLimit)
           : undefined;
       this.set({
         phase: 'available',
         nextVersion: info.version,
         notes,
+        changelogs: info.version === this.value.nextVersion ? this.value.changelogs : undefined,
         error: undefined,
         percent: undefined,
       });
+      this.loadChangelogs(info.version);
     });
     on('update-not-available', () => this.set({ phase: 'current', error: undefined }));
     on('download-progress', (info) => {
@@ -90,9 +101,41 @@ export class Updates {
         info && typeof info === 'object' && 'version' in info && typeof info.version === 'string'
           ? info.version
           : this.value.nextVersion;
-      this.set({ phase: 'downloaded', nextVersion, percent: 100, error: undefined });
+      this.set({
+        phase: 'downloaded',
+        nextVersion,
+        changelogs: nextVersion === this.value.nextVersion ? this.value.changelogs : undefined,
+        percent: 100,
+        error: undefined,
+      });
     });
     on('error', (error) => this.failed(error));
+  }
+  private loadChangelogs(version: string) {
+    const fetcher = this.options.changelogFetch;
+    if (!fetcher) return;
+    if (this.changelogRequest?.version !== version)
+      this.changelogRequest = { version, pending: new Set() };
+    const request = this.changelogRequest;
+    for (const locale of ['zh-CN', 'en'] as const) {
+      if (request.pending.has(locale) || this.value.changelogs?.[locale]) continue;
+      request.pending.add(locale);
+      readChangelog(version, locale, fetcher)
+        .then((text) => {
+          // A slow response cannot replace the notes for a newer update or publish after shutdown.
+          if (
+            text &&
+            !this.closed &&
+            this.changelogRequest === request &&
+            this.value.nextVersion === version
+          )
+            this.set({ changelogs: { ...this.value.changelogs, [locale]: text } });
+        })
+        .catch(() => {
+          // Notes are optional. Older releases and offline clients can still use the feed text.
+        })
+        .finally(() => request.pending.delete(locale));
+    }
   }
   private set(patch: Partial<UpdateStatus>) {
     this.value = { ...this.value, ...patch };

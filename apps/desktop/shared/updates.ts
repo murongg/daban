@@ -1,3 +1,6 @@
+import { isLocale, type Locale } from './locale';
+
+export const updateNotesLimit = 100_000;
 export const updatePhases = [
   'unsupported',
   'idle',
@@ -29,6 +32,7 @@ export interface UpdateStatus {
   version: string;
   nextVersion?: string;
   notes?: string;
+  changelogs?: Partial<Record<Locale, string>>;
   percent?: number;
   error?: UpdateError;
 }
@@ -76,7 +80,7 @@ export function isUpdateMessage(value: unknown): value is UpdateMessage {
   return (
     Object.keys(value).length === 2 &&
     Object.keys(status).every((key) =>
-      ['phase', 'version', 'nextVersion', 'notes', 'percent', 'error'].includes(key),
+      ['phase', 'version', 'nextVersion', 'notes', 'changelogs', 'percent', 'error'].includes(key),
     ) &&
     updatePhases.includes(status.phase as UpdatePhase) &&
     typeof status.version === 'string' &&
@@ -84,7 +88,13 @@ export function isUpdateMessage(value: unknown): value is UpdateMessage {
     (status.nextVersion === undefined ||
       (typeof status.nextVersion === 'string' && status.nextVersion.length <= 100)) &&
     (status.notes === undefined ||
-      (typeof status.notes === 'string' && status.notes.length <= 100000)) &&
+      (typeof status.notes === 'string' && status.notes.length <= updateNotesLimit)) &&
+    (status.changelogs === undefined ||
+      (record(status.changelogs) &&
+        Object.entries(status.changelogs).every(
+          ([locale, notes]) =>
+            isLocale(locale) && typeof notes === 'string' && notes.length <= updateNotesLimit,
+        ))) &&
     (status.percent === undefined ||
       (typeof status.percent === 'number' &&
         Number.isFinite(status.percent) &&
