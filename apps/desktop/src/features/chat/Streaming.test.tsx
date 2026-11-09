@@ -395,6 +395,31 @@ it('does not replay unchanged task history through the reducer on each response 
   }
 });
 
+it('shows the current work below the reply and pauses the effect while waiting', async () => {
+  const runtime = connect();
+  render(<App />);
+  const reply = (await screen.findByText('合成前缀甲')).closest('.bubble')!;
+  runtime.emit('a', {
+    toolCount: 1,
+    trace: [
+      {
+        name: 'browser_navigate',
+        surface: 'browser',
+        phase: 'running',
+        at: '2026-01-01T00:00:00Z',
+      },
+    ],
+  });
+  const activity = await screen.findByText('正在浏览网页');
+  const status = activity.closest<HTMLElement>('[role="status"]')!;
+  expect(screen.getByRole('log', { name: '对话记录' })).toContainElement(status);
+  expect(reply.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(activity).toHaveAttribute('data-active', 'true');
+  runtime.emit('a', { phase: 'waiting' });
+  expect(screen.getByText('等待你的回复')).not.toHaveAttribute('data-active');
+  expect(screen.getByRole('button', { name: '停止任务' })).toBeEnabled();
+});
+
 it.each([
   ['browser_navigate', '正在浏览网页'],
   ['browser_snapshot', '正在读取页面'],
@@ -449,7 +474,7 @@ it('keeps the reply before inserts that have not started', async () => {
     [...log.querySelectorAll('article.message, details.execution')].map((node) =>
       node.matches('details.execution') ? 'execution' : node.textContent,
     ),
-  ).toEqual(['合成问题甲', 'execution', '合成回复甲', '合成插话乙', '合成插话丙']);
+  ).toEqual(['合成问题甲', '合成回复甲', 'execution', '合成插话乙', '合成插话丙']);
 });
 
 it('places approval at the reply position without moving later inserts', async () => {
@@ -504,7 +529,7 @@ it('places approval at the reply position without moving later inserts', async (
           ? 'approval'
           : node.textContent,
     ),
-  ).toEqual(['合成问题甲', 'execution', '合成回复甲', 'approval', '合成插话乙', '合成插话丙']);
+  ).toEqual(['合成问题甲', '合成回复甲', 'execution', 'approval', '合成插话乙', '合成插话丙']);
 });
 
 it('keeps approval at the active question before any reply text exists', async () => {

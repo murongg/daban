@@ -76,12 +76,14 @@ function progress(task: RuntimeTask) {
   if (task.phase === 'waiting') return t('common.waitingReply');
   if (task.phase === 'paused') return t('chat.waitingHandBackControl');
   if (task.phase === 'starting') return t('chat.preparingResponse');
-  if (task.response?.state === 'streaming' && task.response.text) return t('chat.replying');
-  if (!task.toolCount) return t('chat.thinking');
   const tool = task.trace.at(-1);
-  if (tool?.surface === 'web')
+  if (tool?.phase !== 'running')
+    return task.response?.state === 'streaming' && task.response.text
+      ? t('chat.replying')
+      : t(task.toolCount ? 'chat.usingTools' : 'chat.thinking');
+  if (tool.surface === 'web')
     return tool.name === 'web_search' ? t('chat.searching') : t('chat.readingWebpage');
-  if (tool?.surface === 'browser') {
+  if (tool.surface === 'browser') {
     const browser: Record<string, string> = {
       browser_navigate: t('chat.browsingWeb'),
       browser_snapshot: t('chat.readingPage'),
@@ -92,7 +94,7 @@ function progress(task: RuntimeTask) {
     };
     return browser[tool.name] || t('chat.controllingBrowser');
   }
-  if (tool?.surface === 'desktop') return t('chat.controllingComputer');
+  if (tool.surface === 'desktop') return t('chat.controllingComputer');
   const labels: Record<string, string> = {
     skill: t('chat.loadingSkill'),
     schedule: t('chat.managingSchedules'),
@@ -101,7 +103,7 @@ function progress(task: RuntimeTask) {
     work: t('chat.organizingDos'),
     catalog: t('chat.readingTaskCatalog'),
   };
-  return labels[tool?.surface || ''] || t('chat.usingTools');
+  return labels[tool.surface] || t('chat.usingTools');
 }
 export function Conversation({
   state,
@@ -365,7 +367,6 @@ export function Conversation({
         recordedPhase={recorded?.phase}
         recordedElapsed={recorded?.elapsedMs}
         recordedThinking={recorded?.response?.thinking}
-        phase={message.streaming || message.incomplete ? task?.phase : undefined}
         dispatch={dispatch}
         preview={preview}
         openLink={openLink}
@@ -373,6 +374,16 @@ export function Conversation({
         notify={notify}
       />
     );
+  }
+  function messageRow(message: DisplayMessage): TranscriptEntry {
+    return {
+      id: `message:${message.id}`,
+      content: renderMessage(message),
+      bubbleKey:
+        message.role === 'user' || message.role === 'bot'
+          ? message.id.replace(/^runtime-partial:/, 'runtime-result:')
+          : undefined,
+    };
   }
   const rows: TranscriptEntry[] = [];
   if (history.loading || history.error || (entries.length && history.more))
@@ -417,12 +428,7 @@ export function Conversation({
         </div>
       ),
     });
-    rows.push(
-      ...earlier.map((message) => ({
-        id: `message:${message.id}`,
-        content: renderMessage(message),
-      })),
-    );
+    rows.push(...earlier.map(messageRow));
   } else if (!history.loading)
     rows.push({
       id: 'empty',
@@ -465,22 +471,27 @@ export function Conversation({
         </div>
       ),
     });
-  if (task?.runId)
-    rows.push({
-      id: `execution:${task.runId}`,
-      persistent: true,
-      content: (
-        <Execution
-          scope={{ bot: target, runId: task.runId, chatRevision: revision }}
-          phase={task.phase}
-        />
-      ),
-    });
-  const replyRows = current.map((message) => ({
-    id: `message:${message.id}`,
-    content: renderMessage(message),
+  const executionBelow = task?.phase === 'completed' && current.length > 0;
+  // Keep the same row key when completion moves the disclosure below the reply.
+  const executionRow: TranscriptEntry | undefined = task?.runId
+    ? {
+        id: `execution:${task.runId}`,
+        persistent: true,
+        content: (
+          <Execution
+            scope={{ bot: target, runId: task.runId, chatRevision: revision }}
+            phase={task.phase}
+            messageDetails={executionBelow}
+          />
+        ),
+      }
+    : undefined;
+  if (executionRow && !executionBelow) rows.push(executionRow);
+  const replyRows: TranscriptEntry[] = current.map((message) => ({
+    ...messageRow(message),
     persistent: !!task?.running,
   }));
+  if (executionRow && executionBelow) replyRows.push(executionRow);
   if (pendingIds) rows.push(...replyRows);
   if (live && task?.plan)
     rows.push({
@@ -507,12 +518,38 @@ export function Conversation({
       ),
     });
   if (!pendingIds) rows.push(...replyRows);
-  rows.push(
-    ...later.map((message) => ({ id: `message:${message.id}`, content: renderMessage(message) })),
-  );
+  if (task?.running)
+    rows.push({
+      id: 'progress',
+      anchor: false,
+      content: (
+        <div className="message-progress" role="status">
+          <Avatar bot={bot} size="small" />
+          <span
+            className="message-progress-label"
+            data-active={task.phase === 'running' || task.phase === 'starting' ? true : undefined}
+          >
+            {progress(task)}
+          </span>
+          {task.executedCount > 0 && (
+            <span>
+              {t('chat.toolCalled')}
+              {task.executedCount}
+              {t('chat.times')}
+            </span>
+          )}
+        </div>
+      ),
+    });
+  rows.push(...later.map(messageRow));
   return (
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
-      <Transcript scope={`${bot.id}:${revision}`} entries={rows} scroll={scroll} />
+      <Transcript
+        scope={`${bot.id}:${revision}`}
+        entries={rows}
+        scroll={scroll}
+        loading={history.loading || history.busy}
+      />
       <div className="composer-wrap">
         {onExcerpt && <Excerpt viewport={scroll.viewport} open={onExcerpt} />}
         {live &&
@@ -618,15 +655,7 @@ export function Conversation({
             </div>
           )}
         {live && task?.running && (
-          <div className="live-task" role="status">
-            <span>{progress(task)}</span>
-            {task.executedCount > 0 && (
-              <span>
-                {t('chat.toolCalled')}
-                {task.executedCount}
-                {t('chat.times')}
-              </span>
-            )}
+          <div className="live-task">
             <IconButton
               className="task-stop"
               label={t('chat.stopTask')}

@@ -30,6 +30,12 @@ function expectExecutionBefore(text: string) {
   expect(process.contains(bubble)).toBe(false);
   expect(process.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
+function expectExecutionBelow(text: string) {
+  const process = screen.getByText('执行过程').closest('details')!;
+  const bubble = screen.getByText(text).closest('.bubble')!;
+  expect(bubble.compareDocumentPosition(process) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(process.closest('.message-details')).toBeInTheDocument();
+}
 const orderTask: RuntimeTask = {
   runId: 'mock-order-run',
   requestId: 'mock-order-request',
@@ -689,7 +695,7 @@ it('saved private history and group replies use their own author, run and conver
     </RuntimeProvider>,
   );
   await screen.findByText('执行过程');
-  expectExecutionBefore('合成群回复');
+  expectExecutionBelow('合成群回复');
   await user.click(await screen.findByText('执行过程'));
   expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe(
@@ -858,7 +864,7 @@ it('waits for task preparation to finish before asking for a durable transcript'
   ).toHaveLength(1);
 });
 
-it('keeps the live execution before its bubble without remounting when a human request arrives', async () => {
+it('keeps the live execution visible and moves it below the completed reply without closing it', async () => {
   const state = initialState(),
     bot = state.bots.find((bot) => bot.id === 'research')!;
   state.messages[bot.id] = [];
@@ -914,9 +920,21 @@ it('keeps the live execution before its bubble without remounting when a human r
   await act(async () => backend.publish({ ...backend.snapshot, interactions: [] }));
   expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
   expect(disclosure.open).toBe(true);
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        a: { ...orderTask, result: '合成完成回复' },
+      },
+    }),
+  );
+  await screen.findByText('合成完成回复');
+  expectExecutionBelow('合成完成回复');
+  expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
+  expect(disclosure.open).toBe(true);
 });
 
-it('places an earlier private run transcript before its corresponding saved bubble', async () => {
+it('places an earlier completed private run transcript below its corresponding saved bubble', async () => {
   const state = initialState(),
     bot = state.bots.find((bot) => bot.id === 'research')!;
   state.messages[bot.id] = [
@@ -955,7 +973,7 @@ it('places an earlier private run transcript before its corresponding saved bubb
     </RuntimeProvider>,
   );
   await screen.findByText('执行过程');
-  expectExecutionBefore('合成较早回复');
+  expectExecutionBelow('合成较早回复');
 });
 
 it('places a running group member transcript before the streaming reply', async () => {
