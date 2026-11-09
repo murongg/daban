@@ -254,6 +254,74 @@ it('opens ordinary chats from the chats entry and preserves the Bot draft and ru
   ).toBe(false);
 });
 
+it('shows a loading icon only on the conversation whose message is processing', async () => {
+  const state = demoState();
+  localStorage.setItem(storageKey, serialize(state));
+  const snapshot = ready();
+  const bot = agentId(state.selected);
+  snapshot.profiles = [
+    {
+      id: bot,
+      name: '合成助手',
+      instructions: '',
+      memory: '',
+      color: 'mint',
+      revision: 1,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    },
+  ];
+  snapshot.chats = {
+    available: true,
+    revision: 1,
+    items: [{ bot, revision: 1, updatedAt: '2026-01-02T00:00:00Z' }],
+    conversations: [
+      { bot, revision: 0, title: '合成旧对话', updatedAt: '2026-01-01T00:00:00Z' },
+      { bot, revision: 1, title: '合成处理中对话', updatedAt: '2026-01-02T00:00:00Z' },
+    ],
+  };
+  const task = {
+    runId: 'mock-run',
+    prompt: '合成任务',
+    running: true,
+    phase: 'running' as const,
+    result: '',
+    error: '',
+    files: [],
+    history: [],
+    trace: [],
+    toolCount: 0,
+    executedCount: 0,
+    chatRevision: 1,
+  };
+  snapshot.agents[bot] = task;
+  const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
+  bridge(snapshot, listeners);
+  render(<App />);
+
+  const recent = within(await screen.findByRole('navigation', { name: '最近对话列表' }));
+  const processing = await recent.findByRole('button', {
+    name: /合成处理中对话.*正在处理你的消息/,
+  });
+  const old = recent.getByRole('button', { name: /^合成旧对话/ });
+  expect(
+    processing.closest('.recent-entry')?.querySelector('.recent-progress'),
+  ).toBeInTheDocument();
+  expect(old.closest('.recent-entry')?.querySelector('.recent-progress')).not.toBeInTheDocument();
+
+  await act(async () => {
+    for (const listener of listeners)
+      listener({
+        ...snapshot,
+        agents: { ...snapshot.agents, [bot]: { ...task, phase: 'waiting' } },
+      });
+  });
+  const waiting = await recent.findByRole('button', { name: /合成处理中对话.*待确认/ });
+  expect(
+    waiting.closest('.recent-entry')?.querySelector('.recent-progress'),
+  ).not.toBeInTheDocument();
+});
+
 it.each(['ready', 'offline'] as const)(
   'returns to an empty ordinary chat from the sidebar after selecting a Bot while %s',
   async (phase) => {
