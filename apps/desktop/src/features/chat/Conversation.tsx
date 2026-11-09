@@ -54,6 +54,7 @@ import {
   draftTextLimit,
   responderLocked,
 } from './conversations';
+import { DropHint } from './DropHint';
 import { Excerpt } from './Excerpt';
 import { Execution } from './Execution';
 import { FolderReferences } from './FolderReferences';
@@ -754,11 +755,7 @@ export function Conversation({
             send();
           }}
         >
-          {dragging && (
-            <p className="inline-note" role="status">
-              {t('common.dropAddAttachments')}
-            </p>
-          )}
+          {dragging && <DropHint />}
           {(attachments.length > 0 || folders.length > 0) && (
             <div className="attachments">
               <FolderReferences

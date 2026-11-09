@@ -1197,6 +1197,7 @@ button.chat-excerpt:hover {
   flex: 0 0 auto;
 }
 .composer {
+  position: relative;
   border: 1px solid var(--line-strong);
   border-radius: 19px;
   padding: 13px 13px 10px;
@@ -1205,6 +1206,45 @@ button.chat-excerpt:hover {
 .composer:focus-within,
 .composer[data-dragging="files"] {
   border-color: var(--muted);
+}
+.composer-drop {
+  position: absolute;
+  z-index: 1;
+  inset: 4px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px dashed var(--focus);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--canvas) 90%, transparent);
+  pointer-events: none;
+  text-align: center;
+}
+.composer-drop > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 12px;
+}
+.composer-drop svg {
+  width: 15px;
+  height: 15px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .composer-drop > span {
+    animation: drop-ready var(--motion-feedback) var(--motion-ease);
+  }
+}
+@keyframes drop-ready {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 .composer textarea {
   width: 100%;
@@ -1508,6 +1548,7 @@ button.chat-excerpt:hover {
   stroke-width: 1.6;
 }
 .workspace-tablist {
+  position: relative;
   display: flex;
   flex: 1;
   min-width: 0;
@@ -1516,8 +1557,9 @@ button.chat-excerpt:hover {
   overflow-y: hidden;
 }
 .workspace-tab:focus-visible {
-  /* Keep the focus outline inside the scrollable tab strip. */
-  outline-offset: -2px;
+  outline: none;
+  background: var(--selected);
+  color: var(--ink);
 }
 .workspace-tab:hover {
   color: var(--ink);
@@ -1525,14 +1567,39 @@ button.chat-excerpt:hover {
 .workspace-tab[aria-selected="true"] {
   color: var(--ink);
 }
-.workspace-tab[aria-selected="true"]::after {
+@media (forced-colors: active) {
+  .workspace-tab:focus-visible {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+.workspace-tablist:not([data-tab-indicator]) .workspace-tab[aria-selected="true"]::after {
   content: "";
   position: absolute;
   bottom: 0;
   left: 10px;
   right: 10px;
   height: 2px;
-  background: var(--ink);
+  border-bottom: 2px solid var(--ink);
+}
+.workspace-tab-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  display: none;
+  width: 1px;
+  border-bottom: 2px solid var(--ink);
+  transform-origin: left center;
+  pointer-events: none;
+}
+.workspace-tablist[data-tab-indicator] .workspace-tab-indicator {
+  display: block;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-tab-indicator {
+    transition: transform var(--motion-surface) var(--motion-ease);
+  }
 }
 .workspace-tabs .icon-button {
   flex-shrink: 0;

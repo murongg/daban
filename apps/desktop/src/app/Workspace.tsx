@@ -18,7 +18,15 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { type Dispatch, type KeyboardEvent, useCallback, useEffect, useState } from 'react';
+import {
+  type Dispatch,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { IconButton } from '../components/controls/Button';
 import { Pane } from '../components/controls/Pane';
 import { Select } from '../components/controls/Select';
@@ -97,6 +105,30 @@ export function Workspace({
     (bot.members || bot.kind === 'chat') && !['computer', 'files'].includes(state.panel || '')
       ? 'computer'
       : state.panel;
+  const tablist = useRef<HTMLDivElement>(null);
+  const indicator = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const list = tablist.current;
+    const marker = indicator.current;
+    const selected = list?.querySelector<HTMLElement>(`#tab-${panel}`);
+    if (!list || !marker || !selected) return;
+    const sync = () => {
+      const width = selected.offsetWidth - 20;
+      if (width <= 0) {
+        delete list.dataset.tabIndicator;
+        return;
+      }
+      // Use scroll-content coordinates so the underline travels with the strip.
+      marker.style.transform = `translateX(${selected.offsetLeft + 10}px) scaleX(${width})`;
+      list.dataset.tabIndicator = 'ready';
+    };
+    sync();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(sync);
+    observer.observe(list);
+    for (const tab of list.querySelectorAll('[role="tab"]')) observer.observe(tab);
+    return () => observer.disconnect();
+  }, [panel]);
   const [memoryStatus, setMemoryStatus] = useState<
     Record<string, { saving?: boolean; error?: string; conflict?: BotProfile }>
   >({});
@@ -155,6 +187,7 @@ export function Workspace({
     >
       <div className="workspace-tabs">
         <div
+          ref={tablist}
           className="workspace-tablist"
           role="tablist"
           aria-label={t('workspace.workspacePanel')}
@@ -177,6 +210,7 @@ export function Workspace({
               {t(label)}
             </button>
           ))}
+          <span ref={indicator} className="workspace-tab-indicator" aria-hidden="true" />
         </div>
         <IconButton
           label={t(expanded ? 'workspace.collapsePanel' : 'workspace.expandPanel')}

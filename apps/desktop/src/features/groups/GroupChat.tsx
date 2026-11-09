@@ -28,6 +28,7 @@ import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 import { Avatar } from '../bots/Avatar';
 import { draftFolders, draftPrompt, draftTextLimit } from '../chat/conversations';
+import { DropHint } from '../chat/DropHint';
 import { Execution } from '../chat/Execution';
 import { FolderReferences } from '../chat/FolderReferences';
 import { useFollow } from '../chat/follow';
@@ -547,11 +548,7 @@ export function GroupChat({
             send().catch((error) => notify(runtimeError(error)));
           }}
         >
-          {dragging && (
-            <p className="inline-note" role="status">
-              {t('common.dropAddAttachments')}
-            </p>
-          )}
+          {dragging && <DropHint />}
           {(attached.length > 0 || folders.length > 0) && (
             <div className="attachments">
               <FolderReferences
