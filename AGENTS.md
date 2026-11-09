@@ -25,6 +25,30 @@
 - Maintain Chinese and English messages in `apps/desktop/locales/zh-CN.ts` and `en.ts`. Both dictionaries must have matching keys and placeholders.
 - Access application copy through typed `MessageKey` values. Preserve user content, model output, saved names, and domain enum values as authored; do not turn them into translation keys.
 
+## Desktop UI Design
+
+- Keep the interface restrained and minimal. Reuse the components and design tokens in [DESIGN.md](DESIGN.md), and establish hierarchy through alignment, spacing, and typography.
+- Use borders, fills, shadows, accent colors, and motion only when they clarify grouping, priority, state, or feedback. Give each section at most one visually dominant action.
+- Place actions next to the content they affect and group related controls with consistent sizing and spacing. For example, place discussion refresh beside the discussion heading and discard beside save.
+- Use `IconButton` for familiar actions in compact headers and toolbars. Keep visible text when the icon alone would leave the action or its consequences unclear.
+- Give icon-only buttons a localized accessible name and a tooltip on hover and keyboard focus when enabled. Preserve loading feedback, disabled states, and destructive-action confirmations.
+- Verify the layout at the narrowest supported pane width and check that each action is reachable and usable by keyboard.
+
+### Resizable Panels
+
+- Add a draggable divider when users work with two visible panes and benefit from trading space between them, such as chat and the Bot workspace or the task list and detail editor. Keep category rails, single-column pages, and equal-width board columns simple. For short-lived dialogs with a list and preview, try stacking them at narrow widths first.
+- Reuse `Pane` in `apps/desktop/src/components/controls/Pane.tsx` for resizable panes. Keep the divider visible and focusable, give it a localized accessible name, and support pointer drag, arrow keys, and Home/End. Keep its hit area out of Electron's window drag region.
+- Reserve usable width for both panes and keep pointer, keyboard, and CSS limits in agreement. Preserve the existing overlay or single-column layout when space is tight, and hide the divider when only one pane is available. Remember widths independently as local UI preferences. Clamp the displayed width to the available space while retaining the saved preference and any in-progress edits.
+- Verify rendered widths in a browser at wide and narrow sizes. Cover dragging, keyboard limits, reopening or reloading, and switching between split and expanded views without losing edits.
+
+### Focus Indicators
+
+- Trace unexpected rings through both the shared focus rules and component overrides. Check `outline`, `outline-offset`, and which element owns the visible border or background.
+- Use the shared `--focus` token and the focus geometry in `DESIGN.md`. Keep field focus along the existing edge and button focus close to the control. Inset outlines inside clipped or scrollable strips.
+- Draw a composite field's text-entry focus on its visible container. For address bars, search boxes, and date or number fields, suppress the inner input outline only when the container provides a visible replacement. Give embedded actions such as submit and calendar buttons their own keyboard focus indicator.
+- Preserve visible keyboard focus through `:focus-visible` or React Aria's `data-focus-visible` as appropriate. Treat selection, validation, and remote desktop takeover as separate states with their own cues.
+- Verify focus changes in Chromium with mouse clicks, `Tab`, and `Shift+Tab`. Check light and dark themes and forced colors. Confirm that the indicator stays distinct from the resting border, follows the focused target, and remains visible in dense or clipped layouts.
+
 ## Readability and Linting
 
 - Do not handwrite minified source or pack independent statements onto one line. Use normal indentation, line breaks, and clear code blocks.
