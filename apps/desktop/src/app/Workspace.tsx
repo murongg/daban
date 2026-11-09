@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { type Dispatch, type KeyboardEvent, useCallback, useEffect, useState } from 'react';
 import { IconButton } from '../components/controls/Button';
+import { Pane } from '../components/controls/Pane';
 import { Select } from '../components/controls/Select';
 import { TimeField } from '../components/controls/TimeField';
 import { Avatar } from '../features/bots/Avatar';
@@ -146,9 +147,11 @@ export function Workspace({
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [panel]);
   return (
-    <aside
+    <Pane
+      id="bot-workspace"
       className={`workspace ${expanded ? 'expanded' : ''}`}
-      aria-label={t('workspace.botWorkspace')}
+      label={t('workspace.botWorkspace')}
+      resizable={!expanded}
     >
       <div className="workspace-tabs">
         <div
@@ -680,6 +683,6 @@ export function Workspace({
           </div>
         )}
       </div>
-    </aside>
+    </Pane>
   );
 }

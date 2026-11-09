@@ -27,6 +27,7 @@ import {
 import { type Dispatch, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
 import { WindowList } from '../components/collection/WindowList';
 import { IconButton } from '../components/controls/Button';
+import { Pane } from '../components/controls/Pane';
 import { Avatar, Brand } from '../features/bots/Avatar';
 import { RecentConversations } from '../features/chat/RecentConversations';
 import { UpdateButton } from '../features/settings/Updates';
@@ -276,7 +277,12 @@ export function Sidebar({
   return (
     <>
       {open && <div className="sidebar-scrim" onClick={close} aria-hidden="true" />}
-      <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('sidebar.sidebar')}>
+      <Pane
+        id="sidebar"
+        className={`sidebar ${open ? 'open' : ''}`}
+        label={t('sidebar.sidebar')}
+        edge="right"
+      >
         <header className="sidebar-header">
           {window.daban?.platform === 'win32' && (
             <span className="sidebar-brand">
@@ -564,7 +570,7 @@ export function Sidebar({
             </div>
           </div>
         </footer>
-      </aside>
+      </Pane>
       {menu && (
         <SidebarMenu
           label={menu.kind === 'bot' ? t('sidebar.organizeBot') : t('sidebar.organizeSections')}

@@ -2023,6 +2023,7 @@ export const chinese = {
   'knowledge.updateLocalRuntimeUseDocumentLibrary': '需要更新本地运行环境后使用资料库。',
   'knowledge.viewDocumentRevisions': '查看资料版本',
   'language.languageSettingWasNotSavedPleaseRetry': '语言设置未保存，请重试。',
+  'layout.resizePane': '调整{0}宽度',
   'livebrowser.awaitingConfirmation': '等待确认',
   'livebrowser.browser': '{0}的浏览器',
   'livebrowser.browserScreen': '{0}的浏览器画面',

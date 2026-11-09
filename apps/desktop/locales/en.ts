@@ -2274,6 +2274,7 @@ export const english = {
     'Update the local runtime to use the document library.',
   'knowledge.viewDocumentRevisions': 'View document revisions',
   'language.languageSettingWasNotSavedPleaseRetry': 'Language setting was not saved. Please retry.',
+  'layout.resizePane': 'Resize {0}',
   'livebrowser.awaitingConfirmation': 'Awaiting confirmation',
   'livebrowser.browser': 'Browser for {0}',
   'livebrowser.browserScreen': 'Browser screen for {0}',
