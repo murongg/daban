@@ -2527,7 +2527,7 @@ textarea.skill-source {
   margin-top: 8px;
 }
 .task-plan {
-  border-block: 1px solid var(--line);
+  border-block-start: 1px solid var(--line);
   padding: 16px 0;
   margin-top: 20px;
   font-size: 12px;
