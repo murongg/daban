@@ -107,24 +107,28 @@ export async function verifyComponent(
       );
       const team = /^TeamIdentifier=([A-Z0-9]{10})\s*$/m.exec(publisher.stderr)?.[1];
       if (!team) throw Error('COMPONENT_SIGNATURE');
-      await command(
-        '/usr/bin/codesign',
-        [
-          '--verify',
-          '--deep',
-          '--strict',
-          '-R',
-          // codesign treats plain text as a file path; '=' selects an inline requirement.
-          `=anchor apple generic and identifier "dev.daban.runtime" and certificate leaf[subject.OU] = "${team}"`,
-          root,
-        ],
-        options.signal,
-      );
-      await command(
-        '/usr/sbin/spctl',
-        ['--assess', '--type', 'execute', '--verbose=2', root],
-        options.signal,
-      );
+      // Drain both checks before a failed verification can trigger staging cleanup.
+      const checks = await Promise.allSettled([
+        command(
+          '/usr/bin/codesign',
+          [
+            '--verify',
+            '--deep',
+            '--strict',
+            '-R',
+            // codesign treats plain text as a file path; '=' selects an inline requirement.
+            `=anchor apple generic and identifier "dev.daban.runtime" and certificate leaf[subject.OU] = "${team}"`,
+            root,
+          ],
+          options.signal,
+        ),
+        command(
+          '/usr/sbin/spctl',
+          ['--assess', '--type', 'execute', '--verbose=2', root],
+          options.signal,
+        ),
+      ]);
+      if (checks.some((check) => check.status === 'rejected')) throw Error('COMPONENT_SIGNATURE');
     } catch {
       throw Error('COMPONENT_SIGNATURE');
     }

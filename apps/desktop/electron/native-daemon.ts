@@ -2,13 +2,14 @@ import { spawn } from 'node:child_process';
 import { lstat, mkdir, open } from 'node:fs/promises';
 import path from 'node:path';
 import { privateMetadata, secureDirectory } from '@daban/engine/local-computer';
+import type { RuntimeSnapshot } from '@daban/protocol';
 import { type DaemonConfig, daemonScope } from './daemon';
 import { RuntimeClient } from './runtime';
 import { readAgentToken, unixFetch } from './unix';
 
 export class NativeDaemon {
   private readonly abort = new AbortController();
-  private starting?: Promise<RuntimeClient>;
+  private starting?: Promise<{ client: RuntimeClient; snapshot: RuntimeSnapshot }>;
   constructor(
     readonly config: DaemonConfig,
     readonly mode: 'native' | 'vm' = 'native',
@@ -48,9 +49,9 @@ export class NativeDaemon {
     if (snapshot.phase !== 'ready') throw new Error('AGENT_NOT_READY');
     if (this.mode === 'vm' && snapshot.agent?.execution !== 'linux-vm')
       throw new Error('AGENT_DAEMON_MODE_MISMATCH');
-    return client;
+    return { client, snapshot };
   }
-  ensure(): Promise<RuntimeClient> {
+  ensure() {
     this.starting ??= this.start().finally(() => {
       this.starting = undefined;
     });

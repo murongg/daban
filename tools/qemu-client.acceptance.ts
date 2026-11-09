@@ -212,10 +212,11 @@ try {
     const initial = await ready(opened.page, 'local-workspace');
     assert.equal(initial.profiles.length, 0);
     assert.equal(initial.model.configured, false);
-    assert.ok(initial.setup?.windows);
+    const setup = await invoke<SetupStatus>(opened.page, { type: 'setup.status' });
+    assert.ok(setup.windows);
     if (mode === 'whpx')
       assert.equal(
-        initial.setup.windows.acceleration,
+        setup.windows.acceleration,
         'ready',
         'WHPX acceptance requires a completed Windows restart.',
       );
@@ -225,8 +226,8 @@ try {
         : 'isolated-packaged-client-and-bundled-runtime',
     );
     if (download) {
-      assert.equal(initial.setup.phase, resumeDownload ? 'cancelled' : 'available');
-      assert.equal(initial.setup.windows.downloadBytes, windowsEnvironment.bytes);
+      assert.equal(setup.phase, resumeDownload ? 'cancelled' : 'available');
+      assert.equal(setup.windows.downloadBytes, windowsEnvironment.bytes);
       if (!resumeDownload)
         await assert.rejects(lstat(path.join(dataRoot, 'qemu-cache')), { code: 'ENOENT' });
       check('opening-client-does-not-download-linux');

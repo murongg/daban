@@ -112,6 +112,9 @@ it.each(['native', 'vm'] as const)(
     try {
       const [first, second] = await Promise.all([daemon.ensure(), daemon.ensure()]);
       expect(first).toBe(second);
+      expect(first).toMatchObject({
+        snapshot: { phase: 'ready', agent: { execution: mock.execution } },
+      });
       expect(mock.spawn).toHaveBeenCalledTimes(1);
       expect(mock.spawn.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--qemu-bundle', config.qemuBundle]),

@@ -118,9 +118,20 @@ it.skipIf(process.platform !== 'darwin' || process.env.DABAN_LAUNCHD_TEST !== '1
           phase: 'ready',
           protocolVersion: 43,
           agent: { execution: 'local-workspace' },
-          setup: { required: false, target: 'linux', phase: 'existing' },
         },
       });
+      // Linux setup is reported by the background poll after the new Agent is ready.
+      await vi.waitFor(
+        async () => {
+          expect(
+            await mock.handler!({ senderFrame: frame, sender }, { type: 'status' }),
+          ).toMatchObject({
+            ok: true,
+            value: { setup: { required: false, target: 'linux', phase: 'existing' } },
+          });
+        },
+        { timeout: 3000 },
+      );
       expect(await readFile(path.join(root, 'user-work.txt'), 'utf8')).toBe(
         'SYNTHETIC WORKSPACE RETAINED',
       );

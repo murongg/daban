@@ -56,6 +56,29 @@ it('binds the runtime signature to the client publisher before allowing the exec
     executable: path.join(f.root, 'Contents/MacOS/agent'),
   });
 });
+it('waits for the concurrent Gatekeeper assessment after a signature failure', async () => {
+  const f = await fixture();
+  let finishAssessment: () => unknown = () => undefined;
+  const assessment = new Promise((resolve) => {
+    finishAssessment = () => resolve(undefined);
+  });
+  const run = vi.fn(async (program: string, args: string[]) => {
+    if (args.includes('-d')) return { stdout: '', stderr: 'TeamIdentifier=TESTTEAM01\n' };
+    if (program.endsWith('codesign')) throw new Error('SYNTHETIC INVALID SIGNATURE');
+    await assessment;
+    return { stdout: '', stderr: '' };
+  });
+  const finished = vi.fn();
+  const verification = verifyComponent(f, { run }).then(finished, finished);
+  try {
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    expect(finished).not.toHaveBeenCalled();
+  } finally {
+    finishAssessment();
+    await verification;
+  }
+  expect(finished).toHaveBeenCalledWith(new Error('COMPONENT_SIGNATURE'));
+});
 it('rejects a wrong source identity and an unsigned publisher without a fallback', async () => {
   const f = await fixture();
   const run = vi.fn(async () => ({ stdout: '', stderr: 'Signature=adhoc\n' }));
