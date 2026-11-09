@@ -45,7 +45,7 @@ export function transferFiles(data: DataTransfer) {
     return file ? [file] : [];
   });
 }
-function fileDrag(data: DataTransfer) {
+export function fileDrag(data: DataTransfer) {
   return (
     Array.from(data.types).includes('Files') ||
     data.files.length > 0 ||

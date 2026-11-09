@@ -16,7 +16,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -152,6 +152,48 @@ it('retains group drafts while a global recovery fence blocks new collaboration'
   expect(input.textContent).toBe('SYNTHETIC-QUEUED-DRAFT');
   expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   expect(fake.invoke.mock.calls.some(([command]) => command.type === 'group.send')).toBe(false);
+});
+
+it('keeps a directory drop on the rich group editor as a chip and sends its path exactly once', async () => {
+  const backend = connect(false, false, 30);
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { ...window.daban, getPathForFile: () => '/mock/group-project' },
+  });
+  const state = initialState();
+  state.selected = 'crew';
+  state.panel = null;
+  state.drafts.crew = 'SYNTHETIC GROUP DRAFT';
+  localStorage.setItem(storageKey, serialize(state));
+  render(<App />);
+  const input = await screen.findByRole('textbox', { name: '发送消息' });
+  const directory = new File([], 'group-project');
+  fireEvent.drop(input, {
+    dataTransfer: {
+      types: ['Files', 'text/plain'],
+      files: [directory],
+      items: [
+        {
+          kind: 'file',
+          getAsFile: () => directory,
+          webkitGetAsEntry: () => ({ isDirectory: true, name: 'group-project' }),
+        },
+      ],
+      getData: (type: string) => (type === 'text/plain' ? '/mock/group-project' : ''),
+    },
+  });
+  expect(screen.getByRole('button', { name: '查看文件夹路径 group-project' })).toBeVisible();
+  expect(input.textContent).toBe('SYNTHETIC GROUP DRAFT');
+  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(backend.invoke.mock.calls.map(([command]) => command)).toContainEqual(
+    expect.objectContaining({
+      type: 'group.send',
+      input: expect.objectContaining({
+        prompt: 'SYNTHETIC GROUP DRAFT\n/mock/group-project',
+      }),
+    }),
+  );
+  expect(screen.queryByRole('button', { name: '查看文件夹路径 group-project' })).toBeNull();
 });
 function connect(archived = false, recovering = false, protocol = 15) {
   let snapshot = disconnected('ready');
