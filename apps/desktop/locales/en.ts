@@ -20,7 +20,10 @@ export const english = {
   'hostBrowser.takeOverShort': 'Take over',
   'hostBrowser.humanShort': 'You have control',
   'hostBrowser.profileLabel': 'Dedicated profile · Sign-ins stay on this computer',
-  'hostBrowser.about': 'How it works',
+  'hostBrowser.about': 'Browser settings',
+  'hostBrowser.autoStart': 'Allow this Bot to open the browser',
+  'hostBrowser.autoStartHelp':
+    'This Bot can use sign-ins saved in the Daban browser during a task. Page content is sent to the selected model. Change this setting between tasks. Turning it off disconnects this Bot’s browser.',
   'hostBrowser.textInput': 'Text input',
   'hostBrowser.consentBrief':
     'After handback, the Bot can use signed-in accounts and send page content to your selected model.',
@@ -268,6 +271,9 @@ export const english = {
     'Run routine Linux operations automatically; ask for risky operations and external tools.',
   'approval.fullDescription':
     'Automatically approve enabled tools for future tasks in this conversation; keep environment and file access limits.',
+  'approval.previousFull': 'Full access (previous scope)',
+  'approval.fullBrowserDescription':
+    'Automatically approve enabled tools for future tasks in this conversation and allow them to open the built-in browser with saved sign-ins. Environment and file access limits still apply.',
   'approval.automaticallyApproved': 'Automatically approved by conversation policy',
   'errors.taskTimeLimit': 'Task reached its time limit and stopped. Saved files are retained.',
   'errors.taskToolLimit':

@@ -21,6 +21,8 @@ it('accepts only closed host browser requests and rejects extra authority or uns
   for (const request of [
     { action: 'open', bot: 'mock-bot' },
     { action: 'state', bot: 'mock-bot' },
+    { action: 'autoStart', bot: 'mock-bot' },
+    { action: 'autoStart', bot: 'mock-bot', enabled: true },
     {
       action: 'target',
       bot: 'mock-bot',
@@ -50,6 +52,7 @@ it('accepts only closed host browser requests and rejects extra authority or uns
   }
   for (const request of [
     { action: 'open', bot: '../escape' },
+    { action: 'autoStart', bot: 'mock-bot', enabled: 'true' },
     { action: 'control', bot: 'mock-bot', instance: 'mock-browser', epoch: 1, owner: 'admin' },
     { action: 'close', bot: 'mock-bot' },
     {
@@ -61,6 +64,29 @@ it('accepts only closed host browser requests and rejects extra authority or uns
     },
   ])
     expect(isHostBrowserRequest(request)).toBe(false);
+});
+
+it('validates the Bot and requested value in an auto-start setting reply', async () => {
+  let reply = { bot: 'mock-other', enabled: true };
+  const client = new RuntimeClient({
+    origin: 'http://127.0.0.1:8766',
+    agent: true,
+    tokenProvider: async () => 'a'.repeat(64),
+    fetcher: async () => Response.json(reply),
+  });
+  vi.spyOn(client, 'status').mockResolvedValue({
+    ...disconnected('ready'),
+    hostBrowser: { available: true, connections: [] },
+  });
+  const command = {
+    type: 'hostBrowser',
+    request: { action: 'autoStart', bot: 'mock-bot', enabled: true },
+  } as const;
+  await expect(client.invoke(parseCommand(command))).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = { bot: 'mock-bot', enabled: false };
+  await expect(client.invoke(parseCommand(command))).rejects.toThrow('INVALID_RUNTIME_STATE');
+  reply = { bot: 'mock-bot', enabled: true };
+  await expect(client.invoke(parseCommand(command))).resolves.toEqual(reply);
 });
 
 it('binds each advertised host browser connection to its own Bot and rejects duplicate identities', () => {

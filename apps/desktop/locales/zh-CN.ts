@@ -21,7 +21,10 @@ export const chinese = {
   'hostBrowser.takeOverShort': '接管',
   'hostBrowser.humanShort': '由你控制',
   'hostBrowser.profileLabel': '独立配置 · 登录保存在本机',
-  'hostBrowser.about': '使用说明',
+  'hostBrowser.about': '浏览器设置',
+  'hostBrowser.autoStart': '允许此 Bot 自行打开浏览器',
+  'hostBrowser.autoStartHelp':
+    'Bot 可在任务中使用搭伴浏览器保存的登录，页面内容会发送给所选模型。请在任务结束后修改权限，关闭授权会断开此 Bot 的浏览器。',
   'hostBrowser.textInput': '文字输入',
   'hostBrowser.consentBrief': '交还后，Bot 可使用登录账号，页面内容会发送给所选模型。',
   'hostBrowser.takeOver': '接管浏览器',
@@ -231,6 +234,9 @@ export const chinese = {
   'approval.askDescription': '执行 Linux 命令、读取网页和调用外部工具前请求批准。',
   'approval.autoDescription': '普通 Linux 操作自动执行；风险操作和外部工具请求批准。',
   'approval.fullDescription': '当前会话的后续任务自动批准已启用工具；保留执行环境与文件访问限制。',
+  'approval.previousFull': '完全访问权限（旧范围）',
+  'approval.fullBrowserDescription':
+    '当前会话的后续任务自动批准已启用工具，也可打开内置浏览器并使用已保存的登录。保留执行环境与文件访问限制。',
   'approval.automaticallyApproved': '已按会话策略自动批准',
   'errors.taskTimeLimit': '任务达到实际运行时长上限，已停止；已保存文件仍保留。',
   'errors.taskToolLimit': '任务达到操作次数上限，已停止；请核对已有文件后继续。',

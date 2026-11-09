@@ -1,6 +1,7 @@
 import {
   agentId,
   agentTask,
+  browserApprovalProtocol,
   isModelId,
   modelRecoveryBlocked,
   type RuntimeTask,
@@ -26,7 +27,7 @@ import { demoIds } from '../../app/samples';
 import {
   type Action,
   type Bot,
-  chatApprovalMode,
+  chatApproval,
   chatRevision,
   lifecycleRequest,
   messageQueue,
@@ -151,6 +152,10 @@ export function Conversation({
   );
   const lifecycleReadOnly = !!bot.archived || !!operation;
   const revision = chatRevision(state, bot.id, runtime.snapshot.chats);
+  const approval = chatApproval(state, bot.id, revision, runtime.snapshot.protocolVersion);
+  const browserApproval =
+    runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
+    runtime.snapshot.hostBrowser?.available === true;
   const trashPending = conversationPending(state, bot.id, revision);
   const trashed = conversationState(state, bot.id, revision, runtime.snapshot.chats)?.trashed;
   const readOnly = lifecycleReadOnly || !!state.chatRequests[bot.id] || !!trashPending || !!trashed;
@@ -831,10 +836,18 @@ export function Conversation({
             </Tooltip>
             {live && runtime.snapshot.protocolVersion >= 44 && (
               <ApprovalMode
-                value={chatApprovalMode(state, bot.id, revision)}
+                value={approval.approvalMode ?? 'auto'}
+                browserApproval={browserApproval}
+                browserGranted={approval.browserAutoStart}
                 disabled={readOnly || pending || recovering}
                 onChange={(mode) =>
-                  dispatch({ type: 'approval-mode', bot: bot.id, revision, mode })
+                  dispatch({
+                    type: 'approval-mode',
+                    bot: bot.id,
+                    revision,
+                    mode,
+                    browserAutoStart: browserApproval,
+                  })
                 }
               />
             )}

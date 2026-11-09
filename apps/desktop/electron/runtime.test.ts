@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { disconnected } from '@daban/protocol';
+import { browserApprovalProtocol, disconnected } from '@daban/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import { parseCommand, trustedSender } from './ipc';
 import { RuntimeClient } from './runtime';
@@ -23,6 +23,25 @@ it('validates the approval mode and refuses it before sending to a runtime witho
   });
   vi.spyOn(client, 'status').mockResolvedValue({ ...disconnected('ready'), protocolVersion: 43 });
   await expect(client.invoke({ type: 'task.start', bot: 'a', task })).rejects.toThrow(
+    'RUNTIME_TOO_OLD',
+  );
+  expect(fetcher).not.toHaveBeenCalled();
+  const browserTask = { ...task, browserAutoStart: true } as const;
+  expect(parseCommand({ type: 'task.start', bot: 'a', task: browserTask })).toMatchObject({
+    task: browserTask,
+  });
+  expect(() =>
+    parseCommand({
+      type: 'task.start',
+      bot: 'a',
+      task: { ...browserTask, approvalMode: 'auto' },
+    }),
+  ).toThrow('INVALID_COMMAND');
+  vi.mocked(client.status).mockResolvedValue({
+    ...disconnected('ready'),
+    protocolVersion: browserApprovalProtocol - 1,
+  });
+  await expect(client.invoke({ type: 'task.start', bot: 'a', task: browserTask })).rejects.toThrow(
     'RUNTIME_TOO_OLD',
   );
   expect(fetcher).not.toHaveBeenCalled();

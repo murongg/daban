@@ -5,6 +5,7 @@ import {
   botBundleLimit,
   botBundleText,
   botCopyKey,
+  browserApprovalProtocol,
   diagnosticModel,
   disconnected,
   groupCopyKey,
@@ -1510,7 +1511,19 @@ export class RuntimeClient {
         throw new Error('HOST_BROWSER_UNAVAILABLE');
       const request = command.request;
       const result = await this.api('/api/host-browser', request);
-      if (request.action === 'open' || request.action === 'close') {
+      if (request.action === 'autoStart') {
+        if (
+          !result ||
+          typeof result !== 'object' ||
+          Object.keys(result).length !== 2 ||
+          !('bot' in result) ||
+          result.bot !== request.bot ||
+          !('enabled' in result) ||
+          typeof result.enabled !== 'boolean' ||
+          (request.enabled !== undefined && result.enabled !== request.enabled)
+        )
+          throw new Error('INVALID_RUNTIME_STATE');
+      } else if (request.action === 'open' || request.action === 'close') {
         if (
           !isHostBrowserStatus(result) ||
           !result.available ||
@@ -2089,6 +2102,8 @@ export class RuntimeClient {
         if (command.task.retryTurn !== undefined && current.protocolVersion < 43)
           throw new Error('RUNTIME_TOO_OLD');
         if (command.task.approvalMode !== undefined && current.protocolVersion < 44)
+          throw new Error('RUNTIME_TOO_OLD');
+        if (command.task.browserAutoStart && current.protocolVersion < browserApprovalProtocol)
           throw new Error('RUNTIME_TOO_OLD');
         if (
           (command.task.contextRevision !== undefined || command.task.model !== undefined) &&

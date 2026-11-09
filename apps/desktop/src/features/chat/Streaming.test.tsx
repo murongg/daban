@@ -5,6 +5,7 @@ import { demoState as seedDemoState } from '../../test/fixtures';
 seedBeforeEach(() => localStorage.setItem(seedStorageKey, seedSerialize(seedDemoState())));
 
 import {
+  browserApprovalProtocol,
   disconnected,
   type RuntimeBridge,
   type RuntimeCommand,
@@ -83,27 +84,54 @@ function connect(interactions: RuntimeSnapshot['interactions'] = []) {
   };
 }
 
-it('captures the current conversation approval choice in a new send and keeps an uncertain send unchanged', async () => {
-  const backend = connect();
-  backend.state.protocolVersion = 44;
-  backend.state.chats = { available: true, revision: 0, items: [] };
-  backend.emit('a', { running: false, phase: 'completed', response: undefined });
-  render(<App />);
-  const trigger = await screen.findByRole('button', { name: /审批模式/ });
-  await userEvent.click(trigger);
-  await userEvent.click(screen.getByRole('option', { name: /^完全访问权限/ }));
-  await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC POLICY TASK');
-  await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
-  const sent = backend.invoke.mock.calls
-    .map(([command]) => command)
-    .find((command) => command.type === 'task.start');
-  expect(sent).toMatchObject({
-    type: 'task.start',
-    task: { approvalMode: 'full', chatRevision: 0 },
-  });
-  const stored = JSON.parse(localStorage.getItem(seedStorageKey)!);
-  expect(stored.state.runtimeRequests.research.approvalMode).toBe('full');
-});
+it.each([false, true])(
+  'captures the approval choice and preserves it on an uncertain send (browser support: %s)',
+  async (browser) => {
+    const backend = connect();
+    backend.state.protocolVersion = browser ? browserApprovalProtocol : 44;
+    if (browser) {
+      backend.state.hostBrowser = { available: true, connections: [] };
+      const state = workspace.reduce(seedDemoState(), {
+        type: 'approval-mode',
+        bot: 'research',
+        revision: 0,
+        mode: 'full',
+      });
+      localStorage.setItem(seedStorageKey, seedSerialize(state));
+    }
+    backend.state.chats = { available: true, revision: 0, items: [] };
+    backend.emit('a', { running: false, phase: 'completed', response: undefined });
+    render(<App />);
+    const trigger = await screen.findByRole('button', { name: /审批模式/ });
+    await userEvent.click(trigger);
+    if (browser) {
+      expect(screen.getByRole('option', { name: /^完全访问权限（旧范围）/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      expect(screen.getByText(/也可打开内置浏览器并使用已保存的登录/)).toBeVisible();
+    }
+    await userEvent.click(screen.getByRole('option', { name: /^完全访问权限(?!（旧范围）)/ }));
+    await userEvent.type(
+      screen.getByRole('textbox', { name: '发送消息' }),
+      'SYNTHETIC POLICY TASK',
+    );
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    const sent = backend.invoke.mock.calls
+      .map(([command]) => command)
+      .find((command) => command.type === 'task.start');
+    expect(sent).toMatchObject({
+      type: 'task.start',
+      task: { approvalMode: 'full', chatRevision: 0 },
+    });
+    const stored = JSON.parse(localStorage.getItem(seedStorageKey)!);
+    expect(stored.state.runtimeRequests.research.approvalMode).toBe('full');
+    expect(stored.state.runtimeRequests.research.browserAutoStart).toBe(browser ? true : undefined);
+    expect(sent?.type === 'task.start' && sent.task.browserAutoStart).toBe(
+      browser ? true : undefined,
+    );
+  },
+);
 
 it('stops the selected Bot through an accessible icon with a tooltip', async () => {
   const backend = connect();
