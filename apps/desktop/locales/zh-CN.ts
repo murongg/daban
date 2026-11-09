@@ -2970,7 +2970,7 @@ export const chinese = {
   'state.startFirstMessage': '从第一条消息开始',
   'state.taskFinishedCheckOutputFiles': '任务已结束，请核对输出文件。',
   'state.taskStoppedSavedFilesRetained': '任务已停止，已经保存的文件仍然保留。',
-  'tasks.backTasks': '返回任务列表',
+  'tasks.closeEditor': '关闭任务详情',
   'tasks.blocked': '受阻',
   'tasks.board': '看板',
   'tasks.closed': '已关闭',
