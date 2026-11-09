@@ -46,14 +46,17 @@ export function RecentConversations({
     [menu],
   );
   const needle = query.trim().toLowerCase();
-  const rows = (
-    runtime.enabled && runtime.snapshot.protocolVersion < 46
-      ? []
-      : recentConversations(state, runtime.snapshot.chats)
-  ).filter((row) => {
-    const bot = state.bots.find((bot) => bot.id === row.bot);
-    return !needle || `${row.title} ${bot?.name ?? ''}`.toLowerCase().includes(needle);
-  });
+  // Local ordinary chats can be reopened before the backend supports conversation history.
+  const unified = !runtime.enabled || runtime.snapshot.protocolVersion >= 46;
+  const rows = recentConversations(state, unified ? runtime.snapshot.chats : undefined).filter(
+    (row) => {
+      const bot = state.bots.find((bot) => bot.id === row.bot);
+      return (
+        (unified || bot?.kind === 'chat') &&
+        (!needle || `${row.title} ${bot?.name ?? ''}`.toLowerCase().includes(needle))
+      );
+    },
+  );
   if (!rows.length && !onNewChat) return null;
   return (
     <section className="recent-conversations" aria-label={t('conversations.recent')}>
