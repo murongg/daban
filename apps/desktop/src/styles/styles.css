@@ -169,6 +169,46 @@ button {
   min-height: 560px;
   overflow: hidden;
 }
+.pane {
+  /* The separator reads these pixel limits to expose the same range to the keyboard. */
+  position: relative;
+  width: clamp(
+    var(--pane-min),
+    var(--pane-width, var(--pane-default)),
+    min(var(--pane-cap, 100%), 100% - var(--pane-reserve))
+  );
+  flex-shrink: 0;
+}
+.pane-divider {
+  position: absolute;
+  z-index: 2;
+  inset-block: 0;
+  display: grid;
+  place-items: center;
+  width: 10px;
+  margin: 0;
+  border: 0;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+.pane-divider-left {
+  left: -5px;
+}
+.pane-divider-right {
+  right: -5px;
+}
+.pane-divider::after {
+  content: "";
+  width: 2px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--scroll-hover);
+}
+.pane-divider:is(:hover, :active, :focus-visible)::after {
+  height: 100%;
+  background: var(--focus);
+}
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -268,8 +308,10 @@ textarea.field {
   line-height: 1.7;
 }
 .sidebar {
-  width: 272px;
-  flex-shrink: 0;
+  --pane-default: 272px;
+  --pane-min: 200px;
+  --pane-cap: 400px;
+  --pane-reserve: 420px;
   background: var(--sidebar);
   border-right: 1px solid var(--line);
   display: flex;
@@ -1275,9 +1317,10 @@ textarea.field {
   background: var(--soft);
 }
 .workspace {
-  width: 42%;
-  max-width: 580px;
-  min-width: 350px;
+  --pane-default: min(42%, 580px);
+  --pane-min: 350px;
+  --pane-cap: 880px;
+  --pane-reserve: 320px;
   border-left: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -3044,19 +3087,19 @@ textarea.skill-source {
     padding-right: 65px;
   }
   .workspace {
-    width: 40%;
+    --pane-default: min(40%, 580px);
   }
 }
 @media (max-width: 1280px) {
   .sidebar {
-    width: 246px;
+    --pane-default: 246px;
   }
   .sidebar-header {
     padding-left: 20px;
   }
   .workspace {
-    min-width: 330px;
-    width: 43%;
+    --pane-min: 330px;
+    --pane-default: min(43%, 580px);
   }
   .workspace-tab {
     padding: 0 8px;
@@ -3089,12 +3132,12 @@ textarea.skill-source {
 }
 @media (max-width: 1080px) {
   .workspace {
+    --pane-default: 430px;
+    --pane-reserve: 25px;
     position: absolute;
     right: 0;
     top: 70px;
     bottom: 0;
-    width: 430px;
-    max-width: calc(100% - 25px);
     z-index: 20;
     box-shadow: -15px 6px 35px #0000000a;
   }
@@ -3126,6 +3169,10 @@ textarea.skill-source {
   }
   .sidebar.open {
     display: flex;
+  }
+  .sidebar > .pane-divider,
+  .workspace > .pane-divider {
+    display: none;
   }
   .sidebar-close,
   .mobile-menu {
@@ -4926,22 +4973,28 @@ textarea.skill-source {
   font-size: 12px;
 }
 .work-layout {
-  display: grid;
+  display: flex;
   flex: 1;
-  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
-.work-layout.has-editor {
-  grid-template-columns: minmax(240px, 1fr) minmax(360px, 1.15fr);
+.work-collection {
+  flex: 1;
 }
-.work-layout.editor-expanded {
-  grid-template-columns: minmax(0, 1fr);
+.task-pane {
+  --pane-default: 53.5%;
+  --pane-min: 360px;
+  --pane-reserve: 240px;
+  display: flex;
+  border-left: 1px solid var(--line);
 }
 .work-layout.editor-expanded > .work-collection {
   display: none;
 }
-.work-layout.editor-expanded > .task-editor {
+.work-layout.editor-expanded > .task-pane {
+  width: 100%;
   border-left: 0;
+}
+.work-layout.editor-expanded .task-editor {
   padding-right: max(24px, 8%);
   padding-left: max(24px, 8%);
 }
@@ -5051,7 +5104,7 @@ textarea.skill-source {
   margin-top: 20px;
 }
 .task-editor {
-  border-left: 1px solid var(--line);
+  flex: 1;
 }
 .task-editor-heading {
   /* Cover the editor's top padding while the header sticks over scrolled content. */
@@ -5250,19 +5303,18 @@ textarea.skill-source {
   background: var(--soft);
 }
 @container (max-width: 850px) {
-  .work-layout.has-editor {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .work-layout.has-editor .work-collection {
     display: none;
   }
-  .task-editor {
+  .task-pane {
+    width: 100%;
     border-left: 0;
   }
-  .task-expand {
+  .task-expand,
+  .task-pane > .pane-divider {
     display: none;
   }
-  .work-layout.editor-expanded > .task-editor {
+  .work-layout.editor-expanded .task-editor {
     padding-right: 24px;
     padding-left: 24px;
   }

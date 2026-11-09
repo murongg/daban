@@ -24,6 +24,7 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { WindowList } from '../../components/collection/WindowList';
 import { IconButton } from '../../components/controls/Button';
+import { Pane } from '../../components/controls/Pane';
 import { Select } from '../../components/controls/Select';
 import { getLocale, t, useLocale } from '../../i18n/locale';
 import { Comments } from './Comments';
@@ -391,10 +392,12 @@ export function Tasks({
           )}
         </div>
         {hasEditor && (
-          <aside
+          <Pane
             id="task-detail-editor"
-            className="task-editor"
-            aria-label={t('tasks.taskDetails')}
+            className="task-pane"
+            bodyClass="task-editor"
+            label={t('tasks.taskDetails')}
+            resizable={!expanded}
           >
             <div className="task-editor-heading">
               <h2>{draft?.base ? t('tasks.taskDetails') : t('tasks.newTask')}</h2>
@@ -678,7 +681,7 @@ export function Tasks({
                 )}
               </>
             )}
-          </aside>
+          </Pane>
         )}
       </div>
     </section>

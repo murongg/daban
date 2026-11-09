@@ -45,6 +45,46 @@ describe('daban client', () => {
     expect(within(nav).getByRole('button', { name: '写作搭档' })).toBeVisible();
     expect(within(nav).queryByRole('button', { name: '研究员' })).not.toBeInTheDocument();
   });
+  it('resizes the navigation and workspace independently and remembers their widths', async () => {
+    const first = render(<App />);
+    const sidebarHandle = screen.getByRole('separator', { name: '调整侧栏宽度' });
+    const workspaceHandle = screen.getByRole('separator', { name: '调整Bot 工作区宽度' });
+    const sidebar = screen.getByRole('complementary', { name: '侧栏' });
+    const workspace = screen.getByRole('complementary', { name: 'Bot 工作区' });
+    for (const [pane, width] of [
+      [sidebar, 272],
+      [workspace, 480],
+    ] as const) {
+      vi.spyOn(pane, 'offsetWidth', 'get').mockReturnValue(width);
+      vi.spyOn(pane.parentElement!, 'clientWidth', 'get').mockReturnValue(1200);
+      pane.style.setProperty('--pane-min', '200px');
+      pane.style.setProperty('--pane-reserve', '400px');
+    }
+
+    fireEvent.pointerDown(sidebarHandle, { pointerId: 1, button: 0, clientX: 272 });
+    fireEvent.pointerMove(sidebarHandle, { pointerId: 1, clientX: 330 });
+    fireEvent.pointerUp(sidebarHandle, { pointerId: 1 });
+    expect(sidebar.style.getPropertyValue('--pane-width')).toBe('330px');
+    expect(workspace.style.getPropertyValue('--pane-width')).toBe('');
+
+    fireEvent.keyDown(workspaceHandle, { key: 'ArrowLeft' });
+    expect(workspace.style.getPropertyValue('--pane-width')).toBe('496px');
+    fireEvent.keyDown(workspaceHandle, { key: 'End' });
+    expect(workspace.style.getPropertyValue('--pane-width')).toBe('800px');
+    await userEvent.click(screen.getByRole('button', { name: '关闭工作区面板' }));
+    await workspaceTab(userEvent, '记忆');
+    expect(
+      screen
+        .getByRole('complementary', { name: 'Bot 工作区' })
+        .style.getPropertyValue('--pane-width'),
+    ).toBe('800px');
+
+    first.unmount();
+    render(<App />);
+    expect(
+      screen.getByRole('complementary', { name: '侧栏' }).style.getPropertyValue('--pane-width'),
+    ).toBe('330px');
+  });
   it('keeps drafts when switching Bots and labels the response as demonstration', async () => {
     render(<App />);
     await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '这是一条合成测试消息');

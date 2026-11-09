@@ -17,7 +17,7 @@ import {
   type WorkWrite,
   workKey,
 } from '@daban/protocol';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -209,16 +209,26 @@ it('expands task details without losing the current edits or changing the saved 
   await userEvent.click(await screen.findByRole('button', { name: '查看 合成展开任务' }));
   const description = await screen.findByRole('textbox', { name: '任务说明' });
   await userEvent.type(description, ' MOCK UNSAVED EXPANSION');
+  const pane = screen.getByRole('complementary', { name: '任务详情' });
+  vi.spyOn(pane, 'offsetWidth', 'get').mockReturnValue(480);
+  vi.spyOn(pane.parentElement!, 'clientWidth', 'get').mockReturnValue(1000);
+  pane.style.setProperty('--pane-min', '360px');
+  pane.style.setProperty('--pane-reserve', '240px');
+  fireEvent.keyDown(screen.getByRole('separator', { name: '调整任务详情宽度' }), { key: 'Home' });
+  expect(pane.style.getPropertyValue('--pane-width')).toBe('360px');
   await userEvent.click(screen.getByRole('button', { name: '展开任务详情' }));
   expect(screen.getByRole('button', { name: '收起任务详情' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   expect(description.closest('.work-layout')).toHaveClass('editor-expanded');
+  expect(screen.queryByRole('separator', { name: '调整任务详情宽度' })).not.toBeInTheDocument();
   expect(description).toHaveValue('MOCK SHARED DETAIL MOCK UNSAVED EXPANSION');
   expect(restore(localStorage.getItem(storageKey)).work?.mode).toBe('list');
   await userEvent.click(screen.getByRole('button', { name: '收起任务详情' }));
   expect(description.closest('.work-layout')).not.toHaveClass('editor-expanded');
+  expect(screen.getByRole('separator', { name: '调整任务详情宽度' })).toBeVisible();
+  expect(pane.style.getPropertyValue('--pane-width')).toBe('360px');
   expect(description).toHaveValue('MOCK SHARED DETAIL MOCK UNSAVED EXPANSION');
   expect(live.write).not.toHaveBeenCalled();
 });
