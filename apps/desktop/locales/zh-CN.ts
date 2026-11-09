@@ -327,7 +327,7 @@ export const chinese = {
   'updates.cancelDownload': '取消下载',
   'updates.downloadProgress': '更新下载进度',
   'updates.restart': '重启并安装',
-  'updates.releaseNotes': '查看更新内容',
+  'updates.releaseNotes': '更新日志',
   'updates.confirmTitle': '重启安装更新？',
   'updates.confirmDescription':
     '请先保存尚未提交的设置和电脑应用中的内容。聊天草稿会自动保存；有 Bot 任务执行时不会安装。',

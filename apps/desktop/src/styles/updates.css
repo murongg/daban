@@ -20,6 +20,22 @@
   stroke-linecap: round;
   transition: stroke-dashoffset 0.2s linear;
 }
+/* Let long notes shrink and scroll so the progress controls stay in the dialog. */
+.update-dialog,
+.update-dialog > .dialog-body,
+.update-dialog .update-panel,
+.update-dialog .update-notes {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.update-dialog > .dialog-header,
+.update-dialog .update-panel > :not(.update-notes) {
+  flex-shrink: 0;
+}
+.update-dialog .update-panel > button {
+  align-self: flex-start;
+}
 .update-status {
   display: flex;
   align-items: center;
@@ -66,15 +82,36 @@
   margin-top: 22px;
   font-size: 14px;
 }
-.update-notes summary {
-  cursor: pointer;
-  color: var(--muted);
-  padding: 8px 0;
+.update-notes > h3 {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: inherit;
+  font-weight: 600;
+}
+.update-notes > h3 .muted {
+  font-weight: 400;
 }
 .update-notes > div {
   max-height: 300px;
   overflow: auto;
   margin-top: 10px;
+}
+.update-dialog .update-status,
+.update-dialog .update-notes > h3 .muted,
+.update-dialog .update-notes > .markdown {
+  font-size: 12px;
+}
+.update-dialog .update-notes {
+  margin-top: 0;
+}
+.update-dialog .update-download {
+  margin-bottom: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
 }
 .update-notice {
   position: fixed;

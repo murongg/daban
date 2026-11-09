@@ -270,6 +270,7 @@ if (primary) {
         version: app.getVersion(),
         supported: updateSupported,
         driver: updateDriver,
+        changelogFetch: fetch,
         save: () => save.request(),
         prepare: async () => {
           if (!service) throw Error('AGENT_UPDATE_UNAVAILABLE');
