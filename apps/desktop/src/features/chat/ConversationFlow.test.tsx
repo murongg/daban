@@ -248,6 +248,27 @@ it('opens ordinary chats from the chats entry and preserves the Bot draft and ru
   ).toBe(false);
 });
 
+it.each(['ready', 'offline'] as const)(
+  'returns to an empty ordinary chat from the sidebar after selecting a Bot while %s',
+  async (phase) => {
+    localStorage.setItem(storageKey, serialize(demoState()));
+    const invoke = bridge(phase === 'ready' ? ready() : disconnected(phase));
+    render(<App />);
+    const sidebar = screen.getByRole('complementary', { name: '侧栏' });
+    await userEvent.click(await within(sidebar).findByRole('button', { name: '对话' }));
+    expect(screen.getByText('普通对话 · 可使用工具')).toBeVisible();
+
+    await userEvent.click(within(sidebar).getByRole('button', { name: '写作搭档' }));
+    expect(screen.getByRole('heading', { name: '写作搭档' })).toBeVisible();
+
+    const recent = within(sidebar).getByRole('navigation', { name: '最近对话列表' });
+    await userEvent.click(within(recent).getByRole('button', { name: '新对话' }));
+    expect(screen.getByText('普通对话 · 可使用工具')).toBeVisible();
+    expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
+    expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
+  },
+);
+
 it('allows a local draft with an older backend and explains why it cannot be sent', async () => {
   const state = demoState();
   state.panel = null;

@@ -155,10 +155,9 @@ export function recentConversations(state: State, status?: ChatStatus) {
         add(bot.id, revision, message.text.replace(/\s+/g, ' ').slice(0, 120), '');
     }
     const revision = selectedConversation(state, bot.id) ?? state.chatStates[bot.id]?.revision ?? 0;
+    // A new ordinary chat has no Bot row to return to after leaving its empty editor.
     if (
-      (state.selected === bot.id ||
-        (bot.kind === 'chat' &&
-          !!draftPrompt(state.drafts[bot.id] ?? '', draftFolders(state, bot.id)))) &&
+      (state.selected === bot.id || bot.kind === 'chat') &&
       !rows.has(conversationKey(bot.id, revision))
     )
       add(bot.id, revision, '', '');
