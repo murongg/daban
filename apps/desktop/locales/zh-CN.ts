@@ -100,7 +100,6 @@ export const chinese = {
 
   'search.bingOption': 'Bing（免 Key）',
   'search.duckduckgoOption': 'DuckDuckGo（免 Key）',
-  'search.keylessCredential': '免 Key 搜索，无需配置凭据',
   'search.keylessHint':
     '无需 API Key。使用 {0} 的公开搜索页，仍需联网；网站限流或验证可能导致暂时不可用。',
   'search.confirmKeyless':
@@ -130,6 +129,7 @@ export const chinese = {
   'search.saving': '正在保存…',
   'search.saved': '搜索设置已保存，尚未进行远程测试。',
   'search.refresh': '刷新搜索状态',
+  'search.statusTitle': '搜索状态',
   'search.check': '测试搜索',
   'search.checking': '正在测试搜索…',
   'search.confirmTitle': '测试搜索？',

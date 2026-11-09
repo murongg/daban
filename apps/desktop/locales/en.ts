@@ -110,7 +110,6 @@ export const english = {
 
   'search.bingOption': 'Bing (no API key)',
   'search.duckduckgoOption': 'DuckDuckGo (no API key)',
-  'search.keylessCredential': 'Keyless search; no credentials needed',
   'search.keylessHint':
     'No API key needed. Searches {0} public result pages and requires internet access. Rate limits or verification may temporarily block searches.',
   'search.confirmKeyless':
@@ -144,6 +143,7 @@ export const english = {
   'search.saving': 'Saving…',
   'search.saved': 'Search settings saved. No remote test has run.',
   'search.refresh': 'Refresh search status',
+  'search.statusTitle': 'Search status',
   'search.check': 'Test search',
   'search.checking': 'Testing search…',
   'search.confirmTitle': 'Test search?',
