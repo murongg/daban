@@ -45,6 +45,17 @@ export interface SearchClaim {
   current(): boolean;
 }
 const searchClaims = new Map<symbol, { bridge: BridgeConfig; claim: SearchClaim }>();
+interface WebReadGrant {
+  url: string;
+  followed: boolean;
+  current: () => boolean;
+  links?: readonly string[];
+}
+// The registry execution binds navigation to the real tool call, independently of provider call IDs.
+const webReads = new WeakMap<object, WebReadGrant>();
+export function readWebGrant(exec: object) {
+  return webReads.get(exec);
+}
 export function readSearchClaim(token: unknown, config: BridgeConfig) {
   if (typeof token !== 'symbol') return undefined;
   const entry = searchClaims.get(token);
@@ -157,6 +168,8 @@ export function apply(
   });
   // Search authority belongs to this accepted run and must not survive SDK session resumes.
   const urls = new Set(config.urls);
+  const linkedUrls = new Set<string>();
+  const followLinks = (config.approvalMode ?? 'auto') === 'auto';
   // One DSH process serves one accepted task. Count native and MCP calls before dispatch, including parallel requests.
   ctx.on('tools/pre-execute', async (exec: Execution, next: () => Promise<unknown>) => {
     if (exec.signal.aborted) return { kind: 'cancel' };
@@ -340,7 +353,9 @@ export function apply(
           info: { name: 'WebPolicyError', code: 'APPROVAL_POLICY_CHANGED' },
         });
         if (!ownsRead()) return blocked();
-        const needsApproval = config.approvalMode === 'ask' || !url || !urls.has(url);
+        const direct = !!url && urls.has(url);
+        const followed = followLinks && !direct && !!url && linkedUrls.has(url);
+        const needsApproval = config.approvalMode === 'ask' || (!direct && !followed);
         const checkRead = () => {
           if (!ownsRead()) return blocked();
           if (exec.signal.aborted) return { kind: 'cancel' };
@@ -352,10 +367,16 @@ export function apply(
           return dispatch(async () => {
             const changed = checkRead();
             if (changed) return changed;
+            if (!needsApproval && followLinks && url)
+              webReads.set(exec, {
+                url,
+                followed,
+                current: () => active && !exec.signal.aborted && ownsRead(),
+              });
             return next();
           });
         };
-        // Page text cannot authorize another destination or append private data to an approved URL.
+        // One-time approvals never grant authority to follow further links from that page.
         if (url && needsApproval && exec.agent && ctx.approval) {
           const decision = await ctx.approval.request({
             // The child keeps its own native approval pin and turn-enclosed audit.
@@ -385,7 +406,7 @@ export function apply(
             },
           };
         }
-        if (!url || config.approvalMode === 'ask' || !urls.has(url))
+        if (needsApproval)
           return {
             kind: 'deny',
             reason:
@@ -417,8 +438,23 @@ export function apply(
     'tools/post-execute',
     async (exec: Execution, result: unknown, next: () => Promise<unknown>) => {
       const decision = await next();
-      const object = (value: unknown): value is Record<string, unknown> =>
-        !!value && typeof value === 'object' && !Array.isArray(value);
+      if (
+        exec.name === 'web_fetch' &&
+        object(decision) &&
+        decision.kind === 'accept' &&
+        decision.value === undefined &&
+        decision.content === undefined &&
+        object(result) &&
+        result.isError === false
+      ) {
+        const grant = readWebGrant(exec);
+        if (grant?.current()) {
+          for (const url of grant.links ?? []) {
+            if (linkedUrls.size >= 256) break;
+            linkedUrls.add(url);
+          }
+        }
+      }
       if (
         exec.name === 'web_search' &&
         !exec.signal.aborted &&
@@ -430,7 +466,7 @@ export function apply(
         object(result.value) &&
         Array.isArray(result.value.sources)
       ) {
-        // Only canonical search-index URLs authorize follow-up reads. Snippets, page links and query edits grant nothing.
+        // Only canonical search-index URLs authorize direct reads. Snippets and query edits grant nothing.
         for (const source of result.value.sources)
           if (object(source) && typeof source.url === 'string') {
             const url = normalizedUrl(source.url);

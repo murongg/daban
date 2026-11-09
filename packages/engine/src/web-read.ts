@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { Fault } from './control.js';
 import { runtimeRequire } from './dsh.js';
+import { readWebGrant } from './policy.js';
 import { type Convert, createConverter, type ExtractedPage, webDownloadLimit } from './webpage.js';
 
 export const name = 'daban-web-read';
@@ -38,11 +39,20 @@ export class WebReader {
     { owner: string; requested: string; expires: number; source: FetchedPage; page: ExtractedPage }
   >();
   constructor(
-    private readonly fetchPage: (url: string, signal: AbortSignal) => Promise<FetchedPage>,
+    private readonly fetchPage: (
+      url: string,
+      signal: AbortSignal,
+      followed: boolean,
+    ) => Promise<FetchedPage>,
     private readonly convert: Convert,
     private readonly now = Date.now,
   ) {}
-  async read(value: unknown, owner: string, signal: AbortSignal): Promise<Page> {
+  async read(
+    value: unknown,
+    owner: string,
+    signal: AbortSignal,
+    grant?: ReturnType<typeof readWebGrant>,
+  ): Promise<Page> {
     signal.throwIfAborted();
     if (
       !object(value) ||
@@ -60,6 +70,8 @@ export class WebReader {
     } catch {
       throw new Fault('INVALID_WEB_READ', 400);
     }
+    if (grant && (!grant.current() || grant.url !== url.href))
+      throw new Fault('APPROVAL_POLICY_CHANGED', 403);
     const offset = value.offset ?? 0,
       limit = value.limit ?? defaultPageSize;
     if (
@@ -79,23 +91,35 @@ export class WebReader {
     if (pageId && (!stored || stored.owner !== owner || stored.requested !== url.href))
       throw new Fault('WEB_PAGE_EXPIRED', 410);
     if (!stored) {
-      const source = await this.fetchPage(url.href, signal);
+      const source = await this.fetchPage(url.href, signal, grant?.followed ?? false);
       signal.throwIfAborted();
+      const finalUrl = new URL(source.url);
+      finalUrl.hash = '';
+      if (grant?.followed && finalUrl.href !== url.href)
+        throw new Fault('WEB_REDIRECT_BLOCKED', 403);
       // Paging cannot recover bytes that were never downloaded. Never cache a prefix as a complete source.
       if (source.truncated || source.body.content.length > webDownloadLimit)
         throw new Fault('WEB_FETCH_TOO_LARGE', 413);
-      const page =
+      const { text, extraction, links }: ExtractedPage =
         source.body.kind === 'html'
           ? this.convert(source.body.content, source.url)
           : { text: source.body.content, extraction: 'text' };
       signal.throwIfAborted();
-      if (!page.text.trim()) throw new Fault('WEB_CONTENT_UNAVAILABLE', 422);
+      if (!text.trim()) throw new Fault('WEB_CONTENT_UNAVAILABLE', 422);
+      if (
+        grant &&
+        links &&
+        source.statusCode >= 200 &&
+        source.statusCode < 300 &&
+        finalUrl.origin === url.origin
+      )
+        grant.links = links;
       stored = {
         owner,
         requested: url.href,
         expires: this.now() + 600000,
         source: { ...source, body: { kind: 'text', content: '' } },
-        page,
+        page: { text, extraction },
       };
       pageId = randomUUID();
       this.pages.set(pageId, stored);
@@ -131,7 +155,12 @@ export class WebReader {
 }
 
 interface Context {
-  web: { fetch: (input: { url: string }, signal: AbortSignal) => Promise<FetchedPage> };
+  web: {
+    fetch: (
+      input: { url: string; followRedirects?: false },
+      signal: AbortSignal,
+    ) => Promise<FetchedPage>;
+  };
   tools: {
     register: (definition: unknown) => unknown;
     get: (name: string, scope: unknown) => unknown;
@@ -143,7 +172,8 @@ export async function apply(ctx: Context, config: { sdkFile: string }) {
     pathToFileURL(runtimeRequire(config.sdkFile).resolve('@deepseek-ai/dsh-tools')).href
   );
   const reader = new WebReader(
-    (url, signal) => ctx.web.fetch({ url }, signal),
+    (url, signal, followed) =>
+      ctx.web.fetch({ url, ...(followed ? { followRedirects: false } : {}) }, signal),
     createConverter(config.sdkFile),
   );
   ctx.systemPrompt.section({
@@ -208,13 +238,17 @@ export async function apply(ctx: Context, config: { sdkFile: string }) {
       isConcurrencySafe: () => true,
       async execute(
         args: unknown,
-        exec: { signal: AbortSignal; agent?: { id?: string; session: { id: string } } },
+        exec: {
+          signal: AbortSignal;
+          agent?: { id?: string; session: { id: string } };
+        },
       ) {
         if (!exec.agent?.session.id) throw new Fault('WEB_CONTEXT_UNAVAILABLE', 400);
         return reader.read(
           args,
           JSON.stringify([exec.agent.session.id, exec.agent.id]),
           exec.signal,
+          readWebGrant(exec),
         );
       },
       presentCall: (args: { url: string }) => ({

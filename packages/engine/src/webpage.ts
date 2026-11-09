@@ -7,8 +7,35 @@ const conversionDepth = 512;
 export interface ExtractedPage {
   text: string;
   extraction: string;
+  links?: readonly string[];
 }
 export type Convert = (html: string, url: string) => ExtractedPage;
+
+const sensitiveRoute =
+  /(?:^|[/._~-])(?:account|accounts|admin|auth|authorize|callback|cart|checkout|confirm|delete|download|edit|log-?in|log-?out|oauth2?|orders?|password|pay|payment|purchase|register|remove|reset|revoke|session|settings|sign-?in|sign-?out|sign-?up|submit|unsubscribe|update|upload)(?=$|[/._~-])/i;
+
+function documentLinks(root: Element, source: URL) {
+  const links = new Set<string>();
+  for (const anchor of Array.from(root.querySelectorAll('a[href]:not([download])'))) {
+    if (anchor.closest('form')) continue;
+    const url = new URL(anchor.getAttribute('href')!);
+    url.hash = '';
+    // Use a conservative URL shape. Decoding opaque paths or interpreting query parameters
+    // can turn a documentation link into an account action or an arbitrary request.
+    if (
+      url.origin === source.origin &&
+      url.href.length <= 2048 &&
+      !url.href.includes('?') &&
+      /^\/[\w./~-]*$/.test(url.pathname) &&
+      !url.pathname.includes('//') &&
+      !sensitiveRoute.test(url.pathname)
+    ) {
+      links.add(url.href);
+      if (links.size >= 64) break;
+    }
+  }
+  return [...links];
+}
 
 export function checkHtmlDepth(html: string) {
   const lower = html.toLowerCase(),
@@ -160,6 +187,7 @@ export function createConverter(sdkFile: string): Convert {
       return {
         text,
         extraction: root === article ? 'article' : root === document.body ? 'body' : 'main',
+        links: documentLinks(root, new URL(url)),
       };
     } catch (error) {
       if (error instanceof Fault) throw error;

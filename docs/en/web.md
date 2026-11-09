@@ -8,7 +8,7 @@ Research on public pages usually does not require connecting a computer. Search,
 
 - Ask for research with original sources and a comparison of findings. Search is configured separately from the chat model. Users without a search configuration default to keyless Bing; an old automatically created empty DeepSeek default with no saved choice or credentials is also upgraded. Existing provider choices (including DuckDuckGo), disabled search and saved legacy DeepSeek links remain unchanged.
 - Paste exact public HTTP(S) URLs to have the Bot read and cite them. Anonymous URL reading does not require a search API key.
-- Exact URLs supplied in the current request or returned by a successful search in this run can be read under the current rules. Changed or additional URLs may require one-time approval.
+- In Approve for me mode, the Bot can read the URLs you provide in the current task, this task’s search results, and eligible same-origin links found in the content of those pages. Follow-up access lasts for the current task. Cross-origin links, links with query parameters, and links that appear to lead to account pages or actions require one-time approval. Automatically followed links stop at redirects.
 
 ## Configure search
 

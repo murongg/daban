@@ -60,6 +60,43 @@ test('host web plugin registers its HTTP provider and retains private-address pr
   });
 });
 
+test('inferred link fetches stop at the first redirect, including with DNS fallback', async () => {
+  const limits = {
+    maxResponseBytes: 1000,
+    maxBodyChars: 1000,
+    timeoutMs: 1000,
+    maxRedirects: 5,
+    userAgent: 'mock',
+  };
+  const caps: number[] = [];
+  class Provider {
+    id = 'http';
+    constructor(
+      private readonly config: typeof limits,
+      private readonly resolved?: unknown,
+    ) {}
+    available() {
+      return true;
+    }
+    async fetch() {
+      caps.push(this.config.maxRedirects);
+      if (!this.resolved) throw Object.assign(new Error('mock DNS'), { code: 'WEB_BLOCKED_URL' });
+      return 'mock result';
+    }
+  }
+  const provider = createFetcher(
+    Provider,
+    limits,
+    (ip) => ip === '1.1.1.1',
+    async () => [{ address: '198.18.0.8', family: 4 }],
+    async () => Response.json({ Status: 0, Answer: [{ type: 1, data: '1.1.1.1' }] }),
+  );
+  const url = 'https://mock.example.test/guide';
+  await provider.fetch({ url, followRedirects: false });
+  await provider.fetch({ url });
+  expect(caps).toEqual([0, 0, 5, 5]);
+});
+
 test('fake-IP DNS uses the fixed TLS resolver and returns its actual addresses for pinning', async () => {
   const requests: string[] = [];
   const result = await fallbackLookup(
