@@ -1218,6 +1218,33 @@ textarea.field {
   width: 12px;
   height: 12px;
 }
+.folder-reference {
+  min-height: 24px;
+  min-width: 0;
+}
+.folder-reference > svg {
+  flex-shrink: 0;
+}
+.folder-reference button {
+  min-height: 24px;
+}
+.folder-reference .icon-button {
+  min-width: 24px;
+  flex-shrink: 0;
+}
+.folder-reference-popover {
+  width: min(400px, calc(100vw - 24px));
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.folder-reference-popover p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.folder-reference-popover p + p {
+  margin-top: 6px;
+}
 .empty-chat {
   flex: 1;
   min-height: 100%;

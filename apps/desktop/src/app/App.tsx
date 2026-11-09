@@ -56,6 +56,9 @@ import {
   conversationModel,
   conversationPending,
   conversationState,
+  draftFolders,
+  draftPrompt,
+  draftTextLimit,
   recentConversations,
 } from '../features/chat/conversations';
 import { NewChat } from '../features/chat/NewChat';
@@ -502,7 +505,9 @@ function Workbench() {
     }
     if (submitting.current.has(botId)) return skipped;
     if (queued && state.runtimeRequests[botId]) return skipped;
-    const text = queued ? queued.prompt.trim() : state.drafts[botId].trim();
+    const text = queued
+      ? draftPrompt(queued.prompt, queued.folders)
+      : draftPrompt(state.drafts[botId], draftFolders(state, botId));
     const attached = (
       queued
         ? queued.files.map((id) => state.files.find((file) => file.id === id))
@@ -689,10 +694,11 @@ function Workbench() {
     )
       return;
     const prompt = state.drafts[botId].trim();
+    const folders = draftFolders(state, botId);
     const files = state.attachments[botId]
       .map((id) => state.files.find((file) => file.id === id))
       .filter((file): file is WorkspaceFile => !!file);
-    if (!prompt && !files.length) return;
+    if (!draftPrompt(prompt, folders) && !files.length) return;
     if (messageQueue(state, botId).length >= messageQueueLimit) {
       notify(t('chat.messageQueueFull', { 0: messageQueueLimit }));
       return;
@@ -704,7 +710,7 @@ function Workbench() {
     dispatch({
       type: 'queue-add',
       bot: botId,
-      task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id) },
+      task: { id: crypto.randomUUID(), prompt, files: files.map((file) => file.id), folders },
     });
   }
   function rejectInsert(botId: string, id: string, error: unknown) {
@@ -733,7 +739,7 @@ function Workbench() {
         type: 'task.insert',
         bot: agentId(botId),
         id: item.id,
-        text: item.prompt,
+        text: draftPrompt(item.prompt, item.folders),
         ...target,
       });
       if (receipt?.ok !== true || receipt.id !== item.id) throw new Error('INVALID_TASK_ACK');
@@ -763,7 +769,7 @@ function Workbench() {
           type: 'task.insert',
           bot: agentId(entry.id),
           id: item.id,
-          text: item.prompt,
+          text: draftPrompt(item.prompt, item.folders),
           ...target,
         })
         .then((receipt) => {
@@ -1189,7 +1195,13 @@ function Workbench() {
                             draft && item.prompt
                               ? `${draft}\n${item.prompt}`
                               : item.prompt || draft;
-                          if (prompt.length > 12000) {
+                          const folders = [
+                            ...new Set([...draftFolders(state, bot.id), ...(item.folders ?? [])]),
+                          ];
+                          if (
+                            prompt.length > draftTextLimit(folders) ||
+                            draftPrompt(prompt, folders).length > 12000
+                          ) {
                             notify(t('chat.queuedMessageEditTooLong'));
                             return;
                           }

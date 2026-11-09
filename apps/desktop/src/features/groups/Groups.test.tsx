@@ -33,6 +33,29 @@ const group: Group = {
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
+it('clears the acknowledged group folder context and preserves newer folder references', () => {
+  let state = initialState();
+  state = reduce(state, { type: 'draft', bot: 'crew', text: 'SYNTHETIC FOLDER MESSAGE' });
+  state = reduce(state, {
+    type: 'draft-folders-add',
+    bot: 'crew',
+    folders: ['/mock/group-project'],
+  });
+  const input = {
+    id: 'mock-group-folder-send',
+    group: 'crew',
+    prompt: 'SYNTHETIC FOLDER MESSAGE\n/mock/group-project',
+    recipients: ['a'],
+  };
+  state = reduce(state, { type: 'group-pending', group: 'crew', input });
+  const sent = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(sent.drafts.crew).toBe('');
+  expect(sent.draftFolders?.crew).toEqual([]);
+  state = reduce(state, { type: 'draft-folders-add', bot: 'crew', folders: ['/mock/newer'] });
+  state = reduce(state, { type: 'group-sent', group: 'crew', input });
+  expect(state.drafts.crew).toBe('SYNTHETIC FOLDER MESSAGE');
+  expect(state.draftFolders?.crew).toEqual(['/mock/group-project', '/mock/newer']);
+});
 it('persists selected mention identities and preserves a newer mention draft after an older send acknowledgement', () => {
   let state = initialState();
   const mention = { id: 'a', name: 'Synthetic same-name Bot', start: 0, end: 24 };

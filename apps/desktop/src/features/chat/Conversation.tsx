@@ -42,8 +42,16 @@ import { LocalFiles } from '../files/LocalFiles';
 import { modelName as displayModel, modelIcon } from '../models/model-options';
 import { Requests } from '../requests/Requests';
 import { ApprovalMode } from './ApprovalMode';
-import { conversationModel, conversationPending, conversationState } from './conversations';
+import {
+  conversationModel,
+  conversationPending,
+  conversationState,
+  draftFolders,
+  draftPrompt,
+  draftTextLimit,
+} from './conversations';
 import { Execution } from './Execution';
+import { FolderReferences } from './FolderReferences';
 import { useFollow } from './follow';
 import { useHistory } from './history';
 import { useInputs } from './inputs';
@@ -234,6 +242,7 @@ export function Conversation({
   );
   const entries = visibleMessages(saved, task);
   const draft = state.drafts[bot.id];
+  const folders = draftFolders(state, bot.id);
   const attachments = state.attachments[bot.id]
     .map((id) => state.files.find((f) => f.id === id))
     .filter((f): f is WorkspaceFile => !!f);
@@ -265,7 +274,12 @@ export function Conversation({
       notify(t('common.waitUntilAttachmentsReadySending'));
       return;
     }
-    if (busyInGroup || busyElsewhere || computerChanging || (!draft.trim() && !attachments.length))
+    if (
+      busyInGroup ||
+      busyElsewhere ||
+      computerChanging ||
+      (!draft.trim() && !attachments.length && !folders.length)
+    )
       return;
     if (task?.running && onQueue) {
       onQueue();
@@ -584,7 +598,9 @@ export function Conversation({
           <section className="message-queue" aria-label={t('chat.messageQueue')} aria-live="polite">
             <ul>
               {queued.map((item, index) => {
-                const text = item.prompt || t('common.reviewFilesCompleteTaskIDescribed');
+                const text =
+                  draftPrompt(item.prompt, item.folders) ||
+                  t('common.reviewFilesCompleteTaskIDescribed');
                 return (
                   <li
                     className="queued-message"
@@ -690,8 +706,15 @@ export function Conversation({
               {t('common.dropAddAttachments')}
             </p>
           )}
-          {attachments.length > 0 && (
+          {(attachments.length > 0 || folders.length > 0) && (
             <div className="attachments">
+              <FolderReferences
+                folders={folders}
+                disabled={readOnly || pending}
+                onRemove={(folder) =>
+                  dispatch({ type: 'draft-folder-remove', bot: bot.id, revision, folder })
+                }
+              />
               {attachments.map((file) => (
                 <span className="attachment" key={file.id}>
                   <Paperclip />
@@ -729,7 +752,7 @@ export function Conversation({
                 : t('chat.messageRecipient', { 0: bot.name })
             }
             value={draft}
-            maxLength={12000}
+            maxLength={draftTextLimit(folders)}
             rows={2}
             disabled={pending}
             readOnly={readOnly}
@@ -816,7 +839,7 @@ export function Conversation({
                 computerChanging ||
                 !!busyInGroup ||
                 busyElsewhere ||
-                (!draft.trim() && !attachments.length) ||
+                (!draft.trim() && !attachments.length && !folders.length) ||
                 sendBlocked
               }
             >

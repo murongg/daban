@@ -40,6 +40,7 @@ export function MentionText({ text, mentions }: { text: string; mentions: readon
 
 export function Mentions({
   value,
+  maxLength = 12000,
   mentions,
   members,
   placeholder,
@@ -49,6 +50,7 @@ export function Mentions({
   onSubmit,
 }: {
   value: string;
+  maxLength?: number;
   mentions: Mention[];
   members: (MentionMember & { description?: string })[];
   placeholder: string;
@@ -144,7 +146,7 @@ export function Mentions({
   function edit(record = !composition.current) {
     if (!input.current || disabled) return;
     const next = readEditor(input.current);
-    const text = next.text.slice(0, 12000);
+    const text = next.text.slice(0, maxLength);
     setSelection(editorSelection(input.current));
     setDismissed(false);
     setIndex(0);
@@ -153,7 +155,10 @@ export function Mentions({
   function insertText(plain: string) {
     if (!input.current || disabled) return;
     const range = editorSelection(input.current);
-    const inserted = plain.slice(0, Math.max(0, 12000 - value.length + range.end - range.start));
+    const inserted = plain.slice(
+      0,
+      Math.max(0, maxLength - value.length + range.end - range.start),
+    );
     const text = value.slice(0, range.start) + inserted + value.slice(range.end);
     const caret = range.start + inserted.length;
     pendingCaret.current = { text, caret };

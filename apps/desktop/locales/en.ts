@@ -691,6 +691,13 @@ export const english = {
   'chat.preparingModel': 'Preparing model',
   'chat.preparingResponse': 'Preparing response',
   'chat.previewAttachment': 'Preview attachment {0}',
+  'chat.viewFolderPath': 'View folder path {0}',
+  'chat.folderPath': 'Folder path {0}',
+  'chat.removeFolderReference': 'Remove folder reference {0}',
+  'chat.folderReferenceHint':
+    'The path is included when sent. File access still needs your permission.',
+  'inputs.folderContextTooLong':
+    'The message and folder paths cannot exceed 12,000 characters. Shorten the message and try again.',
   'chat.promoteQueuedMessage': 'Send queued message {0} next',
   'chat.queuedAttachments': '+{0} attachments',
   'chat.queuedMessageEditAttachmentsFull':

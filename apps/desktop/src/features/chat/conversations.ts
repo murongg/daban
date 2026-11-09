@@ -5,10 +5,22 @@ import { t } from '../../i18n/locale';
 
 export interface ConversationDraft {
   text: string;
+  folders?: string[];
   attachments: string[];
   queued: QueuedTask[];
   mode?: ApprovalMode;
   uploading?: boolean;
+}
+export function draftFolders(state: Pick<State, 'draftFolders'>, bot: string): string[] {
+  return state.draftFolders && Object.hasOwn(state.draftFolders, bot)
+    ? state.draftFolders[bot]
+    : [];
+}
+export function draftPrompt(text: string, folders: readonly string[] = []) {
+  return [text.trim(), ...folders].filter(Boolean).join('\n');
+}
+export function draftTextLimit(folders: readonly string[]) {
+  return folders.length ? Math.max(0, 12000 - folders.join('\n').length - 1) : 12000;
 }
 export const conversationKey = (bot: string, revision: number) => `${bot}:${revision}`;
 export function conversationState(
@@ -35,6 +47,7 @@ export function conversationEditor(state: State, bot: string, revision: number):
   if ((selectedConversation(state, bot) ?? state.chatStates[bot]?.revision ?? 0) === revision)
     return {
       text: state.drafts[bot] ?? '',
+      folders: draftFolders(state, bot),
       attachments: state.attachments[bot] ?? [],
       queued: state.queued[bot] ?? [],
       mode:
@@ -64,6 +77,7 @@ export function saveConversationEditor(
   return {
     ...saved,
     drafts: { ...state.drafts, [bot]: editor.text },
+    draftFolders: { ...state.draftFolders, [bot]: editor.folders ?? [] },
     attachments: { ...state.attachments, [bot]: editor.attachments },
     queued: { ...state.queued, [bot]: editor.queued },
     approvalModes: { ...state.approvalModes, [bot]: { revision, mode: editor.mode ?? 'auto' } },
@@ -142,7 +156,9 @@ export function recentConversations(state: State, status?: ChatStatus) {
     }
     const revision = selectedConversation(state, bot.id) ?? state.chatStates[bot.id]?.revision ?? 0;
     if (
-      (state.selected === bot.id || (bot.kind === 'chat' && !!state.drafts[bot.id]?.trim())) &&
+      (state.selected === bot.id ||
+        (bot.kind === 'chat' &&
+          !!draftPrompt(state.drafts[bot.id] ?? '', draftFolders(state, bot.id)))) &&
       !rows.has(conversationKey(bot.id, revision))
     )
       add(bot.id, revision, '', '');

@@ -24,19 +24,22 @@ import {
   readUtf8,
   stagedAttachment,
 } from '../files/files';
+import { draftFolders, draftPrompt, draftTextLimit } from './conversations';
 
 export function transferFiles(data: DataTransfer) {
-  const directories = directoryItems(data);
+  // Chromium creates fresh item wrappers on access; classification and filtering must share one snapshot.
+  const items = Array.from(data.items);
+  const directories = directoryItems(items);
   const directorySet = new Set(directories.map(({ item }) => item));
   const files = directories.length
-    ? Array.from(data.items).flatMap((item) => {
+    ? items.flatMap((item) => {
         if (item.kind !== 'file' || directorySet.has(item)) return [];
         const file = item.getAsFile();
         return file ? [file] : [];
       })
     : Array.from(data.files);
   if (files.length) return files;
-  return Array.from(data.items).flatMap((item) => {
+  return items.flatMap((item) => {
     if (item.kind !== 'file' || directorySet.has(item)) return [];
     const file = item.getAsFile();
     return file ? [file] : [];
@@ -59,8 +62,8 @@ function droppedEntry(item: DataTransferItem) {
     return null;
   }
 }
-function directoryItems(data: DataTransfer) {
-  return Array.from(data.items).flatMap((item) => {
+function directoryItems(items: readonly DataTransferItem[]) {
+  return items.flatMap((item) => {
     const entry = droppedEntry(item);
     return entry?.isDirectory ? [{ item, name: entry.name }] : [];
   });
@@ -81,7 +84,7 @@ function fileUrlName(value: string) {
   }
 }
 function transferFolders(data: DataTransfer) {
-  const directories = directoryItems(data);
+  const directories = directoryItems(Array.from(data.items));
   if (!directories.length) return [];
   let uriList = '';
   try {
@@ -274,13 +277,21 @@ export function useInputs(
       const folders = transferFolders(event.dataTransfer);
       const files = transferFiles(event.dataTransfer);
       if (!blocked && folders.length) {
-        const current = state.drafts[bot.id];
-        // The dropped path is context only; local folder access still requires the native picker.
-        dispatch({
-          type: 'draft',
-          bot: bot.id,
-          text: [current.trimEnd(), ...folders].filter(Boolean).join('\n'),
-        });
+        const combined = [...new Set([...draftFolders(state, bot.id), ...folders])];
+        if (
+          state.drafts[bot.id].length > draftTextLimit(combined) ||
+          draftPrompt(state.drafts[bot.id], combined).length > 12000
+        ) {
+          notify(t('inputs.folderContextTooLong'));
+        } else {
+          // A reference conveys intent only; access still requires the native permission picker.
+          dispatch({
+            type: 'draft-folders-add',
+            bot: bot.id,
+            revision: chatRevision(state, bot.id, runtime.snapshot.chats),
+            folders,
+          });
+        }
       }
       if (!blocked && !files.length && !folders.length)
         notify(t('inputs.noFileWasReadSelectAgainUsing'));
