@@ -49,6 +49,10 @@
   height: 100%;
   min-height: 0;
 }
+.main > .settings-layout {
+  flex: 1;
+  height: auto;
+}
 .settings-nav {
   display: flex;
   flex-direction: column;

@@ -250,7 +250,7 @@ it('creates a personal Bot with its selected model and keeps unsupported runtime
   const backend = connect();
   const view = render(<App />);
   await screen.findByRole('heading', { name: '合成甲' });
-  await userEvent.click(screen.getByRole('button', { name: '新建 Bot' }));
+  await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
   await userEvent.type(screen.getByRole('textbox', { name: '名称' }), '合成新搭档');
   await selectOption(userEvent, selectControl('此 Bot 的模型'), 'deepseek-v4-pro');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot' }));
@@ -295,7 +295,7 @@ it('animates a personal Bot only while its task is executing', async () => {
   const backend = connect();
   render(<App />);
   const heading = await screen.findByRole('heading', { name: '合成甲' });
-  const avatar = heading.closest('.chat-header')?.querySelector('.bot-avatar');
+  const avatar = heading.closest('.titlebar-context')?.querySelector('.bot-avatar');
   expect(avatar).toBeInTheDocument();
   expect(avatar).not.toHaveAttribute('data-working');
   backend.running();

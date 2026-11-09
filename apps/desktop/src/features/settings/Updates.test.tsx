@@ -69,7 +69,7 @@ it('downloads and installs from the sidebar in one click after dismissing the no
       <UpdateNotice />
     </UpdateProvider>,
   );
-  const sidebar = within(screen.getByRole('contentinfo'));
+  const sidebar = within(screen.getByRole('navigation', { name: '主导航' }));
   expect(sidebar.queryByRole('button', { name: '更新并重启' })).not.toBeInTheDocument();
   await act(async () =>
     live.emit({

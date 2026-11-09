@@ -56,10 +56,10 @@ it('switches the whole workspace immediately and retains the chosen language aft
   render(<App />);
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
   await selectOption(userEvent, selectControl('界面语言'), 'en');
-  expect(screen.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Settings', level: 1 })).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Models & providers' })).toBeVisible();
   expect(document.documentElement.lang).toBe('en');
-  await userEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   await act(async () => {});
   expect(await screen.findByRole('heading', { name: 'Start a conversation' })).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Settings' }));

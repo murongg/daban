@@ -13,6 +13,8 @@ import {
   MailOpen,
   MessageSquare,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Pin,
   PinOff,
@@ -36,10 +38,11 @@ import { useRuntime } from './Runtime';
 import { SectionDialog, type SectionEdit } from './SectionDialog';
 import { type SidebarAnchor, type SidebarEntry, SidebarMenu } from './SidebarMenu';
 import { demoIds } from './samples';
-import type { Action, Bot, State } from './state';
+import type { Action, Bot, State, View } from './state';
 
 export function Sidebar({
   state,
+  view = state.view,
   dispatch,
   query,
   setQuery,
@@ -49,6 +52,9 @@ export function Sidebar({
   onLifecycle,
   onTrash,
   onChats,
+  onSettings,
+  onToggleList,
+  onWidthChange,
   onImport,
   onCopy,
   onCopyGroup,
@@ -56,8 +62,10 @@ export function Sidebar({
   inert = false,
   close,
   settingsOpen = false,
+  listCollapsed = false,
 }: {
   state: State;
+  view?: View;
   dispatch: Dispatch<Action>;
   query: string;
   setQuery: (value: string) => unknown;
@@ -67,6 +75,9 @@ export function Sidebar({
   onLifecycle?: (bot: string) => unknown;
   onTrash?: (bot: string, revision: number, title: string) => unknown;
   onChats?: () => unknown;
+  onSettings?: () => unknown;
+  onToggleList?: () => unknown;
+  onWidthChange?: (width: number) => unknown;
   onImport?: () => unknown;
   onCopy?: (bot?: string) => unknown;
   onCopyGroup?: (group?: string) => unknown;
@@ -74,6 +85,7 @@ export function Sidebar({
   inert?: boolean;
   close: () => unknown;
   settingsOpen?: boolean;
+  listCollapsed?: boolean;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -91,7 +103,7 @@ export function Sidebar({
   // biome-ignore lint/correctness/useExhaustiveDependencies: View, conversation and search define the transient menu's lifetime.
   useEffect(() => {
     setMenu(undefined);
-  }, [state.view, state.selected, query, settingsOpen]);
+  }, [state.view, state.selected, query, settingsOpen, listCollapsed]);
   const closeMenu = useCallback(
     (restoreFocus: boolean) => {
       setMenu(undefined);
@@ -135,6 +147,8 @@ export function Sidebar({
   const pending = runtime.enabled
     ? (runtime.snapshot.interactions || []).filter((item) => item.status === 'pending').length
     : state.approvals.filter((a) => a.status === 'pending').length;
+  const showList = view === 'chat' && !listCollapsed;
+  const inboxLabel = pending ? t('sidebar.inboxPending', { 0: pending }) : t('common.inbox');
   // Shipped demo previews are not runtime history; search the user's retained messages instead.
   const needle = query.toLowerCase();
   const filtered = useMemo(
@@ -287,298 +301,299 @@ export function Sidebar({
       <div className="sidebar-scrim" hidden={!open} onClick={close} aria-hidden="true" />
       <Pane
         id="sidebar"
-        className={`sidebar ${open ? 'open' : ''}`}
+        className={`sidebar ${view === 'chat' ? 'sidebar-conversations' : ''} ${showList ? '' : 'rail-only'} ${open ? 'open' : ''}`}
         label={t('sidebar.sidebar')}
         inert={inert}
         edge="right"
+        resizable={showList}
+        onWidthChange={onWidthChange}
       >
-        <header className="sidebar-header">
-          {window.daban?.platform === 'win32' && (
-            <span className="sidebar-brand">
-              <Brand />
-              <span>Daban</span>
-            </span>
-          )}
-          <span className="spacer" />
-          <IconButton label={t('common.newBot')} onClick={() => onCreate()}>
-            <Plus />
-          </IconButton>
-          <IconButton className="sidebar-close" label={t('sidebar.closeSidebar')} onClick={close}>
+        <div className="sidebar-drawer-header">
+          <IconButton label={t('sidebar.closeSidebar')} onClick={close}>
             <X />
           </IconButton>
-        </header>
-        <div className="search-wrap">
-          <Search />
-          <input
-            ref={searchRef}
-            type="search"
-            aria-label={t('sidebar.searchBotsChats')}
-            placeholder={t('sidebar.searchBotsChats')}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <kbd>{searchShortcut}</kbd>
         </div>
-        <div className="nav-main">
-          {onNewChat && (
-            <button type="button" className="nav-row sidebar-new-chat" onClick={onNewChat}>
-              <Plus aria-hidden="true" />
-              {t('conversations.newChat')}
-            </button>
-          )}
-          <button
-            type="button"
-            className={`nav-row ${state.view === 'gallery' ? 'selected' : ''}`}
-            onClick={() => {
-              dispatch({ type: 'view', view: 'gallery' });
-              close();
-            }}
-          >
-            <Store />
-            {t('common.botGallery')}
-          </button>
-          <button
-            type="button"
-            className={`nav-row ${state.view === 'tasks' ? 'selected' : ''}`}
-            aria-label={
-              state.work?.pending ? t('sidebar.taskActionAwaitingConfirmation') : t('common.tasks')
-            }
-            onClick={() => {
-              dispatch({ type: 'view', view: 'tasks' });
-              close();
-            }}
-          >
-            <ListTodo />
-            {t('common.tasks')}
-            {state.work?.pending && (
-              <span className="nav-count">{t('common.awaitingConfirmation')}</span>
-            )}
-          </button>
-          <button
-            type="button"
-            className={`nav-row ${state.view === 'inbox' ? 'selected' : ''}`}
-            onClick={() => {
-              dispatch({ type: 'view', view: 'inbox' });
-              close();
-            }}
-          >
-            <Inbox />
-            {t('common.inbox')}
-            {pending > 0 && <span className="count">{pending}</span>}
-          </button>
-          <button
-            type="button"
-            className={`nav-row ${state.view === 'chat' && state.bots.find((bot) => bot.id === state.selected)?.kind === 'chat' ? 'selected' : ''}`}
+        <nav className="sidebar-rail" aria-label={t('sidebar.navigation')}>
+          <IconButton
+            id="sidebar-chats"
+            label={t('sidebar.chats')}
+            aria-current={view === 'chat' ? 'page' : undefined}
             onClick={() => {
               if (onChats) onChats();
               else dispatch({ type: 'view', view: 'chat' });
               close();
             }}
           >
-            <MessageSquare />
-            {t('sidebar.chats')}
-          </button>
-        </div>
-        <div className="sidebar-scroll">
-          <RecentConversations
-            state={state}
-            dispatch={dispatch}
-            query={query}
-            close={close}
-            onNewChat={onNewChat}
-            onTrash={onTrash}
-          />
-          <div className="section-label">
-            <span>{t('sidebar.bots')}</span>
-            <span className="spacer" />
+            <MessageSquare aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            label={
+              state.work?.pending ? t('sidebar.taskActionAwaitingConfirmation') : t('common.tasks')
+            }
+            aria-current={view === 'tasks' ? 'page' : undefined}
+            onClick={() => {
+              dispatch({ type: 'view', view: 'tasks' });
+              close();
+            }}
+          >
+            <ListTodo aria-hidden="true" />
+            {state.work?.pending && <span className="sidebar-rail-badge" aria-hidden="true" />}
+          </IconButton>
+          <IconButton
+            label={inboxLabel}
+            aria-current={view === 'inbox' ? 'page' : undefined}
+            onClick={() => {
+              dispatch({ type: 'view', view: 'inbox' });
+              close();
+            }}
+          >
+            <Inbox aria-hidden="true" />
+            {pending > 0 && (
+              <span className="sidebar-rail-badge" aria-hidden="true">
+                {pending > 99 ? '99+' : pending}
+              </span>
+            )}
+          </IconButton>
+          <IconButton
+            className="sidebar-rail-bottom"
+            label={t('common.botGallery')}
+            aria-current={view === 'gallery' ? 'page' : undefined}
+            onClick={() => {
+              dispatch({ type: 'view', view: 'gallery' });
+              close();
+            }}
+          >
+            <Store aria-hidden="true" />
+          </IconButton>
+          <UpdateButton />
+          {view === 'chat' && onToggleList && (
             <IconButton
-              id="sidebar-create-section"
-              label={t('common.newSection')}
-              onClick={() => setEdit({ kind: 'create', focusId: 'sidebar-create-section' })}
+              label={t(listCollapsed ? 'sidebar.expandList' : 'sidebar.collapseList')}
+              aria-controls="sidebar-list"
+              aria-expanded={!listCollapsed}
+              onClick={onToggleList}
             >
-              <FolderPlus />
+              {listCollapsed ? (
+                <PanelLeftOpen aria-hidden="true" />
+              ) : (
+                <PanelLeftClose aria-hidden="true" />
+              )}
             </IconButton>
-            <IconButton label={t('sidebar.createBotGroup')} onClick={() => onCreate(true)}>
-              <Users />
-            </IconButton>
-            <IconButton label={t('sidebar.addBot')} onClick={() => onCreate()}>
-              <Plus />
-            </IconButton>
+          )}
+          <IconButton
+            id="sidebar-settings"
+            label={t('settings.title')}
+            aria-current={view === 'settings' ? 'page' : undefined}
+            onClick={() => {
+              if (onSettings) onSettings();
+              else dispatch({ type: 'view', view: 'settings' });
+              close();
+            }}
+          >
+            <Settings aria-hidden="true" />
+          </IconButton>
+        </nav>
+        <div className="sidebar-list" id="sidebar-list" hidden={!showList} inert={!showList}>
+          <div className="search-wrap">
+            <Search />
+            <input
+              ref={searchRef}
+              type="search"
+              aria-label={t('sidebar.searchBotsChats')}
+              placeholder={t('sidebar.searchBotsChats')}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <kbd>{searchShortcut}</kbd>
           </div>
-          <nav aria-label={t('sidebar.botList')}>
-            {buckets.pins.length > 0 && (
-              <fieldset aria-label={t('sidebar.pin')} className="sidebar-block">
-                <div className="section-label">
-                  <Pin aria-hidden="true" />
-                  <span>{t('sidebar.pin')}</span>
-                </div>
-                <WindowList
-                  scope={`pins:${query}`}
-                  items={buckets.pins}
-                  getKey={(bot) => bot.id}
-                  renderItem={row}
-                  persistentKeys={persistent}
-                  estimate={76}
-                />
-              </fieldset>
-            )}
-            {organization.sections.map((section) => {
-              const members = buckets.sections.get(section.id) || [];
-              if (query && !members.length) return null;
-              const expanded = !section.collapsed || !!query;
-              return (
-                <fieldset key={section.id} aria-label={section.name} className="sidebar-block">
-                  <div className="section-label">
-                    <button
-                      type="button"
-                      className="section-toggle"
-                      disabled={!!query}
-                      aria-label={`${expanded ? t('common.collapse') : t('common.expand')} ${section.name}`}
-                      aria-expanded={expanded}
-                      onClick={() =>
-                        dispatch({
-                          type: 'section-collapse',
-                          id: section.id,
-                          collapsed: !section.collapsed,
-                        })
-                      }
-                    >
-                      {expanded ? (
-                        <ChevronDown aria-hidden="true" />
-                      ) : (
-                        <ChevronRight aria-hidden="true" />
-                      )}
-                      <span>{section.name}</span>
-                    </button>
-                    <IconButton
-                      id={`sidebar-section-${section.id}`}
-                      label={t('sidebar.organizeSection', { 0: section.name })}
-                      aria-haspopup="menu"
-                      aria-expanded={menu?.kind === 'section' && menu.id === section.id}
-                      onClick={(event) => openMenu('section', section.id, event.currentTarget)}
-                    >
-                      <MoreHorizontal />
-                    </IconButton>
-                  </div>
-                  {expanded &&
-                    (members.length ? (
-                      <WindowList
-                        scope={`${section.id}:${query}`}
-                        items={members}
-                        getKey={(bot) => bot.id}
-                        renderItem={row}
-                        persistentKeys={persistent}
-                        estimate={76}
-                      />
-                    ) : (
-                      <p className="section-empty">{t('sidebar.noBotsYetUseOrganizeMenuBeside')}</p>
-                    ))}
-                </fieldset>
-              );
-            })}
-            {organization.sections.length > 0 &&
-              (buckets.bots.length > 0 || buckets.groups.length > 0) && (
-                <div className="section-label">{t('sidebar.ungrouped')}</div>
-              )}
-            {state.bots.some((entry) => !entry.members) &&
-              state.bots.every((entry) => entry.members || entry.archived) && (
-                <p className="no-results">{t('sidebar.allBotsArchived')}</p>
-              )}
-            <WindowList
-              scope={`bots:${query}`}
-              items={buckets.bots}
-              getKey={(bot) => bot.id}
-              renderItem={row}
-              persistentKeys={persistent}
-              estimate={76}
+          <div className="sidebar-scroll">
+            <RecentConversations
+              state={state}
+              dispatch={dispatch}
+              query={query}
+              close={close}
+              onNewChat={onNewChat}
+              onTrash={onTrash}
             />
-            {buckets.groups.length > 0 && (
-              <div className="section-label">
-                <span>{t('common.groupChat')}</span>
-                <span className="spacer" />
-                <IconButton label={t('sidebar.addGroup')} onClick={() => onCreate(true)}>
-                  <Plus />
-                </IconButton>
-              </div>
-            )}
-            <WindowList
-              scope={`groups:${query}`}
-              items={buckets.groups}
-              getKey={(bot) => bot.id}
-              renderItem={row}
-              persistentKeys={persistent}
-              estimate={76}
-            />
-            {!state.bots.length && !query && (
-              <div className="no-results">
-                {t('sidebar.noBotsYet')}
-                <br />
-                {t('sidebar.pickPresetGalleryCreateOwnCompanion')}
-              </div>
-            )}
-            {!filtered.length && !!query && (
-              <div className="no-results">
-                {t('sidebar.noResults')}
-                {query}」<br />
-                {t('sidebar.tryBotNameConversationText')}
-              </div>
-            )}
-          </nav>
-        </div>
-        <footer className="sidebar-footer">
-          {state.groupCopy && onCopyGroup && (
-            <button className="bundle-import-entry" type="button" onClick={() => onCopyGroup()}>
-              {t('sidebar.copyGroupCheckProgress')}
-            </button>
-          )}
-          {state.botCopy && onCopy && (
-            <button className="bundle-import-entry" type="button" onClick={() => onCopy()}>
-              {t('sidebar.copyBotCheckProgress')}
-            </button>
-          )}
-          {state.botImport && onImport && (
-            <button className="bundle-import-entry" type="button" onClick={onImport}>
-              {t('sidebar.importBotViewProgress')}
-            </button>
-          )}
-          <div className="local-workspace">
-            <span className="local-icon">
-              <Brand />
-            </span>
-            <div className="workspace-info">
-              <div className="workspace-name">{t('sidebar.localWorkspace')}</div>
-              <div className="demo-label">
-                <span className="status-dot" />
-                <span className="workspace-status">
-                  {runtime.enabled
-                    ? runtime.snapshot.phase === 'ready'
-                      ? runtime.snapshot.agent?.execution === 'local-workspace'
-                        ? t('localComputer.workspace')
-                        : t('sidebar.linuxConnectedRunningLocally')
-                      : runtime.snapshot.phase === 'connecting'
-                        ? t('onboarding.connectingWorkspace')
-                        : t('sidebar.runtimeDisconnected')
-                    : t('sidebar.uiDemoSavedLocally')}
-                </span>
-              </div>
-            </div>
-            <div className="workspace-actions">
-              <UpdateButton />
+            <div className="section-label">
+              <span>{t('sidebar.bots')}</span>
+              <span className="spacer" />
               <IconButton
-                label={t('settings.title')}
-                className={settingsOpen || state.view === 'settings' ? 'active' : ''}
-                aria-haspopup="dialog"
-                aria-expanded={settingsOpen}
-                onClick={() => {
-                  dispatch({ type: 'view', view: 'settings' });
-                  close();
-                }}
+                id="sidebar-create-section"
+                label={t('common.newSection')}
+                onClick={() => setEdit({ kind: 'create', focusId: 'sidebar-create-section' })}
               >
-                <Settings />
+                <FolderPlus />
+              </IconButton>
+              <IconButton label={t('sidebar.createBotGroup')} onClick={() => onCreate(true)}>
+                <Users />
+              </IconButton>
+              <IconButton label={t('sidebar.addBot')} onClick={() => onCreate()}>
+                <Plus />
               </IconButton>
             </div>
+            <nav aria-label={t('sidebar.botList')}>
+              {buckets.pins.length > 0 && (
+                <fieldset aria-label={t('sidebar.pin')} className="sidebar-block">
+                  <div className="section-label">
+                    <Pin aria-hidden="true" />
+                    <span>{t('sidebar.pin')}</span>
+                  </div>
+                  <WindowList
+                    scope={`pins:${query}`}
+                    items={buckets.pins}
+                    getKey={(bot) => bot.id}
+                    renderItem={row}
+                    persistentKeys={persistent}
+                    estimate={76}
+                  />
+                </fieldset>
+              )}
+              {organization.sections.map((section) => {
+                const members = buckets.sections.get(section.id) || [];
+                if (query && !members.length) return null;
+                const expanded = !section.collapsed || !!query;
+                return (
+                  <fieldset key={section.id} aria-label={section.name} className="sidebar-block">
+                    <div className="section-label">
+                      <button
+                        type="button"
+                        className="section-toggle"
+                        disabled={!!query}
+                        aria-label={`${expanded ? t('common.collapse') : t('common.expand')} ${section.name}`}
+                        aria-expanded={expanded}
+                        onClick={() =>
+                          dispatch({
+                            type: 'section-collapse',
+                            id: section.id,
+                            collapsed: !section.collapsed,
+                          })
+                        }
+                      >
+                        {expanded ? (
+                          <ChevronDown aria-hidden="true" />
+                        ) : (
+                          <ChevronRight aria-hidden="true" />
+                        )}
+                        <span>{section.name}</span>
+                      </button>
+                      <IconButton
+                        id={`sidebar-section-${section.id}`}
+                        label={t('sidebar.organizeSection', { 0: section.name })}
+                        aria-haspopup="menu"
+                        aria-expanded={menu?.kind === 'section' && menu.id === section.id}
+                        onClick={(event) => openMenu('section', section.id, event.currentTarget)}
+                      >
+                        <MoreHorizontal />
+                      </IconButton>
+                    </div>
+                    {expanded &&
+                      (members.length ? (
+                        <WindowList
+                          scope={`${section.id}:${query}`}
+                          items={members}
+                          getKey={(bot) => bot.id}
+                          renderItem={row}
+                          persistentKeys={persistent}
+                          estimate={76}
+                        />
+                      ) : (
+                        <p className="section-empty">
+                          {t('sidebar.noBotsYetUseOrganizeMenuBeside')}
+                        </p>
+                      ))}
+                  </fieldset>
+                );
+              })}
+              {organization.sections.length > 0 &&
+                (buckets.bots.length > 0 || buckets.groups.length > 0) && (
+                  <div className="section-label">{t('sidebar.ungrouped')}</div>
+                )}
+              {state.bots.some((entry) => !entry.members) &&
+                state.bots.every((entry) => entry.members || entry.archived) && (
+                  <p className="no-results">{t('sidebar.allBotsArchived')}</p>
+                )}
+              <WindowList
+                scope={`bots:${query}`}
+                items={buckets.bots}
+                getKey={(bot) => bot.id}
+                renderItem={row}
+                persistentKeys={persistent}
+                estimate={76}
+              />
+              {buckets.groups.length > 0 && (
+                <div className="section-label">
+                  <span>{t('common.groupChat')}</span>
+                  <span className="spacer" />
+                  <IconButton label={t('sidebar.addGroup')} onClick={() => onCreate(true)}>
+                    <Plus />
+                  </IconButton>
+                </div>
+              )}
+              <WindowList
+                scope={`groups:${query}`}
+                items={buckets.groups}
+                getKey={(bot) => bot.id}
+                renderItem={row}
+                persistentKeys={persistent}
+                estimate={76}
+              />
+              {!state.bots.length && !query && (
+                <div className="no-results">
+                  {t('sidebar.noBotsYet')}
+                  <br />
+                  {t('sidebar.pickPresetGalleryCreateOwnCompanion')}
+                </div>
+              )}
+              {!filtered.length && !!query && (
+                <div className="no-results">
+                  {t('sidebar.noResults')}
+                  {query}」<br />
+                  {t('sidebar.tryBotNameConversationText')}
+                </div>
+              )}
+            </nav>
           </div>
-        </footer>
+          <footer className="sidebar-footer">
+            {state.groupCopy && onCopyGroup && (
+              <button className="bundle-import-entry" type="button" onClick={() => onCopyGroup()}>
+                {t('sidebar.copyGroupCheckProgress')}
+              </button>
+            )}
+            {state.botCopy && onCopy && (
+              <button className="bundle-import-entry" type="button" onClick={() => onCopy()}>
+                {t('sidebar.copyBotCheckProgress')}
+              </button>
+            )}
+            {state.botImport && onImport && (
+              <button className="bundle-import-entry" type="button" onClick={onImport}>
+                {t('sidebar.importBotViewProgress')}
+              </button>
+            )}
+            <div className="local-workspace">
+              <span className="local-icon">
+                <Brand />
+              </span>
+              <div className="workspace-info">
+                <div className="workspace-name">{t('sidebar.localWorkspace')}</div>
+                <div className="demo-label">
+                  <span className="status-dot" />
+                  <span className="workspace-status">
+                    {runtime.enabled
+                      ? runtime.snapshot.phase === 'ready'
+                        ? runtime.snapshot.agent?.execution === 'local-workspace'
+                          ? t('localComputer.workspace')
+                          : t('sidebar.linuxConnectedRunningLocally')
+                        : runtime.snapshot.phase === 'connecting'
+                          ? t('onboarding.connectingWorkspace')
+                          : t('sidebar.runtimeDisconnected')
+                      : t('sidebar.uiDemoSavedLocally')}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </footer>
+        </div>
       </Pane>
       {menu && (
         <SidebarMenu

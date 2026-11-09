@@ -1,11 +1,9 @@
-.sidebar-new-chat {
-  margin-bottom: 8px;
-  border: 1px solid var(--line-strong);
-  background: var(--canvas);
-  font-weight: 600;
-}
 .recent-conversations {
   padding-bottom: 16px;
+}
+.recent-conversations > .section-label {
+  height: 42px;
+  padding-block-start: 0;
 }
 .recent-conversations .recent-toggle {
   padding-inline: 11px;
@@ -101,12 +99,4 @@
   .recent-actions .recent-action {
     opacity: 1;
   }
-}
-.recent-archive {
-  padding: 8px 11px;
-  border-radius: 9px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 20px;
-  cursor: pointer;
 }

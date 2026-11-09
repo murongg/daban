@@ -101,7 +101,7 @@ function connect(
 it('opens settings over the current workspace and restores the underlying draft and view on close', async () => {
   render(<App />);
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'synthetic-unsent-draft');
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const dialog = await screen.findByRole('dialog', { name: '设置' });
   expect(within(dialog).getByRole('tablist', { name: '设置分类' })).toBeVisible();
   expect(within(dialog).getByRole('tab', { name: '通用' })).toHaveAttribute(
@@ -113,7 +113,7 @@ it('opens settings over the current workspace and restores the underlying draft 
   expect(screen.queryByRole('dialog', { name: '设置' })).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('synthetic-unsent-draft');
   await userEvent.click(screen.getByRole('button', { name: '任务' }));
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   await userEvent.click(
     within(screen.getByRole('dialog', { name: '设置' })).getByRole('button', {
       name: '关闭对话框',
@@ -125,21 +125,21 @@ it('opens settings over the current workspace and restores the underlying draft 
 it('keeps an unsaved model key while switching categories but clears it after leaving settings', async () => {
   connect();
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
-  const dialog = await screen.findByRole('dialog', { name: '设置' });
-  await userEvent.click(within(dialog).getByRole('tab', { name: '模型与供应商' }));
-  await userEvent.click(within(dialog).getByRole('button', { name: '编辑 DeepSeek' }));
-  const key = within(dialog).getByLabelText('API Key');
+  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  const page = screen.getByRole('main');
+  await userEvent.click(within(page).getByRole('tab', { name: '模型与供应商' }));
+  await userEvent.click(within(page).getByRole('button', { name: '编辑 DeepSeek' }));
+  const key = within(page).getByLabelText('API Key');
   await userEvent.click(key);
   await userEvent.paste('synthetic-secret-draft');
-  await userEvent.click(within(dialog).getByRole('tab', { name: '通用' }));
+  await userEvent.click(within(page).getByRole('tab', { name: '通用' }));
   expect(key).not.toBeVisible();
-  await userEvent.click(within(dialog).getByRole('tab', { name: '模型与供应商' }));
-  expect(within(dialog).getByLabelText('API Key')).toHaveValue('synthetic-secret-draft');
+  await userEvent.click(within(page).getByRole('tab', { name: '模型与供应商' }));
+  expect(within(page).getByLabelText('API Key')).toHaveValue('synthetic-secret-draft');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-secret-draft');
-  await userEvent.click(within(dialog).getByRole('button', { name: '关闭对话框' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭' }));
   await userEvent.click(screen.getByRole('button', { name: '设置' }));
-  const reopened = screen.getByRole('dialog', { name: '设置' });
+  const reopened = screen.getByRole('main');
   await userEvent.click(within(reopened).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(reopened).getByRole('button', { name: '编辑 DeepSeek' }));
   expect(within(reopened).getByLabelText('API Key')).toHaveValue('');
@@ -148,7 +148,7 @@ it('keeps an unsaved model key while switching categories but clears it after le
 it('retains the exact pending model write across category changes and retries only on request', async () => {
   const invoke = connect(true);
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const dialog = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(dialog).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(dialog).getByRole('button', { name: '编辑 DeepSeek' }));
@@ -167,7 +167,7 @@ it('retains the exact pending model write across category changes and retries on
 it('returns from a child recovery dialog without discarding another category editor', async () => {
   const invoke = connect();
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const settings = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(settings).getByRole('tab', { name: '模型与供应商' }));
   await userEvent.click(within(settings).getByRole('button', { name: '编辑 DeepSeek' }));
@@ -251,7 +251,7 @@ it.each(['cancelled', 'downloading'] as const)(
       phase,
     });
     render(<App />);
-    await userEvent.click(screen.getByRole('button', { name: '设置' }));
+    await userEvent.keyboard('{Control>},{/Control}');
     const dialog = await screen.findByRole('dialog', { name: '设置' });
     await userEvent.click(within(dialog).getByRole('tab', { name: '电脑与权限' }));
     await userEvent.click(
@@ -273,7 +273,7 @@ it('explains native-only setup without offering Linux installation or VM recover
     approvals: 'host',
   });
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const dialog = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(dialog).getByRole('tab', { name: '电脑与权限' }));
   expect(within(dialog).getByRole('heading', { name: '本机电脑' })).toBeVisible();
@@ -293,7 +293,7 @@ it('keeps Linux recovery reachable when ordinary tasks use the native workspace'
     { available: true },
   );
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const settings = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(settings).getByRole('tab', { name: '电脑与权限' }));
   expect(within(settings).getByRole('button', { name: '检查并恢复' })).toBeVisible();
@@ -307,7 +307,7 @@ it('keeps Linux recovery reachable when ordinary tasks use the native workspace'
 it('keeps a search key only while Settings is open and never stops a background task on close', async () => {
   const invoke = connect(false, undefined, undefined, true);
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const settings = await screen.findByRole('dialog', { name: '设置' });
   await userEvent.click(within(settings).getByRole('tab', { name: '搜索' }));
   const key = await within(settings).findByLabelText('搜索 API Key');
@@ -318,7 +318,7 @@ it('keeps a search key only while Settings is open and never stops a background 
   expect(key).toHaveValue('synthetic-search-draft');
   expect(JSON.stringify(localStorage)).not.toContain('synthetic-search-draft');
   await userEvent.keyboard('{Escape}');
-  await userEvent.click(screen.getByRole('button', { name: '设置' }));
+  await userEvent.keyboard('{Control>},{/Control}');
   const reopened = screen.getByRole('dialog', { name: '设置' });
   await userEvent.click(within(reopened).getByRole('tab', { name: '搜索' }));
   expect(await within(reopened).findByLabelText('搜索 API Key')).toHaveValue('');
