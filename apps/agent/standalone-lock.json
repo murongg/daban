@@ -10681,6 +10681,7 @@
       "version": "0.7.0",
       "license": "AGPL-3.0-only",
       "dependencies": {
+        "@agentclientprotocol/sdk": "1.4.0",
         "@daban/protocol": "file:../protocol",
         "@mixmark-io/domino": "2.2.0",
         "@modelcontextprotocol/client": "2.2.0",

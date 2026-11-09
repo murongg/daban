@@ -2615,6 +2615,7 @@ export const english = {
   'models.webPreviewsDoNotSaveKeysConfigure':
     'Web previews do not save keys. Configure them in the desktop app.',
   'models.workspaceDefault': 'Workspace default model',
+  'models.workspaceDefaultProvider': 'Workspace default provider',
   'models.workspaceDefaultSummary': '{0} Workspace default model: {1}',
   'newchat.confirmNewConversation': 'Confirm new conversation',
   'newchat.connectUpdatedLocalEnvironmentStartConversationsVerify':

@@ -141,6 +141,20 @@ export function Providers({
     original.baseURL === draft.connection.baseURL &&
     modelApi(original) === modelApi(draft.connection);
   const current = selected ?? model.model;
+  const chooseProvider = mode === 'settings' && connections.length > 1;
+  const currentProvider = catalog.find((entry) => entry.id === current)?.provider;
+  const defaultConnections =
+    chooseProvider && currentProvider
+      ? connections.filter((connection) => connection.id === currentProvider)
+      : connections;
+  const defaultDisabled = !available || busy || !!pending || !!draft;
+  function selectDefault(value: string) {
+    setSelected(value);
+    // Choosing a model after choosing its provider is part of the same revision-bound edit.
+    setDefaultRevision((revision) => revision ?? model.revision);
+    setCode('');
+    setError('');
+  }
   const query = draft
     ? {
         connection: {
@@ -498,20 +512,39 @@ export function Providers({
         )}
       {!editorOpen && catalog.length > 0 && (
         <div className="provider-default">
-          <div className="field-label">
-            {t('models.workspaceDefault')}
-            <Select
-              label={t('models.workspaceDefault')}
-              value={current}
-              disabled={!available || busy || !!pending || !!draft}
-              onValueChange={(value) => {
-                setSelected(value);
-                setDefaultRevision(model.revision);
-                setCode('');
-                setError('');
-              }}
-              options={modelChoices(connections, current)}
-            />
+          <div className={chooseProvider ? 'provider-pair' : undefined}>
+            {chooseProvider && (
+              <div className="field-label">
+                {t('models.workspaceDefaultProvider')}
+                <Select
+                  label={t('models.workspaceDefaultProvider')}
+                  value={currentProvider ?? ''}
+                  disabled={defaultDisabled}
+                  onValueChange={(provider) => {
+                    const target =
+                      catalog.find(
+                        (entry) => entry.provider === provider && entry.id === model.model,
+                      ) ?? catalog.find((entry) => entry.provider === provider);
+                    if (target) selectDefault(target.id);
+                  }}
+                  options={connections.map((connection) => ({
+                    value: connection.id,
+                    label: connection.name,
+                    icon: <ProviderIcon platform={providerIdentity(connection)} />,
+                  }))}
+                />
+              </div>
+            )}
+            <div className="field-label">
+              {t('models.workspaceDefault')}
+              <Select
+                label={t('models.workspaceDefault')}
+                value={current}
+                disabled={defaultDisabled}
+                onValueChange={selectDefault}
+                options={modelChoices(defaultConnections, current)}
+              />
+            </div>
           </div>
           <p className="field-help">{t('models.onlyAffectsBotsFollowWorkspaceDefaultRunning')}</p>
           <div className="model-actions">

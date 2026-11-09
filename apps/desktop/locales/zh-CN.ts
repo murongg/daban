@@ -2341,6 +2341,7 @@ export const chinese = {
   'models.verifySaveProvider': '验证并保存供应商',
   'models.webPreviewsDoNotSaveKeysConfigure': '网页预览不保存密钥，请在桌面客户端配置。',
   'models.workspaceDefault': '工作区默认模型',
+  'models.workspaceDefaultProvider': '工作区默认供应商',
   'models.workspaceDefaultSummary': '{0} 工作区默认模型：{1}',
   'newchat.confirmNewConversation': '确认开启',
   'newchat.connectUpdatedLocalEnvironmentStartConversationsVerify':
