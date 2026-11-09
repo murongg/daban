@@ -198,16 +198,20 @@ button {
 .pane-divider-right {
   right: -5px;
 }
+.pane-divider:focus-visible {
+  /* The center marker indicates focus without outlining the wider drag target. */
+  outline: none;
+}
 .pane-divider::after {
   content: "";
   width: 2px;
   height: 24px;
+  border-inline-start: 2px solid var(--scroll-hover);
   border-radius: 2px;
-  background: var(--scroll-hover);
 }
 .pane-divider:is(:hover, :active, :focus-visible)::after {
   height: 100%;
-  background: var(--focus);
+  border-inline-start-color: var(--focus);
 }
 .icon-button {
   display: inline-flex;
