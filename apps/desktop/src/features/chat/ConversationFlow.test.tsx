@@ -134,7 +134,7 @@ it.each(['connecting', 'offline'] as const)(
     const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
     const invoke = bridge(snapshot, listeners);
     render(<App />);
-    const create = await screen.findByRole('button', { name: '新对话' });
+    const create = await screen.findByRole('button', { name: '新增对话' });
     expect(create).toBeEnabled();
     await userEvent.click(create);
     expect(screen.getByRole('heading', { name: '今天想聊什么，或做点什么？' })).toBeVisible();
@@ -178,7 +178,7 @@ it('opens another local conversation from the header while connecting and retain
   snapshot.protocolVersion = 46;
   const invoke = bridge(snapshot);
   render(<App />);
-  await userEvent.click((await screen.findAllByRole('button', { name: '新对话' }))[0]);
+  await userEvent.click(await screen.findByRole('button', { name: '新增对话' }));
   await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), 'SYNTHETIC FIRST DRAFT');
   await userEvent.click(screen.getByRole('button', { name: '开启新对话' }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
@@ -337,14 +337,18 @@ it.each(['ready', 'offline'] as const)(
     render(<App />);
     const sidebar = screen.getByRole('complementary', { name: '侧栏' });
     await userEvent.click(await within(sidebar).findByRole('button', { name: '对话' }));
-    expect(screen.getByText('普通对话 · 可使用工具')).toBeVisible();
+    expect(screen.getByRole('heading', { name: '新对话', level: 1 })).toHaveAccessibleDescription(
+      '普通对话 · 可使用工具',
+    );
 
     await userEvent.click(within(sidebar).getByRole('button', { name: '写作搭档' }));
     expect(screen.getByRole('heading', { name: '写作搭档' })).toBeVisible();
 
     const recent = within(sidebar).getByRole('navigation', { name: '最近对话列表' });
     await userEvent.click(within(recent).getByRole('button', { name: '新对话' }));
-    expect(screen.getByText('普通对话 · 可使用工具')).toBeVisible();
+    expect(screen.getByRole('heading', { name: '新对话', level: 1 })).toHaveAccessibleDescription(
+      '普通对话 · 可使用工具',
+    );
     expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
     expect(invoke.mock.calls.some(([command]) => command.type === 'task.start')).toBe(false);
   },
@@ -366,7 +370,7 @@ it('selects a Bot below a new chat without moving the Bot workspace into recent 
   await userEvent.click(within(bots).getByRole('button', { name: '写作搭档' }));
   expect(screen.getByRole('heading', { name: '写作搭档' })).toBeVisible();
 
-  await userEvent.click(screen.getByRole('button', { name: '新对话' }));
+  await userEvent.click(screen.getByRole('button', { name: '新增对话' }));
   const input = screen.getByRole('textbox', { name: '发送消息' });
   expect(input).toHaveFocus();
   await userEvent.type(input, 'SYNTHETIC INDEPENDENT TOPIC');
@@ -460,7 +464,7 @@ it('allows a local draft with an older backend and explains why it cannot be sen
   snapshot.protocolVersion = 45;
   const invoke = bridge(snapshot);
   render(<App />);
-  await userEvent.click(await screen.findByRole('button', { name: '新对话' }));
+  await userEvent.click(await screen.findByRole('button', { name: '新增对话' }));
   await userEvent.type(
     screen.getByRole('textbox', { name: '发送消息' }),
     'SYNTHETIC RETAINED DRAFT',
@@ -481,7 +485,7 @@ it('starts an ordinary tool-capable conversation directly without a Bot setup fo
   localStorage.setItem(storageKey, serialize(initialState()));
   const invoke = bridge(ready());
   render(<App />);
-  await userEvent.click((await screen.findAllByRole('button', { name: '新对话' }))[0]);
+  await userEvent.click(await screen.findByRole('button', { name: '新增对话' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(invoke.mock.calls.some(([command]) => command.type === 'bot.register')).toBe(false);
   const input = await screen.findByRole('textbox', { name: '发送消息' });

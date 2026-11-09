@@ -106,11 +106,7 @@ it('reads newly uncovered conversation results only after settings closes', asyn
   expect(restore(localStorage.getItem(storageKey)).organization.attention.unread).toContain(
     'research',
   );
-  await userEvent.click(
-    within(screen.getByRole('dialog', { name: '设置' })).getByRole('button', {
-      name: '关闭对话框',
-    }),
-  );
+  await userEvent.click(screen.getByRole('button', { name: '关闭' }));
   expect(restore(localStorage.getItem(storageKey)).organization.attention.unread).not.toContain(
     'research',
   );
