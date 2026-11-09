@@ -1,3 +1,4 @@
+import type { PayloadOptions } from '@daban/engine/payload';
 import { CancellationToken } from 'builder-util-runtime';
 import type { AppUpdater } from 'electron-updater';
 import type { Locale } from '../shared/locale';
@@ -26,6 +27,7 @@ interface Options {
   supported: boolean;
   driver?: UpdateDriver;
   changelogFetch?: typeof fetch;
+  prefetchRuntime?: (reference: unknown, options: PayloadOptions) => Promise<unknown>;
   changed?: (status: UpdateStatus) => unknown;
   save?: () => Promise<unknown>;
   prepare?: () => Promise<unknown>;
@@ -38,6 +40,7 @@ export class Updates {
   private downloading?: Promise<UpdateStatus>;
   private installation?: Promise<UpdateStatus>;
   private cancellation?: CancellationToken;
+  private runtimeReference: unknown;
   private changelogRequest?: { version: string; pending: Set<Locale> };
   private closed = false;
   private readonly listeners: [string, (...args: unknown[]) => unknown][] = [];
@@ -62,6 +65,8 @@ export class Updates {
     };
     on('update-available', (info) => {
       if (
+        this.downloading ||
+        this.installation ||
         !info ||
         typeof info !== 'object' ||
         !('version' in info) ||
@@ -69,6 +74,13 @@ export class Updates {
         !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(info.version)
       )
         return;
+      this.runtimeReference =
+        'vendor' in info &&
+        info.vendor &&
+        typeof info.vendor === 'object' &&
+        'dabanRuntime' in info.vendor
+          ? info.vendor.dabanRuntime
+          : undefined;
       const notes =
         'releaseNotes' in info && typeof info.releaseNotes === 'string'
           ? info.releaseNotes.slice(0, updateNotesLimit)
@@ -80,6 +92,7 @@ export class Updates {
         changelogs: info.version === this.value.nextVersion ? this.value.changelogs : undefined,
         error: undefined,
         percent: undefined,
+        downloadTarget: undefined,
       });
       this.loadChangelogs(info.version);
     });
@@ -87,6 +100,7 @@ export class Updates {
     on('download-progress', (info) => {
       if (
         this.value.phase !== 'downloading' ||
+        this.value.downloadTarget === 'runtime' ||
         !info ||
         typeof info !== 'object' ||
         !('percent' in info) ||
@@ -96,20 +110,10 @@ export class Updates {
         return;
       this.set({ percent: Math.max(0, Math.min(100, info.percent)) });
     });
-    on('update-downloaded', (info) => {
-      const nextVersion =
-        info && typeof info === 'object' && 'version' in info && typeof info.version === 'string'
-          ? info.version
-          : this.value.nextVersion;
-      this.set({
-        phase: 'downloaded',
-        nextVersion,
-        changelogs: nextVersion === this.value.nextVersion ? this.value.changelogs : undefined,
-        percent: 100,
-        error: undefined,
-      });
+    on('error', (error) => {
+      // The download promise owns failure and cancellation until both downloads have settled.
+      if (!this.downloading && this.value.phase !== 'downloading') this.failed(error);
     });
-    on('error', (error) => this.failed(error));
   }
   private loadChangelogs(version: string) {
     const fetcher = this.options.changelogFetch;
@@ -138,6 +142,7 @@ export class Updates {
     }
   }
   private set(patch: Partial<UpdateStatus>) {
+    if (this.closed) return;
     this.value = { ...this.value, ...patch };
     this.options.changed?.(this.status());
   }
@@ -152,20 +157,10 @@ export class Updates {
       this.set({ phase: 'unpublished', error: undefined });
       return;
     }
-    if (this.cancellation?.cancelled) {
-      this.set({ phase: 'available', error: undefined, percent: undefined });
-      return;
-    }
     const installing = ['preparing', 'installing'].includes(this.value.phase);
-    const downloading = this.value.phase === 'downloading' || !!this.downloading;
-    const phase = installing ? 'downloaded' : downloading ? 'available' : 'error';
     this.set({
-      phase,
-      error: installing
-        ? 'UPDATE_INSTALL_FAILED'
-        : downloading
-          ? 'UPDATE_DOWNLOAD_FAILED'
-          : 'UPDATE_CHECK_FAILED',
+      phase: installing ? 'downloaded' : 'error',
+      error: installing ? 'UPDATE_INSTALL_FAILED' : 'UPDATE_CHECK_FAILED',
     });
     if (installing && !this.installation)
       this.restore().catch(() => console.error('Update recovery failed'));
@@ -209,24 +204,18 @@ export class Updates {
     }
     if (command.type === 'cancel') {
       this.cancellation?.cancel();
-      return this.status();
+      return this.downloading ?? this.status();
     }
     if (command.type === 'download') {
       if (this.downloading) return this.downloading;
       if (this.value.phase !== 'available') throw Error('UPDATE_NOT_READY');
-      this.cancellation = new CancellationToken();
-      this.set({ phase: 'downloading', percent: 0, error: undefined });
-      this.downloading = driver
-        .downloadUpdate(this.cancellation)
-        .then(() => this.status())
-        .catch((error) => {
-          this.failed(error);
-          return this.status();
-        })
-        .finally(() => {
-          this.downloading = undefined;
-          this.cancellation = undefined;
-        });
+      const cancellation = new CancellationToken();
+      this.cancellation = cancellation;
+      this.downloading = this.download(driver, cancellation, this.runtimeReference).finally(() => {
+        this.downloading = undefined;
+        this.cancellation = undefined;
+        cancellation.dispose();
+      });
       return this.downloading;
     }
     if (this.installation) return this.installation;
@@ -235,6 +224,42 @@ export class Updates {
       this.installation = undefined;
     });
     return this.installation;
+  }
+  private async download(
+    driver: UpdateDriver,
+    cancellation: CancellationToken,
+    reference: unknown,
+  ) {
+    const controller = new AbortController();
+    cancellation.once('cancel', () => controller.abort());
+    let error: UpdateError = 'UPDATE_DOWNLOAD_FAILED';
+    this.set({ phase: 'downloading', percent: 0, error: undefined });
+    try {
+      // The updater's own downloaded event only covers the client installer.
+      await driver.downloadUpdate(cancellation);
+      controller.signal.throwIfAborted();
+      if (reference !== undefined && this.options.prefetchRuntime) {
+        error = 'UPDATE_RUNTIME_DOWNLOAD_FAILED';
+        this.set({ downloadTarget: 'runtime', percent: 0 });
+        await this.options.prefetchRuntime(reference, {
+          signal: controller.signal,
+          progress: ({ received, total }) => {
+            if (!controller.signal.aborted)
+              this.set({ percent: Math.floor((received / total) * 100) });
+          },
+        });
+        controller.signal.throwIfAborted();
+      }
+      this.set({ phase: 'downloaded', percent: 100, downloadTarget: undefined });
+    } catch {
+      this.set({
+        phase: 'available',
+        percent: undefined,
+        downloadTarget: undefined,
+        error: cancellation.cancelled ? undefined : error,
+      });
+    }
+    return this.status();
   }
   private async install() {
     this.set({ phase: 'preparing', error: undefined });

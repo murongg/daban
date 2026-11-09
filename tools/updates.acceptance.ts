@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import {
   access,
@@ -21,8 +22,10 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Arch, build, type Configuration, Platform } from 'electron-builder';
 import { build as bundle } from 'vite';
+import { attachRuntimeReference } from './installer.ts';
 
-assert.ok(['darwin', 'win32'].includes(process.platform));
+const platform = process.platform;
+assert.ok(platform === 'darwin' || platform === 'win32');
 if (process.platform === 'win32')
   assert.equal(
     process.env.CI,
@@ -37,6 +40,9 @@ const electron: string = requireDesktop('electron');
 const run = promisify(execFile);
 const feed = path.join(temporary, 'feed');
 await mkdir(feed);
+const runtimeBytes = Buffer.from('SYNTHETIC UPDATE RUNTIME ARCHIVE');
+const runtimeId = 'a'.repeat(64);
+await writeFile(path.join(feed, 'runtime-fixture.bin'), runtimeBytes);
 const server = createServer(async (req, res) => {
   try {
     const name = decodeURIComponent(new URL(req.url ?? '/', 'http://127.0.0.1').pathname).slice(1);
@@ -115,6 +121,22 @@ try {
       path.join(resources, 'app-update.yml'),
       `provider: generic\nurl: ${url}\nupdaterCacheDirName: ${path.basename(temporary)}\n`,
     );
+    if (version === '1.1.0')
+      await writeFile(
+        path.join(resources, 'runtime.json'),
+        JSON.stringify({
+          version: 1,
+          id: runtimeId,
+          assets: [
+            {
+              platform: process.platform,
+              arch: process.platform === 'darwin' ? 'arm64' : 'x64',
+              bytes: runtimeBytes.length,
+              sha256: createHash('sha256').update(runtimeBytes).digest('hex'),
+            },
+          ],
+        }),
+      );
     if (process.platform === 'darwin') {
       await rename(
         path.join(app, 'Contents/MacOS/Electron'),
@@ -174,6 +196,11 @@ try {
         : Platform.WINDOWS.createTarget(['nsis'], Arch.x64),
     config,
   });
+  await attachRuntimeReference(
+    feed,
+    path.join(two, platform === 'darwin' ? 'Contents/Resources' : 'resources'),
+    platform,
+  );
   if (process.platform === 'darwin') {
     const archive = (await readdir(feed)).find((name) => name.endsWith('.zip'));
     assert.ok(archive);
@@ -253,6 +280,7 @@ try {
   assert.equal(result.version, '1.1.0');
   assert.equal(result.workspacePreserved, true);
   assert.equal(result.savedBeforeRestart, true);
+  assert.equal(result.runtimeCachedBeforeRestart, true);
   assert.equal(
     JSON.parse(await readFile(path.join(temporary, 'blocked.json'), 'utf8')).busyBlocked,
     true,
@@ -269,6 +297,7 @@ try {
       busyBlocked: true,
       workspacePreserved: true,
       savedBeforeRestart: true,
+      runtimeCachedBeforeRestart: true,
       publicReleaseCreated: false,
     }),
   );

@@ -392,6 +392,7 @@ export const english = {
   'updates.unpublished': 'No stable release is available yet',
   'updates.available': 'Version {0} is available',
   'updates.downloading': 'Downloading update…',
+  'updates.downloadingRuntime': 'Downloading core components…',
   'updates.downloaded': 'Update downloaded, ready to install',
   'updates.preparing': 'Saving and checking background tasks…',
   'updates.installing': 'Restarting to install the update…',
@@ -410,6 +411,8 @@ export const english = {
   'updates.later': 'Later',
   'updates.checkFailed': 'Could not check for updates. Try again later.',
   'updates.downloadFailed': 'The download failed. You can try again.',
+  'updates.runtimeDownloadFailed':
+    'Could not download the core components. You can retry the update.',
   'updates.saveFailed':
     'Workspace storage could not be saved. Restart was cancelled; export or save your work first.',
   'updates.notReady': 'Download and verify the update first.',

@@ -325,6 +325,21 @@ it('shows download progress and requires explicit confirmation before restarting
   await act(async () =>
     live.emit({
       type: 'status',
+      status: {
+        phase: 'downloading',
+        version: '1.0.0',
+        nextVersion: '1.1.0',
+        downloadTarget: 'runtime',
+        percent: 65,
+      },
+    }),
+  );
+  expect(screen.getByRole('status')).toHaveTextContent('正在下载基础组件');
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '65');
+  expect(screen.queryByRole('button', { name: '重启并安装' })).not.toBeInTheDocument();
+  await act(async () =>
+    live.emit({
+      type: 'status',
       status: { phase: 'downloaded', version: '1.0.0', nextVersion: '1.1.0', percent: 100 },
     }),
   );

@@ -54,23 +54,24 @@ export function componentTag(id: string) {
   if (!/^[a-f0-9]{64}$/.test(id)) throw Error('COMPONENT_MANIFEST');
   return `runtime-${id.slice(0, 24)}`;
 }
-export function componentIndex(value: unknown, id: string): ComponentIndex {
-  componentTag(id);
+export function componentIndex(value: unknown, id?: string): ComponentIndex {
   if (
     !record(value) ||
     Object.keys(value).length !== 3 ||
     Object.keys(value).some((key) => !['version', 'id', 'assets'].includes(key)) ||
     value.version !== 1 ||
-    value.id !== id ||
+    typeof value.id !== 'string' ||
+    (id !== undefined && value.id !== id) ||
     !Array.isArray(value.assets) ||
     !value.assets.length ||
     value.assets.length > 2
   )
     throw Error('COMPONENT_MANIFEST');
+  componentTag(value.id);
   const assets = value.assets.map(asset);
   if (new Set(assets.map((item) => `${item.platform}:${item.arch}`)).size !== assets.length)
     throw Error('COMPONENT_MANIFEST');
-  return { version: 1, id, assets };
+  return { version: 1, id: value.id, assets };
 }
 export function componentAsset(index: ComponentIndex, platform: string, arch: string) {
   const found = index.assets.find((item) => item.platform === platform && item.arch === arch);
