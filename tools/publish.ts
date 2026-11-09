@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { hashAsset } from './environment.ts';
@@ -124,8 +125,14 @@ export async function publishClient(
       notes,
     ]);
     release = await currentRelease(tag, run);
+    // GitHub can acknowledge creation before its release list exposes the draft.
+    for (const wait of [500, 1000, 2000, 4000, 8000]) {
+      if (release) break;
+      await delay(wait);
+      release = await currentRelease(tag, run);
+    }
   }
-  assert.ok(release, 'PUBLISH_RESPONSE');
+  assert.ok(release, `PUBLISH_RESPONSE: draft ${tag} is not visible after creation`);
   const matches = (asset: Asset | undefined, file: (typeof files)[number]) =>
     asset?.state === 'uploaded' && asset.digest === file.digest && asset.size === file.size;
   if (!release.draft) {
