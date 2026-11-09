@@ -1417,16 +1417,23 @@ it('publishes the first native snapshot and keeps it updating while Linux setup 
   const frame = { url: 'file:///mock/index.html' },
     sender = { mainFrame: frame, send: vi.fn() };
   mocks.windows.push({ webContents: sender });
-  const service = runtimeService(f.root, frame.url, undefined, undefined, {
-    ...f.config,
-    nativeFirst: true,
-  });
+  const service = runtimeService(
+    f.root,
+    frame.url,
+    undefined,
+    undefined,
+    { ...f.config, nativeFirst: true },
+    undefined,
+    'darwin',
+  );
   const reads = () => f.requests.filter(({ route }) => route === '/api/state').length;
   const connecting = service.connect();
   try {
     expect(await Promise.race([connecting, setupRequested])).toMatchObject({ phase: 'ready' });
     expect(reads()).toBe(1);
-    await setupRequested;
+    await vi.waitFor(() =>
+      expect(f.requests.some(({ route }) => route === '/api/host/environment')).toBe(true),
+    );
     await vi.waitFor(() => expect(reads()).toBeGreaterThan(1), { timeout: 2000 });
     finish();
     await vi.waitFor(() =>
