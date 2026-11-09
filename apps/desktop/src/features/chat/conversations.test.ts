@@ -272,6 +272,37 @@ it('lists ordinary chats and Bot sessions together using independent conversatio
   expect(recent.find((item) => item.bot === 'mock-chat')?.title).toBe('SYNTHETIC PLAIN TOPIC');
 });
 
+it('can restore an empty conversation after switching Bots and reopening', () => {
+  let state = demoState();
+  state.messages.research = [];
+  state = reduce(state, {
+    type: 'conversation-place',
+    bot: 'research',
+    revision: 0,
+    placement: 'archived',
+  });
+  state = reduce(state, { type: 'chat-select', bot: 'chief', revision: 0 });
+  const reopened = restore(serialize(state));
+  expect(reopened.conversationPlacements?.[conversationKey('research', 0)]).toBe('archived');
+  expect(recentConversations(reopened)).toContainEqual(
+    expect.objectContaining({ bot: 'research', revision: 0 }),
+  );
+  const restored = restore(
+    serialize(
+      reduce(reopened, {
+        type: 'conversation-place',
+        bot: 'research',
+        revision: 0,
+        placement: 'recent',
+      }),
+    ),
+  );
+  expect(restored.conversationPlacements?.[conversationKey('research', 0)]).toBe('recent');
+  expect(recentConversations(restored)).toContainEqual(
+    expect.objectContaining({ bot: 'research', revision: 0 }),
+  );
+});
+
 it('treats prototype-named execution identities as ordinary conversation IDs', () => {
   const state = reduce(demoState(), {
     type: 'create',
