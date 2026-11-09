@@ -194,6 +194,8 @@ function connect(options: { protocol?: number; comments?: CommentsState; work?: 
       try {
         let value: unknown;
         if (command.type === 'status') value = snapshot;
+        else if (command.type === 'chat.history')
+          value = { bot: command.bot, revision: command.revision, items: [] };
         else if (command.type === 'work.list') value = await list(command.query);
         else if (command.type === 'work.read') value = await read(command.id);
         else if (command.type === 'work.write') value = await write(command.request);
@@ -280,9 +282,11 @@ it('shows literal discussion and keeps independent per-card comment drafts witho
   expect(commentCard(cache(), 'mock-beta').draft?.body).toBe('MOCK BETA DRAFT');
   expect(live.writeComment).not.toHaveBeenCalled();
   expect(live.write).not.toHaveBeenCalled();
-  expect(live.calls.every((call) => call.type === 'status' || call.type.startsWith('work.'))).toBe(
-    true,
-  );
+  expect(
+    live.calls.every(
+      (call) => ['status', 'chat.history'].includes(call.type) || call.type.startsWith('work.'),
+    ),
+  ).toBe(true);
 });
 
 it('publishes persisted exact intent and advances parent revision while preserving unsaved task edits', async () => {

@@ -89,6 +89,8 @@ function connect(protocol = 9) {
       document = { ...first, revision: command.revision + 1 };
       return { ok: true, value: document };
     }
+    if (command.type === 'chat.history')
+      return { ok: true, value: { bot: command.bot, revision: command.revision, items: [] } };
     return { ok: true, value: command.type === 'status' ? snapshot : {} };
   });
   Object.defineProperty(window, 'daban', {

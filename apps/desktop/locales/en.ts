@@ -722,6 +722,7 @@ export const english = {
   'chat.verifyingQueuedMessageInsert': 'Checking whether the steer was delivered…',
   'chat.thinking': 'Thinking',
   'chat.loadEarlierMessages': 'Load earlier messages',
+  'chat.retryHistory': 'Retry loading messages',
   'chat.times': 'times',
   'chat.todayExampleConversation': 'Today 10:24 · Example conversation',
   'chat.toolCalled': 'Tool called',

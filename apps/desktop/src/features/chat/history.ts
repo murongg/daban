@@ -1,5 +1,5 @@
 import { agentId, isChatPage, type RuntimeTaskSummary, validAgentId } from '@daban/protocol';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import { type Message, reduce, type State, type WorkspaceFile } from '../../app/state';
 
@@ -9,7 +9,7 @@ interface Page {
   files: WorkspaceFile[];
   records: RuntimeTaskSummary[];
   cursor?: string;
-  more: boolean;
+  loaded: boolean;
   busy: boolean;
   error: string;
 }
@@ -18,7 +18,7 @@ const empty = (scope: string): Page => ({
   messages: [],
   files: [],
   records: [],
-  more: true,
+  loaded: false,
   busy: false,
   error: '',
 });
@@ -40,8 +40,8 @@ export function useHistory(state: State, bot: string, revision: number, enabled:
       mounted.current = false;
     };
   }, []);
-  async function load() {
-    if (!enabled || !page.more || flight.current?.scope === scope) return;
+  const load = useCallback(async () => {
+    if (!enabled || (page.loaded && !page.cursor) || flight.current?.scope === scope) return;
     const ticket = { scope };
     flight.current = ticket;
     setSaved({ ...page, busy: true, error: '' });
@@ -54,7 +54,7 @@ export function useHistory(state: State, bot: string, revision: number, enabled:
     const before = [...cached, ...(page.cursor ? [page.cursor] : [])].sort()[0];
     try {
       const value = await command({ type: 'chat.history', bot: agentId(bot), revision, before });
-      if (!mounted.current || selected.current !== scope) return;
+      if (!mounted.current || selected.current !== scope || flight.current !== ticket) return;
       if (
         !isChatPage(value) ||
         value.bot !== agentId(bot) ||
@@ -97,13 +97,13 @@ export function useHistory(state: State, bot: string, revision: number, enabled:
             ).values(),
           ],
           cursor: value.nextBefore,
-          more: !!value.nextBefore,
+          loaded: true,
           busy: false,
           error: '',
         };
       });
     } catch (error) {
-      if (mounted.current && selected.current === scope)
+      if (mounted.current && selected.current === scope && flight.current === ticket)
         setSaved((current) => ({
           ...(current.scope === scope ? current : empty(scope)),
           busy: false,
@@ -112,6 +112,16 @@ export function useHistory(state: State, bot: string, revision: number, enabled:
     } finally {
       if (flight.current === ticket) flight.current = undefined;
     }
-  }
-  return { ...page, more: enabled && page.more, load };
+  }, [bot, command, enabled, page, revision, scope]);
+  const loading = enabled && !page.loaded && !page.error;
+  useEffect(() => {
+    if (loading && !page.busy) load().catch(console.error);
+  }, [load, loading, page.busy]);
+  return {
+    ...page,
+    more: enabled && !!page.cursor,
+    loading,
+    error: enabled ? page.error : '',
+    load,
+  };
 }
