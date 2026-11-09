@@ -1,11 +1,11 @@
 {
   "name": "@daban/runtime",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@daban/engine": "0.6.0",
-    "@daban/protocol": "0.6.0"
+    "@daban/engine": "0.7.0",
+    "@daban/protocol": "0.7.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

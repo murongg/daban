@@ -1,12 +1,12 @@
 {
   "name": "@daban/agent",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
       "name": "@daban/agent",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "license": "AGPL-3.0-only",
       "dependencies": {
         "@anthropic-ai/sandbox-runtime": "0.0.81",
@@ -10678,7 +10678,7 @@
     },
     "vendor/engine": {
       "name": "@daban/engine",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "license": "AGPL-3.0-only",
       "dependencies": {
         "@daban/protocol": "file:../protocol",
@@ -10698,7 +10698,7 @@
     },
     "vendor/protocol": {
       "name": "@daban/protocol",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "license": "AGPL-3.0-only"
     }
   }
