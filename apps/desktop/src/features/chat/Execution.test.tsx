@@ -1044,6 +1044,8 @@ it('keeps group execution details below the streaming reply and preserves the di
   const disclosure = label.closest('details')!;
   expect(disclosure.closest('.message-details')).toBeInTheDocument();
   expect(disclosure).not.toHaveAttribute('open');
+  const avatar = disclosure.closest('.group-delivery')?.querySelector('.message-author img');
+  expect(avatar).toHaveAttribute('src', expect.stringMatching(/\/avatars\/orange\.png$/));
   await userEvent.click(label);
   expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
   await act(async () =>
@@ -1059,6 +1061,7 @@ it('keeps group execution details below the streaming reply and preserves the di
   );
   await screen.findByText('合成群流式回复');
   expectExecutionBelow('合成群流式回复');
+  expect(disclosure.closest('.group-delivery')?.querySelector('.message-author img')).toBe(avatar);
   expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
   expect(disclosure).toHaveAttribute('open');
 });
