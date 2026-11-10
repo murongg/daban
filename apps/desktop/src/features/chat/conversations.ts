@@ -10,6 +10,7 @@ export interface ConversationDraft {
   queued: QueuedTask[];
   mode?: ApprovalMode;
   browserAutoStart?: true;
+  hostCommandFullAccess?: true;
   uploading?: boolean;
 }
 export function draftFolders(state: Pick<State, 'draftFolders'>, bot: string): string[] {
@@ -72,6 +73,10 @@ export function conversationEditor(state: State, bot: string, revision: number):
         state.approvalModes[bot]?.revision === revision
           ? state.approvalModes[bot]?.browserAutoStart
           : undefined,
+      hostCommandFullAccess:
+        state.approvalModes[bot]?.revision === revision
+          ? state.approvalModes[bot]?.hostCommandFullAccess
+          : undefined,
       uploading: state.attachmentUploads[bot],
     };
   return (
@@ -104,6 +109,9 @@ export function saveConversationEditor(
         revision,
         mode: editor.mode ?? 'auto',
         ...(editor.mode === 'full' && editor.browserAutoStart ? { browserAutoStart: true } : {}),
+        ...(editor.mode === 'full' && editor.hostCommandFullAccess
+          ? { hostCommandFullAccess: true }
+          : {}),
       },
     },
     attachmentUploads: { ...state.attachmentUploads, [bot]: !!editor.uploading },

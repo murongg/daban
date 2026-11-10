@@ -92,7 +92,8 @@ export function chatApproval(
   bot: string,
   revision: number,
   protocol: number,
-): Pick<TaskRequest, 'approvalMode' | 'browserAutoStart'> {
+  hostCommands = false,
+): Pick<TaskRequest, 'approvalMode' | 'browserAutoStart' | 'hostCommandFullAccess'> {
   if (protocol < 44) return {};
   const approvalMode = chatApprovalMode(state, bot, revision);
   return {
@@ -101,6 +102,11 @@ export function chatApproval(
     approvalMode === 'full' &&
     state.approvalModes[bot]?.browserAutoStart === true
       ? { browserAutoStart: true }
+      : {}),
+    ...(hostCommands &&
+    approvalMode === 'full' &&
+    state.approvalModes[bot]?.hostCommandFullAccess === true
+      ? { hostCommandFullAccess: true }
       : {}),
   };
 }
@@ -276,7 +282,10 @@ export interface State {
   groupRequests: Record<string, GroupSend | undefined>;
   groupActions: Record<string, GroupActionRequest | undefined>;
   chatStates: Record<string, ChatState>;
-  approvalModes: Record<string, { revision: number; mode: ApprovalMode; browserAutoStart?: true }>;
+  approvalModes: Record<
+    string,
+    { revision: number; mode: ApprovalMode; browserAutoStart?: true; hostCommandFullAccess?: true }
+  >;
   chatRequests: Record<string, ChatRequest | undefined>;
   groupRevisions: Record<string, number>;
   groupTargets: Record<string, string>;
@@ -416,6 +425,7 @@ export type Action =
       revision: number;
       mode: ApprovalMode;
       browserAutoStart?: boolean;
+      hostCommandFullAccess?: boolean;
     }
   | { type: 'chats'; items: ChatState[]; keepSelection?: boolean }
   | { type: 'chat-select'; bot: string; revision: number }
@@ -1101,6 +1111,9 @@ export function reduce(state: State, action: Action): State {
             mode: action.mode,
             ...(action.mode === 'full' && action.browserAutoStart
               ? { browserAutoStart: true }
+              : {}),
+            ...(action.mode === 'full' && action.hostCommandFullAccess
+              ? { hostCommandFullAccess: true }
               : {}),
           },
         },

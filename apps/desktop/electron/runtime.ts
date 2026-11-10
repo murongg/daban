@@ -396,6 +396,7 @@ export class RuntimeClient {
         searchSettings?: unknown;
         jinaReader?: unknown;
         localFolders?: unknown;
+        hostCommandFullAccess?: unknown;
         localComputer?: unknown;
         linux?: unknown;
         hostBrowser?: unknown;
@@ -511,6 +512,7 @@ export class RuntimeClient {
       if (raw.searchSettings === true) snapshot.searchSettings = true;
       if (typeof raw.jinaReader === 'boolean') snapshot.jinaReader = raw.jinaReader;
       if (this.agent && raw.localFolders === true) snapshot.localFolders = true;
+      if (this.agent && raw.hostCommandFullAccess === true) snapshot.hostCommandFullAccess = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer
@@ -2127,6 +2129,8 @@ export class RuntimeClient {
         if (command.task.approvalMode !== undefined && current.protocolVersion < 44)
           throw new Error('RUNTIME_TOO_OLD');
         if (command.task.browserAutoStart && current.protocolVersion < browserApprovalProtocol)
+          throw new Error('RUNTIME_TOO_OLD');
+        if (command.task.hostCommandFullAccess && !current.hostCommandFullAccess)
           throw new Error('RUNTIME_TOO_OLD');
         if (
           (command.task.contextRevision !== undefined || command.task.model !== undefined) &&

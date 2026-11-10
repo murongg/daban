@@ -84,13 +84,19 @@ function connect(interactions: RuntimeSnapshot['interactions'] = []) {
   };
 }
 
-it.each([false, true])(
-  'captures the approval choice and preserves it on an uncertain send (browser support: %s)',
-  async (browser) => {
+it.each([
+  { browser: false, host: false },
+  { browser: true, host: false },
+  { browser: false, host: true },
+  { browser: true, host: true },
+])(
+  'captures the approval choice on an uncertain send (browser: $browser, host: $host)',
+  async ({ browser, host }) => {
     const backend = connect();
-    backend.state.protocolVersion = browser ? browserApprovalProtocol : 44;
-    if (browser) {
-      backend.state.hostBrowser = { available: true, connections: [] };
+    backend.state.protocolVersion = browser || host ? browserApprovalProtocol : 44;
+    if (browser) backend.state.hostBrowser = { available: true, connections: [] };
+    if (host) backend.state.hostCommandFullAccess = true;
+    if (browser || host) {
       const state = workspace.reduce(seedDemoState(), {
         type: 'approval-mode',
         bot: 'research',
@@ -104,13 +110,14 @@ it.each([false, true])(
     render(<App />);
     const trigger = await screen.findByRole('button', { name: /审批模式/ });
     await userEvent.click(trigger);
-    if (browser) {
+    if (browser || host) {
       expect(screen.getByRole('option', { name: /^完全访问权限（旧范围）/ })).toHaveAttribute(
         'aria-selected',
         'true',
       );
-      expect(screen.getByText(/也可打开内置浏览器并使用已保存的登录/)).toBeVisible();
     }
+    if (browser) expect(screen.getByText(/也可打开内置浏览器并使用已保存的登录/)).toBeVisible();
+    if (host) expect(screen.getByText(/在本机直接运行命令，不经过应用沙箱/)).toBeVisible();
     await userEvent.click(screen.getByRole('option', { name: /^完全访问权限(?!（旧范围）)/ }));
     await userEvent.type(
       screen.getByRole('textbox', { name: '发送消息' }),
@@ -127,6 +134,12 @@ it.each([false, true])(
     const stored = JSON.parse(localStorage.getItem(seedStorageKey)!);
     expect(stored.state.runtimeRequests.research.approvalMode).toBe('full');
     expect(stored.state.runtimeRequests.research.browserAutoStart).toBe(browser ? true : undefined);
+    expect(stored.state.runtimeRequests.research.hostCommandFullAccess).toBe(
+      host ? true : undefined,
+    );
+    expect(sent?.type === 'task.start' && sent.task.hostCommandFullAccess).toBe(
+      host ? true : undefined,
+    );
     expect(sent?.type === 'task.start' && sent.task.browserAutoStart).toBe(
       browser ? true : undefined,
     );

@@ -495,6 +495,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
         'files',
         'chatRevision',
         'approvalMode',
+        'hostCommandFullAccess',
         'browserAutoStart',
         'contextRevision',
         'model',
@@ -504,6 +505,8 @@ export function parseCommand(value: unknown): RuntimeCommand {
       !string(t.prompt, 12000) ||
       !(t.prompt as string).trim() ||
       (t.approvalMode !== undefined && !isApprovalMode(t.approvalMode)) ||
+      (t.hostCommandFullAccess !== undefined &&
+        (t.hostCommandFullAccess !== true || t.approvalMode !== 'full')) ||
       (t.browserAutoStart !== undefined &&
         (t.browserAutoStart !== true || t.approvalMode !== 'full')) ||
       (t.model !== undefined && !isModelId(t.model)) ||

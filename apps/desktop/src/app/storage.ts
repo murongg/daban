@@ -183,6 +183,9 @@ export function restore(raw: string | null): State {
                 ...(draft.mode === 'full' && draft.browserAutoStart === true
                   ? { browserAutoStart: true }
                   : {}),
+                ...(draft.mode === 'full' && draft.hostCommandFullAccess === true
+                  ? { hostCommandFullAccess: true }
+                  : {}),
               },
             ],
           ];

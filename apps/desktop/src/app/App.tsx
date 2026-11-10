@@ -630,6 +630,7 @@ function Workbench() {
           botId,
           chatRevision(state, botId, runtime.snapshot.chats),
           runtime.snapshot.protocolVersion,
+          runtime.snapshot.hostCommandFullAccess,
         ),
         prompt: text || t('common.reviewFilesCompleteTaskIDescribed'),
         ...(runtime.snapshot.protocolVersion < 3 ? { memory: state.memories[botId] } : {}),
@@ -742,6 +743,7 @@ function Workbench() {
         botId,
         task.chatRevision ?? chatRevision(state, botId, runtime.snapshot.chats),
         runtime.snapshot.protocolVersion,
+        runtime.snapshot.hostCommandFullAccess,
       ),
       ...(target && runtime.snapshot.protocolVersion >= 43 ? { retryTurn: target.id } : {}),
       ...(runtime.snapshot.protocolVersion >= 29
