@@ -181,6 +181,8 @@ button {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* Continue the sidebar surface behind the main pane's rounded corner. */
+  background: var(--sidebar);
 }
 .pane {
   /* The separator reads these pixel limits to expose the same range to the keyboard. */
