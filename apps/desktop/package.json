@@ -1,6 +1,6 @@
 {
   "name": "@daban/desktop",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "main": "../../dist-electron/main.cjs",
@@ -13,8 +13,8 @@
     "start": "electron ."
   },
   "dependencies": {
-    "@daban/engine": "0.7.0",
-    "@daban/protocol": "0.7.0",
+    "@daban/engine": "0.8.0",
+    "@daban/protocol": "0.8.0",
     "@internationalized/date": "3.12.4",
     "@tanstack/react-virtual": "3.14.25",
     "builder-util-runtime": "9.7.0",
