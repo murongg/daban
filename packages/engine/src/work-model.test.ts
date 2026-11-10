@@ -48,6 +48,7 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
       });
   };
   class Harness {
+    constructor(readonly options: { env: NodeJS.ProcessEnv }) {}
     async start() {}
     async close() {}
     session(id = `mock-work-session-${++sequence}`) {
@@ -61,8 +62,8 @@ test('normal ModelRuns RPC offers shared Work and live task catalog to two indep
             (item) => item.sessionId === id && item.running,
           )!;
           observers.set(job.bot, observer.onNotification);
-          expect.assert(job.prompt?.includes('work_read'));
-          expect.assert(job.prompt?.includes('work_comment'));
+          expect.assert(this.options.env.DSH_SYSTEM_PROMPT?.includes('work_read'));
+          expect.assert(this.options.env.DSH_SYSTEM_PROMPT?.includes('work_comment'));
           const catalog = await models.rpc(job.bot, `Bearer ${job.token}`, {
             id: 'mock-list',
             method: 'tools/list',

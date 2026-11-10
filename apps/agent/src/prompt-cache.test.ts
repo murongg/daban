@@ -166,12 +166,18 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
   };
   agent = await startNativeAgent(options);
   let sequence = 0;
+  const prompt = 'SYNTHETIC: reply briefly without tools.';
+  const memory = 'Synthetic preference with {{literal_braces}}.';
+  const filename = 'synthetic-notes.txt';
+  const persona = 'Use a synthetic teaching voice.';
   const run = async (bot: string, chatRevision = 0, conversationId?: string) => {
     await agent!.models.start(
       bot,
       {
         requestId: `mock-cache-${++sequence}`,
-        prompt: 'SYNTHETIC: reply briefly without tools.',
+        prompt,
+        memory,
+        files: [{ name: filename, content: 'Synthetic notes.' }],
         ...(conversationId ? {} : { chatRevision }),
       },
       conversationId ? { id: conversationId, context: 'SYNTHETIC GROUP' } : undefined,
@@ -210,17 +216,20 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
       id: bot,
       name: bot,
       color: 'mint',
-      instructions: '',
+      instructions: persona,
       memory: '',
     });
     const first = await run(bot);
     const request = JSON.stringify(first.body);
-    expect(request, `${api} must send Daban's file routing policy`).toContain(
+    expect(request, `${api} must send Daban's read tool guidance`).toContain(
       'Omit offset and limit on the first read',
     );
     expect(request, `${api} must send the matching todo tool description`).toContain(
       'Skip routine file tasks such as reading known inputs',
     );
+    expect(request).toContain(memory);
+    expect(request).toContain(filename);
+    expect(request.split(persona)).toHaveLength(2);
     const second = await run(bot);
     const sessionRoot = path.join(agent.models.dir, 'dsh', bot);
     const sessions = (await readdir(sessionRoot, { recursive: true })).filter((file) =>
@@ -233,6 +242,23 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line));
+    const messages = events
+      .filter((event) => event.type === 'user/message')
+      .map(({ data }) => data);
+    const requests = messages.filter(({ source }) => source?.kind === 'user');
+    expect(requests.map(({ content }) => content)).toEqual([
+      [{ type: 'text', text: prompt }],
+      [{ type: 'text', text: prompt }],
+    ]);
+    const snapshots = messages.filter(({ source }) => source?.kind === 'runtime-context');
+    expect(snapshots).toHaveLength(2);
+    expect(JSON.stringify(snapshots)).not.toContain(persona);
+    expect(snapshots[0].source.sections).toEqual(
+      expect.arrayContaining([
+        { name: 'daban:runtime', text: expect.stringContaining(filename) },
+        { name: 'daban:preferences', text: expect.stringContaining(memory) },
+      ]),
+    );
     const usage = events.filter((event) => event.type === 'assistant/message').at(-1)?.data.usage;
     expect(usage?.cacheReadTokens, `${api} must preserve native cache usage`).toBe(23000);
     if (api.startsWith('openai-')) {

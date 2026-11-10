@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
@@ -9,11 +9,16 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
   const root = await mkdtemp(path.join(tmpdir(), 'mock-chat-assistant-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   const prompts: string[] = [];
+  let system = '';
+  let context = '';
   const bot = 'mock-writer';
   const chat = 'mock-independent-chat';
   const profile = { name: 'Synthetic writer', instructions: '', memory: '', color: 'mint' };
   let checkAssignedTools: (() => Promise<unknown>) | undefined;
   class Harness {
+    constructor(readonly options: { env: NodeJS.ProcessEnv; cwd: string }) {
+      system = options.env.DSH_SYSTEM_PROMPT ?? '';
+    }
     async start() {}
     async close() {}
     session(id = `mock-session-${prompts.length}`) {
@@ -21,6 +26,7 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
         id,
         run: async (prompt: string | object[]) => {
           prompts.push(JSON.stringify(prompt));
+          context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
           await checkAssignedTools?.();
           return { sessionId: id, finalResponse: 'SYNTHETIC ANSWER' };
         },
@@ -83,9 +89,10 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
     const run = models.jobs.get(chat)!;
     await run.done;
     expect(run.phase, run.error).toBe('completed');
-    expect(prompts.at(-1)).toContain('SYNTHETIC WRITING PERSONA');
-    expect(prompts.at(-1)).toContain('SYNTHETIC PREFERENCES');
-    expect(prompts.at(-1)).not.toContain('SYNTHETIC PRIVATE CHAT');
+    expect(system).toContain('SYNTHETIC WRITING PERSONA');
+    expect(context).toContain('SYNTHETIC PREFERENCES');
+    expect(context).not.toContain('SYNTHETIC PRIVATE CHAT');
+    expect(prompts.at(-1)).toBe(JSON.stringify('SYNTHETIC INDEPENDENT CHAT'));
     expect((await models.chatHistory(bot, 0)).items).toHaveLength(1);
     expect((await models.chatHistory(chat, 0)).items).toHaveLength(1);
   } finally {

@@ -7,6 +7,7 @@ interface CodexTurn {
   input: Readable;
   output: Writable;
   prompt: string;
+  context?: string;
   instructions?: string;
   run: AgentToolRun;
   tools: AgentTools;
@@ -72,6 +73,7 @@ export async function runCodexTurn({
   input,
   output,
   prompt,
+  context,
   instructions,
   run,
   tools,
@@ -180,7 +182,10 @@ export async function runCodexTurn({
     const threadId = started.thread.id;
     const accepted = await request(3, 'turn/start', {
       threadId,
-      input: [{ type: 'text', text: prompt, text_elements: [] }],
+      input: [
+        ...(context ? [{ type: 'text', text: context, text_elements: [] }] : []),
+        { type: 'text', text: prompt, text_elements: [] },
+      ],
     });
     if (!record(accepted.turn) || !scopedId(accepted.turn.id))
       throw new Error('CODEX_INVALID_TURN');

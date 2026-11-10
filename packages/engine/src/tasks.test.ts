@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
+import { agentToolList } from './agent-tools.js';
 import { agentInstructionsFor } from './tasks.js';
 
 test('full guest instructions describe VM sudo and host approval without exposing host execution', () => {
@@ -15,11 +16,9 @@ test('full guest instructions describe VM sudo and host approval without exposin
     /installation requires software_install|without credentials or network/,
   );
   expect(agentInstructionsFor(false)).toMatch(/installation requires software_install/);
-  expect(agentInstructionsFor(true)).toMatch(/local_request_folder/);
-  expect(agentInstructionsFor(true)).toMatch(/suggested path itself never grants access/);
 });
 
-import { TaskJournal, taskPrompt, validateTask } from './tasks.js';
+import { TaskJournal, taskEnvironment, validateTask } from './tasks.js';
 import { WorkspaceFiles } from './workspace.js';
 
 test('task approval mode accepts only the three explicit user policies', () => {
@@ -126,9 +125,10 @@ test('freeform requests preserve actual user instructions and reject unsafe or o
     files: [{ name: 'synthetic.csv', content: 'kind,value\nmock,3' }],
   };
   expect(validateTask(input)).toStrictEqual(input);
-  const prompt = taskPrompt('a', '/synthetic/run-1', input);
-  expect.assert(prompt.includes(input.prompt));
-  expect.assert(prompt.includes(input.memory));
+  const prompt = taskEnvironment('/synthetic/run-1', input);
+  expect(prompt).toContain('synthetic.csv');
+  expect(prompt).not.toContain(input.prompt);
+  expect(prompt).not.toContain(input.memory);
   expect.assert(!prompt.includes('paid_count'));
   for (const bad of [
     { ...input, prompt: '' },
@@ -212,8 +212,10 @@ test('workspace reads actual nested files while rejecting traversal, symlink esc
 });
 test('the turn carries current computer availability rather than advertising unavailable tools', () => {
   const input = { requestId: 'mock-capabilities', prompt: '你有什么功能' };
-  expect(taskPrompt('chief', '/synthetic/run', input)).toMatch(/No computer is connected/);
-  expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
+  expect(taskEnvironment('/synthetic/run', input)).toMatch(/No computer is connected/);
+  expect(taskEnvironment('/synthetic/run', input, { computerConnected: true })).toMatch(
+    /A computer is connected/,
+  );
 });
 
 test('native sessions direct code execution to the task workspace even when Linux is installed', () => {
@@ -227,8 +229,10 @@ test('native sessions direct code execution to the task workspace even when Linu
 
 test('known text attachments can be read directly and saved outputs are checked by reading them back', () => {
   const instructions = agentInstructionsFor(true, true);
-  expect(instructions).toMatch(/read_file.*exact name.*list_files/i);
-  expect(instructions).toMatch(/omit offset and limit/i);
+  expect(instructions).toMatch(/read known text inputs directly; list files/i);
+  expect(agentToolList.find(({ name }) => name === 'read_file')?.description).toContain(
+    'Omit offset and limit on the first read',
+  );
   expect(instructions).toMatch(/read the saved output back/i);
   expect(instructions).toMatch(/routine file tasks.*without a plan/i);
 });

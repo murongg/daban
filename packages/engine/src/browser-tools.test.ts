@@ -150,6 +150,7 @@ test('a native DSH task is told about browser task files while host shell tools 
   await settings.save({ apiKey: 'synthetic-host-model-key', model: 'deepseek-v4-pro' });
   let received = '';
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = 'mock-host-session') {
@@ -157,7 +158,8 @@ test('a native DSH task is told about browser task files while host shell tools 
         id,
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
-          received = prompt;
+          expect(prompt).toBe('Ordinary synthetic greeting.');
+          received = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
           return { sessionId: id, finalResponse: 'SYNTHETIC HOST BROWSER READY' };
         },
       };
@@ -1130,8 +1132,9 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
   const fake = mockRuntime();
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   await settings.save({ apiKey: 'synthetic-capability-key' });
-  const prompts: string[] = [];
+  let context = '';
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = 'mock-capability-session') {
@@ -1139,7 +1142,8 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
         id,
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
-          prompts.push(prompt);
+          expect(prompt).toBe('普通合成问候，不使用工具。');
+          context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
           return { sessionId: id, finalResponse: 'SYNTHETIC-CAPABILITY' };
         },
       };
@@ -1172,9 +1176,10 @@ test('DSH receives truthful DOM browser capabilities for both text and vision ro
         prompt: '普通合成问候，不使用工具。',
       });
       await models.jobs.get(bot)!.done;
-      const prompt = prompts.at(-1)!;
-      expect(prompt).toMatch(/browser_navigate/);
-      expect(prompt).not.toMatch(
+      expect(context).toMatch(/real browser DOM tools|Prefer the real browser DOM tools/);
+      const catalog = models.tools.list(bot, undefined, undefined, models.jobs.get(bot)!);
+      expect(catalog.map(({ name }) => name)).toContain('browser_navigate');
+      expect(context).not.toMatch(
         /browser supports only the local demo site|desktop and browser tools are unavailable/,
       );
       expect(models.jobs.get(bot)!.toolCount).toBe(0);

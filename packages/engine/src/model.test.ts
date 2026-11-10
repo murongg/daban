@@ -10,7 +10,32 @@ import { NativeWorkspace } from './native-workspace.js';
 import { secureDirectory } from './private-files.js';
 import { RemoteWorkspace } from './remote-workspace.js';
 import { ModelSettings } from './settings.js';
+import { apply as registerTaskContext } from './task-context.js';
 import { TaskJournal, type TaskRecord } from './tasks.js';
+
+test('the SDK task context is literal and visible only to the root agent', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'synthetic-task-context-'));
+  const file = path.join(directory, 'task-context.json');
+  const saved = process.env.DABAN_TASK_CONTEXT_FILE;
+  try {
+    const text = 'Synthetic {{literal}}';
+    await writeFile(file, JSON.stringify({ history: text }));
+    process.env.DABAN_TASK_CONTEXT_FILE = file;
+    const root = {};
+    const child = {};
+    const context = vi.fn<Parameters<typeof registerTaskContext>[0]['systemPrompt']['context']>();
+    registerTaskContext({ agents: { roots: () => [root] }, systemPrompt: { context } });
+    const section = context.mock.calls[0][0];
+    expect(section).toMatchObject({ name: 'daban:history', interpolate: false, required: true });
+    expect(section.text({ scope: root })).toBe(text);
+    expect(section.text({ scope: child })).toBe('');
+    expect(section.text({})).toBe('');
+  } finally {
+    if (saved === undefined) delete process.env.DABAN_TASK_CONTEXT_FILE;
+    else process.env.DABAN_TASK_CONTEXT_FILE = saved;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('initialization failures preserve redacted startup diagnostics and reclaim the private checkpoint', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-model-startup-log-'));
@@ -224,6 +249,7 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
     Response.json({ data: [{ id: 'mock-chat' }] }),
   );
   const prompts: string[] = [];
+  let instructions = '';
   let entered!: () => unknown;
   const started = new Promise<unknown>((resolve) => {
     entered = () => resolve(undefined);
@@ -233,6 +259,9 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
     release = () => resolve(undefined);
   });
   class Harness {
+    constructor(options: { env: NodeJS.ProcessEnv }) {
+      instructions = options.env.DSH_SYSTEM_PROMPT ?? '';
+    }
     async start() {}
     async close() {
       release();
@@ -331,8 +360,10 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
     release();
     await models.jobs.get('mock-insert')!.done;
     expect(prompts.length).toBe(2);
-    expect(prompts[0]).toMatch(/Synthetic original request\./);
+    expect(prompts[0]).toBe('Synthetic original request.');
     expect(prompts[1]).toBe('Synthetic inserted message.');
+    expect(instructions).toContain('Follow the latest human correction');
+    expect(instructions).toContain('reuse verified results');
     expect(models.jobs.get('mock-insert')!.result).toBe('Synthetic inserted reply.');
     expect(models.jobs.get('mock-insert')!.phase).toBe('completed');
     expect(models.jobs.get('mock-insert')!.turns).toStrictEqual([
@@ -371,6 +402,7 @@ test('an inserted queued message runs as a follow-up turn in the same session', 
 interface InsertState {
   bot: string;
   prompts: string[];
+  contexts?: string[];
   entered: () => unknown;
   held: Promise<unknown>;
   release?: () => unknown;
@@ -382,6 +414,7 @@ interface InsertState {
 }
 function insertHarness(state: InsertState) {
   return class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = `mock-${state.bot}-session`) {
@@ -397,6 +430,10 @@ function insertHarness(state: InsertState) {
           const prompt =
             typeof input === 'string' ? input : blocks.map((block) => block.text).join('\n');
           state.prompts.push(prompt);
+          if (state.contexts)
+            state.contexts.push(
+              await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8'),
+            );
           state.observe?.(observer, state.prompts.length);
           if (state.prompts.length === 1) {
             state.entered();
@@ -1001,6 +1038,7 @@ test('a rebuilt context keeps every saved turn instead of only the original requ
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-insert-context-'));
   const bot = 'mock-context';
   const prompts: string[] = [];
+  const contexts: string[] = [];
   const journal = new TaskJournal(path.join(root, 'model', 'task-journal'));
   await journal.load();
   await journal.put({
@@ -1031,6 +1069,7 @@ test('a rebuilt context keeps every saved turn instead of only the original requ
   const models = await insertFixture(root, {
     bot,
     prompts,
+    contexts,
     ...insertGates(),
     entered: () => {},
     held: Promise.resolve(),
@@ -1041,10 +1080,13 @@ test('a rebuilt context keeps every saved turn instead of only the original requ
       prompt: 'Synthetic next request.',
     });
     await models.jobs.get(bot)!.done;
-    expect(prompts.length).toBe(1);
-    expect(prompts[0]).toMatch(/Synthetic inserted requirement\./);
-    expect(prompts[0]).toMatch(/Synthetic inserted reply\./);
-    expect(prompts[0]).toMatch(/Synthetic first reply\./);
+    expect(prompts).toEqual(['Synthetic next request.']);
+    expect(contexts[0]).toContain('Synthetic inserted requirement.');
+    expect(contexts[0]).toContain('Synthetic inserted reply.');
+    expect(contexts[0]).toContain('Synthetic first reply.');
+    await expect(
+      readFile(path.join(models.jobs.get(bot)!.privateDir, 'task-context.json'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -1795,11 +1837,20 @@ test('enabling Linux retires a native-only SDK context while preserving saved co
     Response.json({ data: [{ id: 'mock-chat' }] }),
   );
   const resumed: string[] = [];
+  const contexts: string[] = [];
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = 'mock-native-context') {
-      return { id, run: async () => ({ sessionId: id, finalResponse: 'Synthetic response.' }) };
+      return {
+        id,
+        run: async () => {
+          const file = path.join(this.options.cwd, 'task-context.json');
+          contexts.push(await readFile(file, 'utf8'));
+          return { sessionId: id, finalResponse: 'Synthetic response.' };
+        },
+      };
     }
     async resumeSession(id: string) {
       resumed.push(id);
@@ -1851,7 +1902,7 @@ test('enabling Linux retires a native-only SDK context while preserving saved co
     await models.jobs.get('mock-bot')!.done;
     expect(models.jobs.get('mock-bot')!.phase).toBe('completed');
     expect(resumed).toStrictEqual([]);
-    expect.assert(models.jobs.get('mock-bot')!.prompt?.includes('Synthetic first turn.'));
+    expect(contexts[1]).toContain('Synthetic first turn.');
   } finally {
     await models.close();
     await rm(root, { recursive: true, force: true });
@@ -1893,9 +1944,9 @@ test('task search availability and provider selection come from an independent c
 
 test('a Codex default uses the native driver and persists each chat reply and its context', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'mock-codex-chat-'));
-  const prompts: string[] = [];
-  const run = vi.fn(async ({ prompt }: { prompt: string }) => {
-    prompts.push(prompt);
+  const turns: { prompt: string; context?: string }[] = [];
+  const run = vi.fn(async ({ prompt, context }: { prompt: string; context?: string }) => {
+    turns.push({ prompt, context });
     return 'synthetic Codex reply';
   });
   const settings = new ModelSettings(path.join(root, 'credentials.json'), fetch, {
@@ -1919,8 +1970,9 @@ test('a Codex default uses the native driver and persists each chat reply and it
         model: 'local-codex',
       });
     }
-    expect(prompts[0]).not.toContain('synthetic Codex reply');
-    expect(prompts[1]).toContain('synthetic Codex reply');
+    expect(turns.map((turn) => turn.prompt)).toEqual(['mock-codex-first', 'mock-codex-second']);
+    expect(turns[0].context).toBeUndefined();
+    expect(turns[1].context).toContain('synthetic Codex reply');
     expect(run).toHaveBeenCalledTimes(2);
   } finally {
     await models.close();

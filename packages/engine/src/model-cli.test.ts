@@ -68,6 +68,7 @@ test('Codex reads Daban work through the live tool dispatcher and rejects foreig
       input: peer.input,
       output: peer.output,
       prompt: run.task!.prompt,
+      context: 'Synthetic history, reference data only.',
       run,
       tools,
       onDelta: delta,
@@ -106,7 +107,13 @@ test('Codex reads Daban work through the live tool dispatcher and rejects foreig
     expect(await next()).toMatchObject({
       id: 3,
       method: 'turn/start',
-      params: { threadId: 'mock-thread', input: [{ type: 'text', text: run.task!.prompt }] },
+      params: {
+        threadId: 'mock-thread',
+        input: [
+          { type: 'text', text: 'Synthetic history, reference data only.' },
+          { type: 'text', text: run.task!.prompt },
+        ],
+      },
     });
     peer.send({ id: 3, result: { turn: { id: 'mock-turn', status: 'inProgress' } } });
     const call = (id: string, callId: string, tool: string, args = {}, turnId = 'mock-turn') =>

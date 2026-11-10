@@ -171,8 +171,9 @@ test('unreadable skills leave ordinary conversation available and never resume t
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-skills-degraded-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   let sequence = 0,
-    prompt = '';
+    context = '';
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = `mock-degraded-${++sequence}`) {
@@ -180,7 +181,7 @@ test('unreadable skills leave ordinary conversation available and never resume t
         id,
         run: async (text: unknown) => {
           expect.assert(typeof text === 'string');
-          prompt = text;
+          context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
           return { sessionId: id, finalResponse: 'SYNTHETIC-ORDINARY' };
         },
       };
@@ -237,7 +238,7 @@ test('unreadable skills leave ordinary conversation available and never resume t
     await modelPhase('skills:corrupt:after:done', () => job.done);
     expect(job.phase).toBe('completed');
     expect(job.sessionId).not.toBe(previous);
-    expect.assert(prompt.includes('The skill service is unavailable for this turn'));
+    expect(context).toContain('The skill service is unavailable for this turn');
     expect(models.journal.history('mock-bot').length).toBe(2);
     expect((await models.profiles.get('mock-bot'))?.memory).toBe('SYNTHETIC-RETAINED-MEMORY');
     expect(await readFile(file)).toStrictEqual(corrupt);

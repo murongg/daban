@@ -15,8 +15,9 @@ test('DSH tools use the accepted Bot catalog, one-time approvals and shared budg
   let gate = Promise.resolve<unknown>(undefined);
   let sequence = 0;
   const resumed: string[] = [];
-  const prompts: string[] = [];
+  const contexts: string[] = [];
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {
       release?.();
@@ -26,7 +27,7 @@ test('DSH tools use the accepted Bot catalog, one-time approvals and shared budg
         id,
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
-          prompts.push(prompt);
+          contexts.push(await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8'));
           entered();
           await gate;
           return { sessionId: id, finalResponse: 'SYNTHETIC-MCP-ANSWER' };
@@ -180,7 +181,8 @@ test('DSH tools use the accepted Bot catalog, one-time approvals and shared budg
     expect(changed.sessionId).not.toBe(enabledSession);
     expect(changed.integrations?.connections.length).toBe(0);
     await finish('mock-a');
-    expect.assert(prompts.at(-1)?.includes('recheck'));
+    expect(contexts.at(-1)).toContain('recheck');
+    expect(contexts.at(-1)).not.toContain(bearer);
     const other = await start('mock-b', 'mock-mcp-other');
     expect(other.integrations?.connections.length).toBe(0);
     await finish('mock-b');
