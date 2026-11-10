@@ -571,11 +571,10 @@ it('leaves archived identities out of new group member selection', async () => {
   render(<App />);
   await screen.findByText('此 Bot 已归档，历史和未发送草稿保留。');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot 群聊' }));
-  const dialog = await screen.findByRole('dialog', { name: '创建群聊' });
+  const page = within(screen.getByRole('main'));
+  expect(page.getByRole('tab', { name: '创建群聊' })).toHaveAttribute('aria-selected', 'true');
   const name = initialState().bots.find((bot) => bot.id === 'research')!.name;
-  expect(
-    within(dialog).queryByRole('checkbox', { name: new RegExp(name) }),
-  ).not.toBeInTheDocument();
+  expect(page.queryByRole('checkbox', { name: new RegExp(name) })).not.toBeInTheDocument();
 });
 it('retains an ambiguous group send across relaunch for an exact manual retry while preserving a new draft', async () => {
   seed('合成原请求');
@@ -608,7 +607,7 @@ it('creates a real group before selecting it and saves member edits against the 
   render(<App />);
   await findSelectControl('发送给');
   await appAction(userEvent, '编辑群聊');
-  let dialog = screen.getByRole('dialog', { name: '编辑群聊' });
+  const dialog = screen.getByRole('dialog', { name: '编辑群聊' });
   await userEvent.clear(within(dialog).getByRole('textbox', { name: '群聊名称' }));
   await userEvent.type(within(dialog).getByRole('textbox', { name: '群聊名称' }), '合成双人协作');
   await userEvent.click(within(dialog).getByRole('checkbox', { name: '选择 小管家' }));
@@ -622,11 +621,11 @@ it('creates a real group before selecting it and saves member edits against the 
   });
   expect(screen.getByRole('textbox', { name: '发送消息' }).textContent).toBe('合成未发送群消息');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot 群聊' }));
-  dialog = screen.getByRole('dialog', { name: '创建群聊' });
-  await userEvent.type(within(dialog).getByRole('textbox', { name: '名称' }), '合成新群');
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: '选择 研究员' }));
-  await userEvent.click(within(dialog).getByRole('checkbox', { name: '选择 写作搭档' }));
-  await userEvent.click(within(dialog).getByRole('button', { name: '创建群聊' }));
+  const page = within(screen.getByRole('main'));
+  await userEvent.type(page.getByRole('textbox', { name: '名称' }), '合成新群');
+  await userEvent.click(page.getByRole('checkbox', { name: '选择 研究员' }));
+  await userEvent.click(page.getByRole('checkbox', { name: '选择 写作搭档' }));
+  await userEvent.click(page.getByRole('button', { name: '创建群聊' }));
   await screen.findByRole('heading', { name: '合成新群' });
   expect(
     backend.invoke.mock.calls.map(([c]) => c).filter((c) => c.type === 'group.register'),

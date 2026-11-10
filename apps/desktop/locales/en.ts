@@ -1167,12 +1167,13 @@ export const english = {
   'create.groupMembers': 'Group members',
   'create.importFile': 'Import from file',
   'create.mint': 'Mint',
-  'create.nameDescribeWhatWantWorkTogether':
-    'Name it and describe what you want to work on together.',
   'create.pink': 'Pink',
+  'create.recommendedPresets': 'Recommended presets',
   'create.selectBotsGroup': 'Select 2–8 Bots for the group.',
   'create.softViolet': 'Soft violet',
   'create.teal': 'Teal',
+  'create.title': 'Create a Bot or group',
+  'create.usePreset': 'Use {0} preset',
   'create.usesConfiguredWorkspaceConnectionCanChangeBot':
     'Uses a configured workspace connection. You can change it in the Bot profile later.',
   'create.usesSelectedProviderConnectionFullScreenObservation':

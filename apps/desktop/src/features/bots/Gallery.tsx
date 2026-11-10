@@ -1,16 +1,23 @@
 import { ArrowRight, Search } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
 import { Avatar } from './Avatar';
 import { type BotPreset, localizePreset, presets } from './presets';
 
 const categories = ['common.all', ...new Set(presets.map((preset) => preset.category))] as const;
-export function Gallery({ onUsePreset }: { onUsePreset: (preset: BotPreset) => unknown }) {
+export function Gallery({
+  hidden = false,
+  onUsePreset,
+}: {
+  hidden?: boolean;
+  onUsePreset: (preset: BotPreset, opener: HTMLButtonElement | null) => unknown;
+}) {
   useLocale();
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<(typeof categories)[number]>('common.all');
   const [selectedId, setSelected] = useState<string>();
+  const presetOpener = useRef<HTMLButtonElement>(null);
   const selectedSource = presets.find((preset) => preset.id === selectedId);
   const selected = selectedSource && localizePreset(selectedSource);
   // Runtime polling must not restart Dialog's focus trap or move the user's keyboard focus.
@@ -25,7 +32,7 @@ export function Gallery({ onUsePreset }: { onUsePreset: (preset: BotPreset) => u
     )
     .map(localizePreset);
   return (
-    <section className="gallery" aria-label={t('gallery.botPresets')}>
+    <section className="gallery" hidden={hidden} aria-label={t('gallery.botPresets')}>
       <div className="gallery-intro">
         <h2>{t('gallery.pickCompanionGetWork')}</h2>
         <p>{t('gallery.botsPresetRolesCustomizeThemAdding')}</p>
@@ -62,7 +69,10 @@ export function Gallery({ onUsePreset }: { onUsePreset: (preset: BotPreset) => u
               type="button"
               className="gallery-bot"
               aria-label={t('common.view', { 0: preset.name })}
-              onClick={() => setSelected(preset.id)}
+              onClick={(event) => {
+                presetOpener.current = event.currentTarget;
+                setSelected(preset.id);
+              }}
             >
               <Avatar bot={preset} size="large" />
               <span className="gallery-copy">
@@ -116,7 +126,7 @@ export function Gallery({ onUsePreset }: { onUsePreset: (preset: BotPreset) => u
               onClick={() => {
                 const preset = selected;
                 close();
-                onUsePreset(preset);
+                onUsePreset(preset, presetOpener.current);
               }}
             >
               {t('gallery.useBot')}
