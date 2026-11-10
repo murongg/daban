@@ -98,11 +98,9 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
-      - name: Verify the extracted runtime against its pinned archive
-        run: node --experimental-strip-types tools/component.ts validate "${{ runner.temp }}/Daban-win-x64/Daban.exe" "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip" "${{ runner.temp }}/runtime/runtime-windows-x64.json"
-      - name: Verify packaged dependencies and first-use startup
-        timeout-minutes: 6
-        run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip"
+      - name: Verify the packaged runtime and first-use startup
+        timeout-minutes: 8
+        run: node --experimental-strip-types tools/windows.acceptance.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/runtime/Daban-runtime-windows-x64.zip" "${{ runner.temp }}/runtime/runtime-windows-x64.json"
       - name: Build per-user Windows installer and update metadata
         run: node --experimental-strip-types tools/installer.ts "${{ runner.temp }}/Daban-win-x64" "${{ runner.temp }}/Daban-installer"
       - uses: actions/upload-artifact@v4
