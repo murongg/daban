@@ -1211,9 +1211,11 @@ textarea.field {
 .message-details > .execution-info {
   margin-top: 1px;
 }
-.transcript-row > .message-details {
+.transcript-row > .message-details,
+.group-delivery > .message-details {
   margin-bottom: 12px;
 }
+.group-delivery > .message:has(+ .message-details),
 .transcript-row:has(+ .transcript-row > .message-details) > :is(.message, .message-progress) {
   margin-bottom: 0;
 }
@@ -1222,7 +1224,7 @@ textarea.field {
   .message-details:not(:is(:hover, :focus-within, :has(details[open]))) {
     opacity: 0;
   }
-  .message:is(:hover, :focus-within) > .message-details,
+  :is(.message, .group-delivery):is(:hover, :focus-within) > .message-details,
   .transcript-row:has(> :is(.message, .message-progress):is(:hover, :focus-within))
     + .transcript-row
     > .message-details {
