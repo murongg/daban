@@ -3,9 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
+import { migrate } from './database.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
+import { migrations } from './integrations-migrations.js';
 import { Interactions } from './interactions.js';
+import { mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
 
 const save = {
@@ -28,6 +31,231 @@ const tools = [
     },
   },
 ];
+const retiredApproval = {
+  name: '20261104105325_approval-decision',
+  hash: '401436292d92fb1b1d1fb7ba6be2c143b23af9a7b5520286780df027df71fde7',
+  folderMillis: 1793789605000,
+  bps: true,
+  sql: ['ALTER TABLE `call_receipts` ADD `policyDecision` text;'],
+};
+const retiredMerge = {
+  name: '20261105104541_merge-approval-oauth',
+  hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  folderMillis: 1793875541000,
+  bps: true,
+  sql: [''],
+};
+test.each(['approval', 'combined', 'd87'] as const)(
+  '%s experimental MCP database keeps its records and reopens without replaying migrations',
+  async (mode) => {
+    const root = await secureDirectory(
+      await mkdtemp(path.join(tmpdir(), 'synthetic-integration-upgrade-')),
+    );
+    const file = path.join(root, 'integrations.sqlite');
+    const bot = 'mock-bot',
+      connection = 'mock-upgrade';
+    const hasOAuth = mode !== 'approval';
+    const catalog = mcpCatalog(connection, tools, []);
+    const digest = mcpDigest(catalog);
+    const decision = { effect: 'allow', scope: { kind: 'bot', bot }, historical: true };
+    let store: Integrations | undefined;
+    try {
+      const old = new DatabaseSync(file);
+      try {
+        const [baseline, oauth, providers] = migrations;
+        migrate(
+          old,
+          mode === 'approval'
+            ? [baseline, retiredApproval]
+            : [
+                baseline,
+                retiredApproval,
+                oauth,
+                retiredMerge,
+                ...(mode === 'd87' ? [providers] : []),
+              ],
+        );
+        const at = '2026-01-01T00:00:00.000Z';
+        old
+          .prepare(
+            'INSERT INTO integrations(id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,created,updated,owner) VALUES(?,1,?,?,?,?,0,?,?,?,?,?,?)',
+          )
+          .run(
+            connection,
+            'Synthetic upgrade',
+            'synthetic upgrade',
+            hasOAuth ? 'https://mcp.notion.com/mcp' : 'https://mcp.example.test/mcp',
+            'synthetic-bearer',
+            'ready',
+            JSON.stringify(catalog),
+            digest,
+            at,
+            at,
+            bot,
+          );
+        old
+          .prepare(
+            'INSERT INTO integration_bindings(bot,connection,revision,config_revision,digest,tools,enabled) VALUES(?,?,3,1,?,?,0)',
+          )
+          .run(bot, connection, digest, JSON.stringify(['synthetic_echo']));
+        old
+          .prepare('INSERT INTO config_commands VALUES(?,?,?,1)')
+          .run('mock-old-save', 'a'.repeat(64), connection);
+        old
+          .prepare(
+            'INSERT INTO call_receipts(id,hash,semantic,bot,run,session,connection,config_revision,tool,phase,preview,result,created,updated) VALUES(?,?,?,?,?,?,?,1,?,?,?, ?,?,?)',
+          )
+          .run(
+            'mock-old-call',
+            'b'.repeat(64),
+            'c'.repeat(64),
+            bot,
+            'mock-run',
+            'mock-session',
+            connection,
+            'synthetic_echo',
+            'settled',
+            JSON.stringify({ value: 'Synthetic' }),
+            JSON.stringify({
+              isError: false,
+              content: [{ type: 'text', text: 'Synthetic result' }],
+            }),
+            at,
+            at,
+          );
+        old.prepare('UPDATE call_receipts SET policyDecision=?').run(JSON.stringify(decision));
+        if (hasOAuth) {
+          old
+            .prepare("UPDATE integrations SET auth_kind='oauth',credential_epoch=1,bearer=NULL")
+            .run();
+          old
+            .prepare(
+              "INSERT INTO oauth_grants(connection,epoch,state,issuer,resource,client_id,client_secret,redirect_uri,token_endpoint,access_token,refresh_token,expires_at,scope) VALUES(?,1,'connected',?,?,?,?,?,?,?,?,?,?)",
+            )
+            .run(
+              connection,
+              'https://mcp.notion.com',
+              'https://mcp.notion.com/mcp',
+              'mock-client',
+              'synthetic-client-secret',
+              'http://127.0.0.1:45123/oauth/mock',
+              'https://mcp.notion.com/token',
+              'synthetic-access',
+              'synthetic-refresh',
+              Date.now() + 3600000,
+              'default',
+            );
+        }
+        old.exec('UPDATE integration_meta SET revision=7');
+      } finally {
+        old.close();
+      }
+      let previousJournal: unknown;
+      for (let open = 0; open < 2; open++) {
+        store = new Integrations(file);
+        await store.ready;
+        expect((await store.status()).available).toBe(true);
+        expect(await store.read(connection, bot)).toMatchObject({
+          ownerBot: bot,
+          revision: 1,
+          catalogDigest: digest,
+        });
+        expect((await store.catalogView(connection, bot)).tools).toEqual(catalog);
+        expect((await store.assignments(bot)).items[0]).toMatchObject({
+          revision: 3,
+          enabled: false,
+          tools: ['synthetic_echo'],
+        });
+        expect((await store.saved('mock-old-save', connection, bot)).receipt.revision).toBe(1);
+        const receipt = await store.receipt(bot, 'mock-run', 'mock-old-call');
+        expect(receipt).toMatchObject({
+          phase: 'settled',
+          preview: JSON.stringify({ value: 'Synthetic' }),
+        });
+        expect(receipt).not.toHaveProperty('policyDecision');
+        if (hasOAuth)
+          expect(await store.oauthGrant(connection)).toMatchObject({
+            app: 'notion',
+            epoch: 1,
+            state: 'connected',
+            accessToken: 'synthetic-access',
+            refreshToken: 'synthetic-refresh',
+            clientSecret: 'synthetic-client-secret',
+            scope: 'default',
+          });
+        else expect((await store.privateConfig(connection)).bearer).toBe('synthetic-bearer');
+        await store.close();
+        store = undefined;
+        const audit = new DatabaseSync(file, { readOnly: true });
+        try {
+          const names = audit
+            .prepare('SELECT name,hash FROM __drizzle_migrations ORDER BY name')
+            .all();
+          expect(names).toEqual(
+            [...migrations, retiredApproval, ...(hasOAuth ? [retiredMerge] : [])]
+              .map((migration) => ({ name: migration.name, hash: migration.hash }))
+              .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+          );
+          if (open) expect(names).toEqual(previousJournal);
+          previousJournal = names;
+          expect(
+            audit
+              .prepare('SELECT policyDecision FROM call_receipts WHERE id=?')
+              .get('mock-old-call')?.policyDecision,
+          ).toBe(JSON.stringify(decision));
+          expect(
+            audit
+              .prepare('PRAGMA table_info(call_receipts)')
+              .all()
+              .map((column) => column.name),
+          ).toContain('policyDecision');
+          expect(
+            audit
+              .prepare('PRAGMA table_info(integrations)')
+              .all()
+              .map((column) => column.name),
+          ).toEqual(expect.arrayContaining(['auth_kind', 'credential_epoch']));
+        } finally {
+          audit.close();
+        }
+      }
+    } finally {
+      await store?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+test.each(['hash', 'timestamp', 'future'] as const)(
+  'a journal with a different %s is still rejected',
+  async (kind) => {
+    const f = await fixture();
+    const file = path.join(f.root, 'integrations.sqlite');
+    try {
+      await f.store.save(save);
+      await f.store.close();
+      const old = new DatabaseSync(file);
+      try {
+        old
+          .prepare('INSERT INTO __drizzle_migrations(name,hash,created_at) VALUES(?,?,?)')
+          .run(
+            kind === 'future' ? '20270101000000_future' : retiredApproval.name,
+            kind === 'hash' ? 'a'.repeat(64) : retiredApproval.hash,
+            retiredApproval.folderMillis + Number(kind === 'timestamp'),
+          );
+      } finally {
+        old.close();
+      }
+      const store = new Integrations(file);
+      try {
+        expect(await store.status()).toEqual({ available: false, error: 'MCP_STORE_UNAVAILABLE' });
+      } finally {
+        await store.close();
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);
 async function fixture() {
   const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-integrations-'));
   const root = await secureDirectory(path.join(temporary, 'private'));

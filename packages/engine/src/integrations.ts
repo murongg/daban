@@ -132,6 +132,20 @@ export function mcpSecrets(config: {
     ),
   ];
 }
+// The experimental approval column may still contain historical data. Recognize the exact old
+// journal entries without replaying the SQL, deleting the column, or treating its values as authority.
+const retiredJournal = [
+  {
+    name: '20261104105325_approval-decision',
+    hash: '401436292d92fb1b1d1fb7ba6be2c143b23af9a7b5520286780df027df71fde7',
+    folderMillis: 1793789605000,
+  },
+  {
+    name: '20261105104541_merge-approval-oauth',
+    hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    folderMillis: 1793875541000,
+  },
+];
 const legacyStoreTables =
   'call_receipts,config_commands,integration_bindings,integration_meta,integrations';
 const storeTables = `${legacyStoreTables},oauth_attempts,oauth_grants`;
@@ -852,7 +866,7 @@ export class Integrations {
     const client = new DatabaseSync(this.file);
     try {
       configure(client, { journal: 'WAL', synchronous: 'FULL', busyTimeout: 5000 });
-      this.db = migrate(client, migrations, legacy);
+      this.db = migrate(client, migrations, legacy, retiredJournal);
       // Only the baseline seeds revision authority; recreating it on reopen would hide corruption.
       this.verify(this.db);
       this.db

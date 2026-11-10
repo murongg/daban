@@ -81,6 +81,7 @@ export function migrate(
   client: DatabaseSync,
   migrations: readonly Migration[],
   legacy?: (client: DatabaseSync) => unknown,
+  retiredJournal: readonly Pick<Migration, 'name' | 'hash' | 'folderMillis'>[] = [],
 ) {
   const db = connect(client);
   const [baseline] = migrations;
@@ -105,9 +106,24 @@ export function migrate(
           tx.insert(journal).values(record(baseline)).run();
         }
       }
-      const applied = tx.select({ name: journal.name }).from(journal).all();
+      const applied = tx
+        .select({ name: journal.name, hash: journal.hash, createdAt: journal.createdAt })
+        .from(journal)
+        .all();
       const known = new Set(migrations.map((migration) => migration.name));
-      if (applied.some((row) => row.name === null || !known.has(row.name)))
+      if (
+        applied.some(
+          (row) =>
+            row.name === null ||
+            (!known.has(row.name) &&
+              !retiredJournal.some(
+                (migration) =>
+                  row.name === migration.name &&
+                  row.hash === migration.hash &&
+                  row.createdAt === migration.folderMillis,
+              )),
+        )
+      )
         throw new Error('DATABASE_NEWER');
       const done = new Set(applied.map((row) => row.name));
       for (const migration of migrations) {
