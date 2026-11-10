@@ -188,8 +188,11 @@ test('a native DSH task is told about browser task files while host shell tools 
       .map((tool) => tool.name);
     expect(names).toContain('browser_snapshot');
     expect(names).not.toContain('shell');
+    expect(names).not.toContain('workspace_shell');
     expect(names).toContain('read_file');
-    expect(received).toMatch(/task-scoped file tools/);
+    expect(received).toContain(
+      'Its file tools can access the task directory and the read-only shared workspace.',
+    );
     expect(fake.calls).toHaveLength(0);
   } finally {
     await models.close();

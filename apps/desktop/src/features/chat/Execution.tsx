@@ -44,6 +44,7 @@ const tools: Record<string, MessageKey> = {
   write_file: 'execution.writeFile',
   list_files: 'common.viewFiles',
   shell: 'execution.runCommand',
+  workspace_shell: 'execution.runCommand',
   screenshot: 'execution.observeScreen',
   act: 'execution.controlComputer',
   open_app: 'execution.openApplication',

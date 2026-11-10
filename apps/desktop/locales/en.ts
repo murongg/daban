@@ -276,9 +276,9 @@ export const english = {
   'approval.ask': 'Request approval',
   'approval.auto': 'Approve for me',
   'approval.full': 'Full access',
-  'approval.askDescription': 'Ask before Linux commands, webpage reads and external tool calls.',
+  'approval.askDescription': 'Ask before commands, webpage reads and external tool calls.',
   'approval.autoDescription':
-    'Run routine Linux operations automatically; ask for risky operations and external tools.',
+    'Run commands in the local task sandbox automatically. Ask for risky operations and external tools.',
   'approval.fullDescription':
     'Automatically approve enabled tools for future tasks in this conversation; keep environment and file access limits.',
   'approval.previousFull': 'Full access (previous scope)',
@@ -794,11 +794,11 @@ export const english = {
   'command.runsOnlyLinuxExecutionVmMayUse':
     'Runs only in the Linux execution VM and may use sudo. It does not run on the host or grant access to host files.',
   'command.scope': 'Linux VM · sudo allowed · This command only',
-  'command.localScope': 'This computer · Connected folder only · No network · Approve each command',
+  'command.localScope': 'This computer · Authorized directory only · No network',
   'command.authorizedFolder': 'Authorized local folder',
   'command.localCommand': 'Local command',
   'command.localRestrictions':
-    'Runs on this computer with access to the connected folder and standard system tools. It cannot access other user folders, the network, or sudo.',
+    'Runs on this computer with access to the directory shown above and standard system tools. It cannot access other user folders, the network, or sudo.',
   'command.details': 'View command and directory',
   'requests.viewOperationDetails': 'View operation details',
   'requests.viewArguments': 'View call parameters',

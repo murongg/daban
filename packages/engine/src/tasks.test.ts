@@ -216,14 +216,13 @@ test('the turn carries current computer availability rather than advertising una
   expect(taskPrompt('a', '/synthetic/run', input, [], true)).toMatch(/A computer is connected/);
 });
 
-test('native-first sessions select Linux tools only for Linux-specific work', () => {
+test('native sessions direct code execution to the task workspace even when Linux is installed', () => {
   const prompt = agentInstructionsFor(true, true);
-  expect(prompt).toMatch(/choose Linux tools only when the task requires/i);
+  expect(prompt).toMatch(/write it in the current task directory, run it with workspace_shell/i);
   expect(prompt).toMatch(
-    /Linux command.*Linux-only package.*files that exist only in the Linux workspace.*Linux desktop/i,
+    /only use Linux command and process tools when the human explicitly requests execution in the VM/i,
   );
-  expect(prompt).toMatch(/ordinary conversation.*simple calculations.*file-only work/i);
-  expect(prompt).toMatch(/mentioning Linux or code alone does not require a Linux call/i);
+  expect(prompt).toMatch(/software installation in the VM/i);
 });
 
 test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {

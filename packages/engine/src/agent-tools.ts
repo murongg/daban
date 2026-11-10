@@ -47,7 +47,7 @@ import type { SkillTools } from './skill-tools.js';
 import type { SkillSnapshot } from './skills.js';
 import type { SoftwareTools } from './software.js';
 import type { WorkTools } from './work-tools.js';
-import { type AgentWorkspace, WorkspaceFiles } from './workspace.js';
+import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
 
 export interface AgentToolRun extends ToolRun {
   assistant?: string;
@@ -65,6 +65,7 @@ export interface AgentToolRun extends ToolRun {
   redactResponse?: (value: string) => string;
   workdir: string;
   canonicalRoot: string;
+  localTaskDirectory?: Pick<TaskDirectory, 'canonical' | 'verify'>;
 }
 // Guest leases derive from persisted run/attempt identities; they never replace the logical task root.
 export const executionAttemptId = (runId: string, attemptId: string) =>

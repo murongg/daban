@@ -58,7 +58,7 @@ export class LinuxTools {
     {
       ...agentToolList.find((tool) => tool.name === 'shell')!,
       description:
-        'Use only when the task requires a Linux command, Linux-only package or environment, files stored only in the Linux workspace, or Linux desktop. Mentioning code or Linux alone does not require a Linux call. Execute Bash/Python in the Linux VM, starting it on demand. Uses a separate Linux task directory with copies of captured attachments. Use relative paths; native task paths do not exist in Linux. Full guest files, network and sudo are available, under host command approval. Use linux_upload for other native task files and linux_download to return generated outputs. Use process_start for long commands. Never run a host shell.',
+        'Execute Bash/Python in the Linux VM only when the human explicitly requests VM execution. For local task scripts, use workspace_shell when offered. This tool starts the VM on demand and uses a separate Linux task directory with copies of captured attachments. Use relative paths; native task paths do not exist in Linux. Full guest files, network and sudo are available under host command approval. Use linux_upload for other native task files and linux_download to return generated outputs. Use process_start for long commands.',
     },
     ...processToolList,
     ...files.map((tool) => ({
