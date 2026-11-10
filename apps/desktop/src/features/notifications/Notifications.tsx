@@ -178,12 +178,7 @@ export function Notifications() {
         </p>
       )}
       <div className="setting-row">
-        <div className="setting-title">
-          <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
-          <Help topic={t('notifications.checkSystemNotifications')}>
-            {t('notifications.deliveryDependsSystemNotificationSettingsDoNot')}
-          </Help>
-        </div>
+        <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
         <button
           type="button"
           className="secondary"

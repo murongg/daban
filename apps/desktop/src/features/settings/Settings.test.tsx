@@ -122,40 +122,24 @@ it('opens settings over the current workspace and restores the underlying draft 
   expect(screen.getByRole('heading', { name: '任务', level: 1 })).toBeVisible();
 });
 
-it('reveals optional settings explanations on demand without dismissing the settings dialog', async () => {
+it('reveals export scope on demand and restores focus without dismissing settings', async () => {
   const user = userEvent.setup();
   render(<App />);
   await user.keyboard('{Control>},{/Control}');
   const settings = await screen.findByRole('dialog', { name: '设置' });
-  const overview = '调整外观和提醒，让工作区按你的习惯工作。';
-  const language = '立即切换并保存在本机。';
-  expect(screen.queryByText(overview)).not.toBeInTheDocument();
-  expect(screen.queryByText(language)).not.toBeInTheDocument();
+  await user.click(within(settings).getByRole('tab', { name: '数据与存储' }));
+  const scope = /群聊记录、附件原件、资料库和 Linux 产出保存在运行环境中/;
+  expect(screen.queryByText(scope)).not.toBeInTheDocument();
 
-  await user.click(within(settings).getByRole('button', { name: '通用说明' }));
-  expect(
-    within(screen.getByRole('dialog', { name: '通用说明' })).getByText(overview),
-  ).toBeVisible();
-  await user.keyboard('{Escape}');
-  expect(screen.getByRole('dialog', { name: '设置' })).toBeVisible();
-  expect(screen.queryByText(overview)).not.toBeInTheDocument();
-
-  const help = within(settings).getByRole('button', { name: '界面语言说明' });
+  const name = '导出本机聊天与设置说明';
+  const help = within(settings).getByRole('button', { name });
   help.focus();
   await user.keyboard('{Enter}');
-  expect(
-    within(screen.getByRole('dialog', { name: '界面语言说明' })).getByText(language),
-  ).toBeVisible();
+  expect(within(screen.getByRole('dialog', { name })).getByText(scope)).toBeVisible();
   await user.keyboard('{Escape}');
   await waitFor(() => expect(help).toHaveFocus());
-  expect(within(settings).getByRole('button', { name: /界面语言$/ })).toBeVisible();
-
-  await user.click(within(settings).getByRole('tab', { name: '数据与存储' }));
+  expect(settings).toBeVisible();
   expect(within(settings).getByRole('button', { name: '导出' })).toBeVisible();
-  await user.click(within(settings).getByRole('button', { name: '导出本机聊天与设置说明' }));
-  expect(screen.getByRole('dialog', { name: '导出本机聊天与设置说明' })).toHaveTextContent(
-    '群聊记录、附件原件、资料库和 Linux 产出保存在运行环境中',
-  );
 });
 
 it('keeps an unsaved model key while switching categories but clears it after leaving settings', async () => {

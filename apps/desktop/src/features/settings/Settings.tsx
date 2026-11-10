@@ -86,15 +86,12 @@ export function Settings({
       id: 'general',
       label: t('settings.general'),
       icon: Settings2,
-      description: t('settings.adjustAppearanceNotificationsSuitWorkflow'),
       content: (
         <>
           <div className="settings-section">
             <h2>{t('settings.appearance')}</h2>
             <div className="setting-row">
-              <SettingLabel label={t('settings.theme')}>
-                {t('settings.chooseAppearanceWorkspace')}
-              </SettingLabel>
+              <div className="setting-label">{t('settings.theme')}</div>
               <fieldset className="theme-options" aria-label={t('settings.theme')}>
                 <button
                   type="button"
@@ -118,9 +115,7 @@ export function Settings({
           <div className="settings-section">
             <h2>{t('settings.languageSection')}</h2>
             <div className="setting-row">
-              <SettingLabel label={t('settings.language')}>
-                {t('settings.appliesImmediatelySavedComputer')}
-              </SettingLabel>
+              <div className="setting-label">{t('settings.language')}</div>
               <Language />
             </div>
           </div>
@@ -132,23 +127,18 @@ export function Settings({
       id: 'models',
       label: t('models.title'),
       icon: Waypoints,
-      description: t('settings.connectModelServicesChooseWorkspacePerBot'),
       content: <Models />,
     },
     {
       id: 'search',
       label: t('search.title'),
       icon: SearchIcon,
-      description: t('search.description'),
       content: <Search />,
     },
     {
       id: 'computer',
       label: t('settings.computerPermissions'),
       icon: Monitor,
-      description: nativeOnly
-        ? t('localComputer.description')
-        : t('settings.manageLocalLinuxConnectionStateActionPermissions'),
       content: (
         <>
           {(runtime.snapshot.agent?.execution === 'linux-vm' ||
@@ -244,14 +234,12 @@ export function Settings({
       id: 'integrations',
       label: t('common.externalTools'),
       icon: Plug,
-      description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
     },
     {
       id: 'archive',
       label: t('settings.archives'),
       icon: Archive,
-      description: t('settings.viewArchivedBotsGroupsRestoreThemWhen'),
       content: <ArchiveList state={state} dispatch={dispatch} onAction={onLifecycle} />,
     },
     ...(trash
@@ -260,7 +248,6 @@ export function Settings({
             id: 'trash',
             label: t('trash.title'),
             icon: Trash2,
-            description: t('trash.description'),
             content: <TrashList state={state} trash={trash} onLifecycle={onLifecycle} />,
           },
         ]
@@ -269,7 +256,6 @@ export function Settings({
       id: 'data',
       label: t('settings.dataStorage'),
       icon: Database,
-      description: t('settings.seeWhatStoredLocallyExportWorkspaceCopy'),
       content: (
         <div className="settings-section">
           <h2>{t('settings.workspaceData')}</h2>
@@ -308,22 +294,9 @@ export function Settings({
       id: 'about',
       label: t('settings.about'),
       icon: Info,
-      description: t('settings.versionInformationFuturePlans'),
       content: (
         <div className="settings-section">
           <h2>{t('common.aboutDaban')}</h2>
-          <div className="setting-row">
-            <SettingLabel label="Daban">
-              <p>{t('settings.aiWorkCompanion')}</p>
-              <p>
-                {runtime.enabled
-                  ? nativeOnly
-                    ? t('localComputer.settingsDescription')
-                    : t('settings.localLinuxDshConnectedMobileCrossDevice')
-                  : t('settings.previewIncludesOnlyAppInterfaceMobileCross')}
-              </p>
-            </SettingLabel>
-          </div>
           <UpdatesPanel onDialogChange={setUpdateDialog} />
         </div>
       ),
@@ -363,7 +336,6 @@ export function Settings({
         >
           <header className="settings-heading">
             <h3>{section.label}</h3>
-            <Help topic={section.label}>{section.description}</Help>
           </header>
           {section.content}
         </TabPanel>

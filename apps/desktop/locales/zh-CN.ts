@@ -79,7 +79,6 @@ export const chinese = {
   'folders.unavailable': '本地文件夹暂不可用，请重新连接或更新本机服务后重试。',
   'trash.retry': '重试',
   'trash.title': '对话回收站',
-  'trash.description': '查看移入回收站的对话，随时恢复。',
   'trash.retention': '对话会一直保留，恢复后可继续使用。消息、草稿和文件不会被清除。',
   'trash.empty': '回收站里还没有对话。',
   'trash.restore': '恢复对话',
@@ -115,7 +114,6 @@ export const chinese = {
   'search.legacyInUse':
     '搜索仍沿用此 DeepSeek 连接，请先配置独立搜索密钥或关闭搜索，再修改连接地址或协议。',
   'search.title': '搜索',
-  'search.description': '独立配置搜索服务，不随聊天模型切换。',
   'search.legacyHost': '当前服务尚不支持独立搜索设置，请更新 Host 服务。旧版搜索仍由模型连接决定。',
   'search.offline': '连接 Host 服务后可管理搜索设置。',
   'search.loading': '正在读取搜索设置…',
@@ -2452,8 +2450,6 @@ export const chinese = {
   'notifications.dabanTaskComplete': 'Daban · 任务已完成',
   'notifications.dabanTaskNeedsAttention': 'Daban · 任务需要检查',
   'notifications.dabanTestNotification': 'Daban · 测试提醒',
-  'notifications.deliveryDependsSystemNotificationSettingsDoNot':
-    '是否显示由系统通知设置和勿扰模式决定。测试不会启动任务或提交审批。',
   'notifications.desktopNotificationsTemporarilyUnavailableRetryLater':
     '桌面提醒暂不可用，请稍后重试。',
   'notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable':
@@ -2678,10 +2674,7 @@ export const chinese = {
     '最多保留 32 个分组，请先整理已有分组。',
   'select.selectOption': '请选择',
   'settings.about': '关于',
-  'settings.adjustAppearanceNotificationsSuitWorkflow': '调整外观和提醒，让工作区按你的习惯工作。',
-  'settings.aiWorkCompanion': '你的 AI 工作伙伴。',
   'settings.appearance': '外观',
-  'settings.appliesImmediatelySavedComputer': '立即切换并保存在本机。',
   'settings.appStoresChatCachesDraftsPreferenceCopies':
     '客户端保存对话缓存、草稿、偏好副本和设置。清除客户端数据会丢失草稿；运行环境中的任务、资料和偏好需另行管理。',
   'settings.archives': '归档管理',
@@ -2689,14 +2682,9 @@ export const chinese = {
     'Bot 的真实桌面、任务和文件都运行在本机虚拟机中。关闭客户端不会关闭 Linux。',
   'settings.botsCanManageLinuxUseSudoNetwork':
     'Bot 可以管理 Linux 系统、使用 sudo 和网络，并安装 npm、Codex 等软件。普通查看、查询和计算自动执行；安装软件、删除文件、修改系统等高风险操作会显示具体命令供你确认，无法判断的操作也会询问。',
-  'settings.chooseAppearanceWorkspace': '为你的工作区选择一种外观。',
   'settings.computerPanelExamplePreviewNoRealTerminal':
     '电脑面板目前为示例预览，终端、浏览器和文件管理器尚未连接真实系统。',
   'settings.computerPermissions': '电脑与权限',
-  'settings.connectMcpServicesManageExternalToolsBots':
-    '连接 MCP 服务，并管理 Bot 可以使用的外部工具。',
-  'settings.connectModelServicesChooseWorkspacePerBot':
-    '连接模型服务，为工作区和每位 Bot 选择模型。',
   'settings.dark': '深色',
   'settings.dataStorage': '数据与存储',
   'settings.executionEnvironmentPermissions': '执行环境与权限',
@@ -2712,27 +2700,18 @@ export const chinese = {
   'settings.languageSection': '语言',
   'settings.light': '浅色',
   'settings.localLinux': '本地 Linux',
-  'settings.localLinuxDshConnectedMobileCrossDevice':
-    '在本机与 Bot 协作，按需连接 Linux 桌面或本机电脑。移动端和跨设备同步将在后续提供。',
   'settings.localLinuxRuntime': '本地 Linux 运行环境',
   'settings.localStorage': '本地存储',
   'settings.localWorkspaceData': '本机工作区数据',
-  'settings.manageLocalLinuxConnectionStateActionPermissions':
-    '管理本地 Linux 环境，查看连接状态与操作权限。',
   'settings.modelsKeysApprovalsStayOutsideVmBackground':
     '模型、密钥和审批保存在虚拟机外。关闭客户端后，后台任务继续运行；Bot 不会因此获得宿主机的终端或文件权限。',
   'settings.notConnected': '待接入',
-  'settings.previewIncludesOnlyAppInterfaceMobileCross':
-    '本轮只包含客户端界面。移动端、跨设备同步和正式安装包尚未实现。',
   'settings.reconnect': '重新连接',
   'settings.retryConnection': '重试连接',
   'settings.runtime': '运行环境',
-  'settings.seeWhatStoredLocallyExportWorkspaceCopy': '了解本机保存的内容，并导出工作区副本。',
   'settings.settingsCategories': '设置分类',
   'settings.theme': '主题',
   'settings.title': '设置',
-  'settings.versionInformationFuturePlans': '版本信息与后续计划。',
-  'settings.viewArchivedBotsGroupsRestoreThemWhen': '查看已归档的 Bot 和群聊，按需恢复使用。',
   'settings.workspaceData': '工作区数据',
   'setup.checkingInstallationFilesCompleteness': '正在核对安装文件，确保环境完整。',
   'setup.checkLocalEnvironmentFiles': '检查本地环境文件',
