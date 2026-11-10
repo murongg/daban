@@ -21,7 +21,11 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'desktop',
-          include: ['apps/desktop/**/*.test.{ts,tsx}', 'packages/engine/web/**/*.test.ts'],
+          include: [
+            'apps/desktop/**/*.test.{ts,tsx}',
+            'apps/gallery/src/**/*.test.{ts,tsx}',
+            'packages/engine/web/**/*.test.ts',
+          ],
           environment: 'jsdom',
           setupFiles: ['./tools/testing/setup.ts'],
           clearMocks: true,

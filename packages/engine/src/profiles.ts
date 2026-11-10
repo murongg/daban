@@ -89,6 +89,7 @@ function snapshot(profile: BotProfile, source: MemoryVersion['source']): MemoryV
 
 export class BotProfiles {
   modelGuard?: (model: ModelId, write: () => Promise<BotProfile>) => Promise<BotProfile>;
+  templateInstructions?: (bot: string) => string | undefined;
   readonly ready: Promise<unknown>;
   private readonly records = new Map<string, BotProfile>();
   private readonly corrupt = new Set<string>();
@@ -336,13 +337,21 @@ export class BotProfiles {
     await this.writing;
     if (this.corrupt.has(id)) throw new Fault('BOT_PROFILE_CORRUPT');
     const profile = this.records.get(id);
-    return profile ? structuredClone(profile) : undefined;
+    return profile
+      ? {
+          ...structuredClone(profile),
+          instructions: this.templateInstructions?.(id) ?? profile.instructions,
+        }
+      : undefined;
   }
   async list() {
     await this.ready;
     await this.writing;
     return [...this.records.values()]
-      .map((profile) => structuredClone(profile))
+      .map((profile) => ({
+        ...structuredClone(profile),
+        instructions: this.templateInstructions?.(profile.id) ?? profile.instructions,
+      }))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
   async status() {
@@ -384,13 +393,22 @@ export class BotProfiles {
       this.assertActive(request.bot);
       const source = this.required(request.bot);
       if (source.revision !== request.revision) throw new Fault('BOT_PROFILE_CONFLICT');
+      const template = this.templateInstructions?.(request.bot);
+      // Template edits have their own revision: compare the reviewed role without changing legacy receipt tuples.
+      if (template !== undefined && request.sourceInstructions === undefined)
+        throw new Fault('RUNTIME_TOO_OLD');
+      if (
+        request.sourceInstructions !== undefined &&
+        request.sourceInstructions !== (template ?? source.instructions)
+      )
+        throw new Fault('BOT_PROFILE_CONFLICT');
       if (this.records.size >= 2000) throw new Fault('BOT_LIMIT');
       const now = new Date().toISOString();
       return this.commit(
         {
           id: request.id,
           name: request.name.trim(),
-          instructions: source.instructions,
+          instructions: this.templateInstructions?.(request.bot) ?? source.instructions,
           memory: request.memory ? source.memory : '',
           color: source.color,
           ...(source.model === undefined ? {} : { model: source.model }),
@@ -523,6 +541,8 @@ export class BotProfiles {
     }
     const changes = structuredClone(patch);
     return this.mutate(async () => {
+      if (changes.instructions !== undefined && this.templateInstructions?.(id) !== undefined)
+        throw new Fault('INSTALLATION_UPDATE_REQUIRED');
       signal?.throwIfAborted();
       const existing = this.required(id);
       if (this.damagedHistory.has(id)) throw new Fault('MEMORY_HISTORY_CORRUPT');

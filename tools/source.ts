@@ -65,7 +65,9 @@ assert.equal(forbidden('<p>void is ordinary content</p>', 'mock.tsx').length, 0)
 assert.equal(forbidden('const mock = "void"; // void is literal text\n', 'mock.ts').length, 0);
 async function scan(directory: string) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+    // Wrangler and Next emit generated JavaScript during build and deployment verification.
+    if (['node_modules', 'dist', '.wrangler', '.next'].includes(entry.name)) continue;
+    if (entry.name === 'out' && directory === join(root, 'apps', 'gallery')) continue;
     const file = join(directory, entry.name);
     if (entry.isDirectory()) await scan(file);
     else if (/\.(?:js|mjs|cjs)$/.test(entry.name))

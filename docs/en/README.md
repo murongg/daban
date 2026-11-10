@@ -12,6 +12,7 @@ For a first session, read Getting started, Models & providers, and Conversations
 | [Models & providers](models.md) | Multiple providers/models, testing, listing, and capability matching |
 | [Create and manage Bots](bots.md) | Roles, model selection, identity, and data boundaries |
 | [Bot gallery](gallery.md) | Create companions from role presets |
+| [Deploy a gallery](gallery-deployment.md) | Cloudflare or self-hosted deployment and versioned publication |
 | [App updates](updates.md) | Version checks, download progress, installation and task protection |
 
 ## Conversations and execution

@@ -1,6 +1,15 @@
 import { expect, it } from 'vitest';
 import { parseCommand } from './ipc';
 
+it('accepts validated template commands while rejecting added fields and unsafe sources', () => {
+  const command = { type: 'gallery.sources' };
+  expect(parseCommand(command)).toEqual(command);
+  expect(() => parseCommand({ ...command, path: '/SYNTHETIC' })).toThrow();
+  expect(() =>
+    parseCommand({ type: 'gallery.source.save', origin: 'file:///SYNTHETIC' }),
+  ).toThrow();
+});
+
 it('requires explicit confirmation for an Agent upgrade and rejects restart paths or process IDs', () => {
   expect(parseCommand({ type: 'agent.upgrade', confirmed: true })).toEqual({
     type: 'agent.upgrade',

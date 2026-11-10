@@ -1,0 +1,115 @@
+.bot-gallery:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+}
+.bot-gallery > .gallery {
+  overflow: visible;
+  padding-top: 24px;
+}
+.remote-gallery {
+  min-width: 0;
+  padding: 20px clamp(24px, 4vw, 64px) 0;
+}
+.remote-gallery-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.template-source-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 16px 0;
+}
+.template-source-fields > label,
+.template-source-fields > .select-field {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.template-source-fields input {
+  width: 100%;
+}
+.gallery-source-form {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+}
+.gallery-source-form .field {
+  width: 100%;
+  min-width: 0;
+}
+.gallery-source-form > button {
+  justify-self: start;
+}
+.gallery-source-list {
+  list-style: none;
+  margin: 16px 0 24px;
+  padding: 0;
+}
+.gallery-source-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.gallery-source-list li > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+.gallery-source-list span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.gallery-source-list small {
+  color: var(--muted);
+}
+.template-manager {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 12px;
+}
+.template-manager .field-label {
+  margin: 12px 0;
+}
+.template-manager details {
+  margin: 16px 0;
+}
+.template-manager summary {
+  cursor: pointer;
+}
+.template-manager button {
+  margin: 8px 8px 8px 0;
+}
+.template-preview pre,
+.template-plan pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+  font: inherit;
+  line-height: 1.65;
+}
+.template-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.template-plan {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+@media (max-width: 600px) {
+  .template-comparison {
+    grid-template-columns: 1fr;
+  }
+}

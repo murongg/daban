@@ -19,3 +19,19 @@ dist-runtime/
 /resources/agent/
 
 dist-agent/
+
+/dist-gallery/
+
+/gallery-data/
+
+.wrangler/
+
+.dev.vars
+
+.dev.vars.*
+
+apps/gallery/.next/
+
+apps/gallery/out/
+
+apps/gallery/next-env.d.ts

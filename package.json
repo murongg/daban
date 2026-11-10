@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build && npm start",
-    "build": "npm run lint && npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/agent && npm run build --workspace @daban/runtime",
+    "build": "npm run lint && npm run build:engine && npm run build --workspace @daban/desktop && npm run build --workspace @daban/agent && npm run build --workspace @daban/runtime && npm run build --workspace @daban/gallery",
     "preview": "npm run preview --workspace @daban/desktop",
     "test": "npm run build:agent && npm run build --workspace @daban/runtime && vitest run",
     "test:watch": "npm run build:protocol && vitest --project desktop",
@@ -35,7 +35,8 @@
     "build:engine": "npm run build:protocol && npm run build --workspace @daban/engine",
     "build:agent": "npm run build:engine && npm run build --workspace @daban/agent",
     "test:agent": "npm run build:agent && vitest run --project node dist-agent",
-    "bundle:windows": "npm run build && node --experimental-strip-types tools/windows.ts"
+    "bundle:windows": "npm run build && node --experimental-strip-types tools/windows.ts",
+    "build:gallery": "npm run build:protocol && npm run build:gallery --workspace @daban/engine && npm run build --workspace @daban/gallery"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
@@ -51,7 +52,8 @@
     "rolldown": "1.2.15",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "wrangler": "4.157.0"
   },
   "engines": {
     "node": "^22.16.0 || >=24.0.0"
@@ -61,6 +63,7 @@
     "apps/desktop",
     "apps/agent",
     "apps/runtime",
+    "apps/gallery",
     "packages/protocol",
     "packages/engine"
   ],
