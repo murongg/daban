@@ -28,6 +28,7 @@
     "test:integrations": "node --experimental-strip-types tools/tests.ts integrations",
     "test:lifecycle": "node --experimental-strip-types tools/tests.ts lifecycle",
     "test:diagnostics": "node --experimental-strip-types tools/tests.ts diagnostics",
+    "eval:trajectory": "npm run build:engine && node --experimental-sqlite --experimental-strip-types tools/trajectory.ts",
     "test:recovery": "node --experimental-strip-types tools/tests.ts recovery",
     "build:protocol": "npm run build --workspace @daban/protocol",
     "bundle:desktop": "npm run build && node --experimental-strip-types tools/desktop.ts",

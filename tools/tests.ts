@@ -80,6 +80,7 @@ export const suites = {
     'dsh.test',
     'prompt-cache.test',
     'tasks.test',
+    'trajectory.test',
     'transcripts.test',
     'transcripts-model.test',
     'transcripts-api.test',
