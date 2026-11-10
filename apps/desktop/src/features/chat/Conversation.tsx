@@ -472,7 +472,7 @@ export function Conversation({
       ),
     });
   const executionBelow = task?.phase === 'completed' && current.length > 0;
-  // Keep the same row key when completion moves the disclosure below the reply.
+  // Keep the same row key when the disclosure moves from the live status to the completed reply.
   const executionRow: TranscriptEntry | undefined = task?.runId
     ? {
         id: `execution:${task.runId}`,
@@ -481,12 +481,12 @@ export function Conversation({
           <Execution
             scope={{ bot: target, runId: task.runId, chatRevision: revision }}
             phase={task.phase}
-            messageDetails={executionBelow}
+            messageDetails={task.running || executionBelow}
           />
         ),
       }
     : undefined;
-  if (executionRow && !executionBelow) rows.push(executionRow);
+  if (executionRow && !task?.running && !executionBelow) rows.push(executionRow);
   const replyRows: TranscriptEntry[] = current.map((message) => ({
     ...messageRow(message),
     persistent: !!task?.running,
@@ -518,7 +518,7 @@ export function Conversation({
       ),
     });
   if (!pendingIds) rows.push(...replyRows);
-  if (task?.running)
+  if (task?.running) {
     rows.push({
       id: 'progress',
       anchor: false,
@@ -541,6 +541,8 @@ export function Conversation({
         </div>
       ),
     });
+    if (executionRow) rows.push(executionRow);
+  }
   rows.push(...later.map(messageRow));
   return (
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>

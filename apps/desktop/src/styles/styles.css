@@ -1164,7 +1164,7 @@ textarea.field {
 .transcript-row > .message-details {
   margin-bottom: 12px;
 }
-.transcript-row:has(+ .transcript-row > .message-details) > .message {
+.transcript-row:has(+ .transcript-row > .message-details) > :is(.message, .message-progress) {
   margin-bottom: 0;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -1173,7 +1173,9 @@ textarea.field {
     opacity: 0;
   }
   .message:is(:hover, :focus-within) > .message-details,
-  .transcript-row:has(> .message:is(:hover, :focus-within)) + .transcript-row > .message-details {
+  .transcript-row:has(> :is(.message, .message-progress):is(:hover, :focus-within))
+    + .transcript-row
+    > .message-details {
     opacity: 1;
   }
 }

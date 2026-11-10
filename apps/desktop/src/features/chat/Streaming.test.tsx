@@ -583,8 +583,8 @@ it('keeps approval at the active question before any reply text exists', async (
   );
   expect(order).toEqual([
     'SYNTHETIC QUESTION A',
-    'execution',
     'approval',
+    'execution',
     'SYNTHETIC FUTURE B',
     'SYNTHETIC FUTURE C',
   ]);

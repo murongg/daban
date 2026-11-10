@@ -864,7 +864,7 @@ it('waits for task preparation to finish before asking for a durable transcript'
   ).toHaveLength(1);
 });
 
-it('keeps the live execution visible and moves it below the completed reply without closing it', async () => {
+it('places live execution below the activity and keeps it open through completion', async () => {
   const state = initialState(),
     bot = state.bots.find((bot) => bot.id === 'research')!;
   state.messages[bot.id] = [];
@@ -892,8 +892,13 @@ it('keeps the live execution visible and moves it below the completed reply with
     </RuntimeProvider>,
   );
   await screen.findByText('合成流式回复');
-  expectExecutionBefore('合成流式回复');
+  expectExecutionBelow('合成流式回复');
   const disclosure = screen.getByText('执行过程').closest('details')!;
+  const activity = screen.getByText('正在回复', { selector: '.message-progress-label' });
+  expect(
+    activity.compareDocumentPosition(disclosure) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(disclosure).not.toHaveAttribute('open');
   await userEvent.click(screen.getByText('执行过程'));
   await act(async () =>
     backend.publish({
@@ -914,7 +919,7 @@ it('keeps the live execution visible and moves it below the completed reply with
     }),
   );
   await screen.findByText('合成待确认格式？');
-  expectExecutionBefore('合成流式回复');
+  expectExecutionBelow('合成流式回复');
   expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
   expect(disclosure.open).toBe(true);
   await act(async () => backend.publish({ ...backend.snapshot, interactions: [] }));
