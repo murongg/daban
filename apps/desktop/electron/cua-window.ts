@@ -1,6 +1,7 @@
 import type { CuaDriverLike, WindowElement, WindowInfo } from '@trycua/cua-driver';
-import { nativeImage } from 'electron';
+import { nativeImage, type Point } from 'electron';
 import type { LocalCapture, WindowDriver } from './local-computer';
+import { windowPointer } from './window-pointer';
 
 const windowId = (window: WindowInfo) => `${window.windowId}:${window.pid}`;
 const windowName = (window: WindowInfo) =>
@@ -31,14 +32,10 @@ type WindowSnapshot = {
 
 function elementAt(
   elements: CuaElement[],
-  frame: LocalCapture,
-  x: number,
-  y: number,
+  point: Point,
   action: 'click' | 'text',
   platform: CuaPlatform,
 ) {
-  const left = frame.bounds.x + (x / frame.width) * frame.bounds.width;
-  const top = frame.bounds.y + (y / frame.height) * frame.bounds.height;
   const clickActions =
     platform === 'win32' ? ['invoke', 'toggle', 'select', 'expand'] : ['AXPress'];
   return elements
@@ -48,10 +45,10 @@ function elementAt(
         element.element_token &&
         element.enabled !== false &&
         box &&
-        left >= box.x &&
-        left < box.x + box.w &&
-        top >= box.y &&
-        top < box.y + box.h &&
+        point.x >= box.x &&
+        point.x < box.x + box.w &&
+        point.y >= box.y &&
+        point.y < box.y + box.h &&
         (action === 'click'
           ? element.actions?.some((name) => clickActions.includes(name))
           : !element.in_web_content &&
@@ -63,6 +60,7 @@ function elementAt(
 }
 
 export function cuaWindows(platform: CuaPlatform) {
+  const pointer = windowPointer(platform);
   let driver: Promise<CuaDriverLike> | undefined;
   function native() {
     if (driver) return driver;
@@ -128,6 +126,7 @@ export function cuaWindows(platform: CuaPlatform) {
         interrupt() {
           active?.abort();
           observation = undefined;
+          pointer.hide();
         },
         capture() {
           observation = undefined;
@@ -192,7 +191,11 @@ export function cuaWindows(platform: CuaPlatform) {
             if (observed?.frame !== frame || context(await current(signal)) !== frame.context)
               throw new Error('LOCAL_SCREEN_CHANGED');
             signal.throwIfAborted();
-            const token = elementAt(observed.elements, frame, x, y, action.type, platform);
+            const point = {
+              x: frame.bounds.x + (x / frame.width) * frame.bounds.width,
+              y: frame.bounds.y + (y / frame.height) * frame.bounds.height,
+            };
+            const token = elementAt(observed.elements, point, action.type, platform);
             if (!token) throw new Error('LOCAL_WINDOW_ACTION_UNSUPPORTED');
             check();
             // A coordinate-based action can move the system pointer. Use the element token from this frame.
@@ -208,11 +211,17 @@ export function cuaWindows(platform: CuaPlatform) {
             );
             if (result.isError || result.action?.error)
               throw new Error('LOCAL_WINDOW_ACTION_UNSUPPORTED');
+            if (action.type === 'click' && !signal.aborted)
+              pointer.show(target.window_id, point).catch(() => {
+                // Display failure cannot turn an already dispatched click into a failed action.
+                console.warn('Local computer pointer unavailable');
+              });
           });
         },
       };
     },
     async close() {
+      pointer.hide();
       if (!driver) return;
       const sdk = await driver.catch(() => undefined);
       driver = undefined;

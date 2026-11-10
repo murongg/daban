@@ -27,6 +27,8 @@ Only one Bot can use the native desktop at a time. Disconnect the existing sessi
 
 Background mode uses the bundled Cua Driver SDK to capture the authorized window and click supported controls through macOS Accessibility or Windows UI Automation. On macOS, the Bot can also insert text into supported editable fields. On Windows, typing requires foreground mode. The Bot can work while other apps cover the window. Minimized, hidden, and closed windows become unavailable. Connect again to authorize another window. Scrolling, dragging, shortcuts, and custom-drawn controls require foreground mode.
 
+Background clicks briefly show a colored Bot pointer over the target window, beneath any windows covering it. The system pointer stays under your control. Pausing or disconnecting clears the Bot pointer.
+
 In foreground mode, the Bot can observe, click, type, scroll, and use the Dock, Start menu, and real applications. This mode does not expose a host shell or arbitrary host file tools that bypass the GUI. It does not guarantee control of administrator windows, UAC, the secure desktop, or secondary displays.
 
 Native GUI actions affect real files and signed-in accounts. Do not assume the Linux command-approval mechanism prompts before every native click. Set boundaries for consequential actions and take over when human completion is appropriate.

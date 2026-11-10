@@ -8,7 +8,9 @@ const sdk = vi.hoisted(() => ({
   shutdown: vi.fn(),
   uniffiDestroy: vi.fn(),
 }));
+const pointer = vi.hoisted(() => ({ show: vi.fn(async () => {}), hide: vi.fn() }));
 vi.mock('@trycua/cua-driver', () => ({ CuaDriver: { create: sdk.create } }));
+vi.mock('./window-pointer', () => ({ windowPointer: () => pointer }));
 vi.mock('electron', () => ({
   nativeImage: {
     createFromBuffer: () => ({
@@ -72,7 +74,9 @@ it('captures and acts through the embedded SDK with the exact approved window an
     delivery_mode: 'background',
     element_token: 'synthetic-snapshot:1',
   });
+  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 });
   await driver.close();
+  expect(pointer.hide).toHaveBeenCalledOnce();
   expect(sdk.shutdown).toHaveBeenCalledOnce();
   expect(sdk.uniffiDestroy).toHaveBeenCalledOnce();
 });
@@ -87,6 +91,7 @@ it('refuses a mismatched screenshot or background delivery failure without falli
     'LOCAL_WINDOW_ACTION_UNSUPPORTED',
   );
   expect(sdk.callTool.mock.calls.filter(([name]) => name !== 'get_window_state')).toHaveLength(1);
+  expect(pointer.show).not.toHaveBeenCalled();
 });
 
 it('targets editable controls and refuses password fields before sending input', async () => {
@@ -114,6 +119,7 @@ it('targets editable controls and refuses password fields before sending input',
     element_token: 'synthetic-snapshot:1',
     text: 'SYNTHETIC',
   });
+  expect(pointer.show).not.toHaveBeenCalled();
 });
 
 it('uses the approved Windows UI Automation element for a background click', async () => {
@@ -133,6 +139,25 @@ it('uses the approved Windows UI Automation element for a background click', asy
     delivery_mode: 'background',
     element_token: 'synthetic-snapshot:1',
   });
+  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 });
+});
+
+it('clears the pointer on interruption and suppresses an in-flight click result', async () => {
+  const target = await cuaWindows('darwin').forWindow('11:22');
+  const frame = await target.capture();
+  let finish!: (result: { isError: boolean }) => unknown;
+  const pending = new Promise<{ isError: boolean }>((resolve) => {
+    finish = resolve;
+  });
+  sdk.callTool.mockReturnValueOnce(pending);
+  const click = target.input({ type: 'click', x: 200, y: 100 }, frame, () => {});
+  await vi.waitFor(() => expect(sdk.callTool).toHaveBeenCalledTimes(2));
+  expect(pointer.show).not.toHaveBeenCalled();
+  target.interrupt?.();
+  expect(pointer.hide).toHaveBeenCalledOnce();
+  finish({ isError: false });
+  await click;
+  expect(pointer.show).not.toHaveBeenCalled();
 });
 
 it('refuses Windows background text when the snapshot cannot identify secure inputs', async () => {
