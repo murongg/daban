@@ -119,6 +119,7 @@ export class NativeDaemon {
       const names = [
         'PATH',
         'Path',
+        'PATHEXT',
         'SystemRoot',
         'WINDIR',
         'USERPROFILE',

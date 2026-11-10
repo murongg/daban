@@ -1,10 +1,11 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime';
 import type { HostCommandRequest } from '@daban/engine/agent';
+import { powershellEnvironment, powershellPath, windowsSystemPath } from './windows.js';
 
 type CommandResult = {
   isError?: boolean;
@@ -134,7 +135,10 @@ export class LocalCommandRunner {
 
   private async execute(request: HostCommandRequest, signal: AbortSignal) {
     const platform = this.options.platform ?? process.platform;
-    if (!['darwin', 'linux'].includes(platform))
+    if (
+      !['darwin', 'linux'].includes(platform) &&
+      !(platform === 'win32' && request.unrestricted === true)
+    )
       throw new LocalCommandFailure('LOCAL_COMMAND_SANDBOX_UNAVAILABLE');
     if (
       typeof request.command !== 'string' ||
@@ -148,6 +152,31 @@ export class LocalCommandRunner {
     if (request.unrestricted === true) {
       signal.throwIfAborted();
       // This path has the user's OS permissions but must never inherit the agent's credentials.
+      if (platform === 'win32') {
+        const env = powershellEnvironment();
+        const script = `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
+${request.command}`;
+        return this.process(
+          [
+            powershellPath(),
+            '-NoLogo',
+            '-NoProfile',
+            '-NonInteractive',
+            '-OutputFormat',
+            'Text',
+            '-EncodedCommand',
+            Buffer.from(script, 'utf16le').toString('base64'),
+          ],
+          cwd,
+          {
+            ...env,
+            Path: [env.Path, process.env.Path].filter(Boolean).join(';'),
+            PATHEXT: process.env.PATHEXT,
+          },
+          signal,
+        );
+      }
       return this.process(
         ['/bin/bash', '--noprofile', '--norc', '-c', request.command],
         cwd,
@@ -209,13 +238,15 @@ export class LocalCommandRunner {
   ): Promise<CommandResult> {
     const timeoutMs = this.options.timeoutMs ?? 120000;
     const outputLimit = this.options.outputLimit ?? 65536;
+    const windows = process.platform === 'win32';
     return new Promise((resolve, reject) => {
       let child: ReturnType<typeof spawn>;
       try {
         child = spawn(argv[0], argv.slice(1), {
           cwd,
           env,
-          detached: true,
+          detached: !windows,
+          windowsHide: windows,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
       } catch {
@@ -235,6 +266,19 @@ export class LocalCommandRunner {
         if (stopping) return;
         stopping = true;
         if (child.pid) {
+          if (windows) {
+            // Windows has no process-group signal. Terminate the command's descendants as well.
+            execFile(
+              windowsSystemPath('taskkill.exe'),
+              ['/PID', String(child.pid), '/T', '/F'],
+              { env: powershellEnvironment(), timeout: 5000, windowsHide: true },
+              (error) => {
+                if (error && child.exitCode === null && child.signalCode === null)
+                  child.kill('SIGKILL');
+              },
+            );
+            return;
+          }
           try {
             process.kill(-child.pid, 'SIGTERM');
           } catch {

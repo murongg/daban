@@ -2405,7 +2405,7 @@ export async function startPrototype({
             throw new Fault('MODEL_CANCELLED');
         });
         models.tools.localFiles = new LocalTools(folders, models.interactions);
-        if (host.runLocalCommand && process.platform !== 'win32') {
+        if (host.runLocalCommand) {
           localCommands = new Commands({
             file: path.join(modelDir, 'local-commands.sqlite'),
             interactions: models.interactions,
