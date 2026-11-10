@@ -981,7 +981,7 @@ it('places an earlier completed private run transcript below its corresponding s
   expectExecutionBelow('合成较早回复');
 });
 
-it('places a running group member transcript before the streaming reply', async () => {
+it('keeps group execution details below the streaming reply and preserves the disclosure', async () => {
   const state = initialState(),
     bot = state.bots.find((bot) => bot.id === 'crew')!;
   state.messages[bot.id] = [];
@@ -1022,7 +1022,11 @@ it('places a running group member transcript before the streaming reply', async 
             },
           ],
         }
-      : { ...scope, state: 'recording', items: [] },
+      : {
+          ...(command.type === 'transcript.list' ? command.query.scope : scope),
+          state: 'recording',
+          items: [],
+        },
   );
   backend.snapshot.groups = { available: true, revision: 1, items: [group] };
   backend.snapshot.agents.b = {
@@ -1030,15 +1034,33 @@ it('places a running group member transcript before the streaming reply', async 
     running: true,
     phase: 'running',
     conversationId: bot.id,
-    response: { revision: 1, text: '合成群流式回复', state: 'streaming' },
   };
   render(
     <RuntimeProvider>
       <GroupChat state={state} bot={bot} dispatch={vi.fn()} notify={vi.fn()} preview={vi.fn()} />
     </RuntimeProvider>,
   );
+  const label = await screen.findByText('执行过程');
+  const disclosure = label.closest('details')!;
+  expect(disclosure.closest('.message-details')).toBeInTheDocument();
+  expect(disclosure).not.toHaveAttribute('open');
+  await userEvent.click(label);
+  expect(await screen.findByText('暂无执行步骤。')).toBeInTheDocument();
+  await act(async () =>
+    backend.publish({
+      ...backend.snapshot,
+      agents: {
+        b: {
+          ...backend.snapshot.agents.b,
+          response: { revision: 1, text: '合成群流式回复', state: 'streaming' },
+        },
+      },
+    }),
+  );
   await screen.findByText('合成群流式回复');
-  expectExecutionBefore('合成群流式回复');
+  expectExecutionBelow('合成群流式回复');
+  expect(screen.getByText('执行过程').closest('details')).toBe(disclosure);
+  expect(disclosure).toHaveAttribute('open');
 });
 
 it('shows model history and billing only when hovering or clicking the info icon', async () => {

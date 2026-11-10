@@ -437,7 +437,7 @@ export function GroupChat({
         id: `delivery:${delivery.id}`,
         persistent: true,
         content: (
-          <div>
+          <div className="group-delivery">
             <p className="message-author">
               {members.find((member) => member.id === delivery.bot)?.bot?.name || delivery.bot} ·{' '}
               {task.phase === 'waiting'
@@ -448,12 +448,6 @@ export function GroupChat({
             </p>
             {task.plan && (
               <Plan items={task.plan} active={task.running && task.phase === 'running'} />
-            )}
-            {task.runId && (
-              <Execution
-                scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
-                phase={task.phase}
-              />
             )}
             {task.response?.text && (
               <article className="message bot" aria-live="off">
@@ -467,6 +461,13 @@ export function GroupChat({
                   />
                 </div>
               </article>
+            )}
+            {task.runId && (
+              <Execution
+                scope={{ bot: delivery.bot, runId: task.runId, conversationId: bot.id }}
+                phase={task.phase}
+                messageDetails
+              />
             )}
           </div>
         ),
