@@ -53,63 +53,65 @@ export function TrashList({
   const rows = [...entries.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
     <div className="settings-section">
-      <p className="inline-note">{t('trash.retention')}</p>
-      {!trash.available && (
-        <p className="inline-note" role="status">
-          {t('trash.unavailable')}
-        </p>
-      )}
-      {!rows.length && trash.available && <p className="inline-note">{t('trash.empty')}</p>}
-      <WindowList
-        scope="conversation-trash"
-        items={rows}
-        estimate={92}
-        getKey={(row) => conversationKey(row.bot, row.revision)}
-        renderItem={(row) => {
-          const bot = state.bots.find((bot) => bot.id === row.bot)!;
-          const pending = conversationPending(state, row.bot, row.revision);
-          return (
-            <div className="setting-row archive-row">
-              <div className="archive-copy">
-                <div className="setting-label">{row.title || t('conversations.untitled')}</div>
-                <p className="setting-description">
-                  {bot.name}
-                  {pending ? ` · ${t('trash.pending')}` : ''}
-                </p>
+      <div className="settings-group">
+        <p className="inline-note">{t('trash.retention')}</p>
+        {!trash.available && (
+          <p className="inline-note" role="status">
+            {t('trash.unavailable')}
+          </p>
+        )}
+        {!rows.length && trash.available && <p className="inline-note">{t('trash.empty')}</p>}
+        <WindowList
+          scope="conversation-trash"
+          items={rows}
+          estimate={92}
+          getKey={(row) => conversationKey(row.bot, row.revision)}
+          renderItem={(row) => {
+            const bot = state.bots.find((bot) => bot.id === row.bot)!;
+            const pending = conversationPending(state, row.bot, row.revision);
+            return (
+              <div className="setting-row archive-row">
+                <div className="archive-copy">
+                  <div className="setting-label">{row.title || t('conversations.untitled')}</div>
+                  <p className="setting-description">
+                    {bot.name}
+                    {pending ? ` · ${t('trash.pending')}` : ''}
+                  </p>
+                </div>
+                {pending ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={trash.busy || !trash.available}
+                    onClick={() => trash.verify(row.bot, row.revision)}
+                  >
+                    {t('common.verifyOperationResult')}
+                  </button>
+                ) : bot.archived ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => onLifecycle?.(bot.id)}
+                    disabled={!onLifecycle}
+                  >
+                    {t('common.restoreBot')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={trash.busy || !trash.available}
+                    onClick={() => trash.restore(row.bot, row.revision, row.title)}
+                  >
+                    <RotateCcw aria-hidden="true" />
+                    {t('trash.restore')}
+                  </button>
+                )}
               </div>
-              {pending ? (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={trash.busy || !trash.available}
-                  onClick={() => trash.verify(row.bot, row.revision)}
-                >
-                  {t('common.verifyOperationResult')}
-                </button>
-              ) : bot.archived ? (
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => onLifecycle?.(bot.id)}
-                  disabled={!onLifecycle}
-                >
-                  {t('common.restoreBot')}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={trash.busy || !trash.available}
-                  onClick={() => trash.restore(row.bot, row.revision, row.title)}
-                >
-                  <RotateCcw aria-hidden="true" />
-                  {t('trash.restore')}
-                </button>
-              )}
-            </div>
-          );
-        }}
-      />
+            );
+          }}
+        />
+      </div>
     </div>
   );
 }

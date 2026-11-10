@@ -2710,7 +2710,6 @@ export const chinese = {
     '最多保留 32 个分组，请先整理已有分组。',
   'select.selectOption': '请选择',
   'settings.about': '关于',
-  'settings.appearance': '外观',
   'settings.appStoresChatCachesDraftsPreferenceCopies':
     '客户端保存对话缓存、草稿、偏好副本和设置。清除客户端数据会丢失草稿；运行环境中的任务、资料和偏好需另行管理。',
   'settings.archives': '归档管理',
@@ -2731,9 +2730,9 @@ export const chinese = {
   'settings.fullPermissionsInsideVm': '虚拟机内完整权限',
   'settings.general': '通用',
   'settings.hostAgentService': '本机 Agent 服务',
+  'settings.interfacePreferences': '界面偏好',
   'settings.language': '界面语言',
   'settings.languageChinese': '简体中文',
-  'settings.languageSection': '语言',
   'settings.light': '浅色',
   'settings.localLinux': '本地 Linux',
   'settings.localLinuxRuntime': '本地 Linux 运行环境',

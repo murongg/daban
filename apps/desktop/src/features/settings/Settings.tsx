@@ -93,34 +93,33 @@ export function Settings({
       content: (
         <>
           <div className="settings-section">
-            <h2>{t('settings.appearance')}</h2>
-            <div className="setting-row">
-              <div className="setting-label">{t('settings.theme')}</div>
-              <fieldset className="theme-options" aria-label={t('settings.theme')}>
-                <button
-                  type="button"
-                  aria-pressed={state.theme === 'light'}
-                  onClick={() => dispatch({ type: 'theme', theme: 'light' })}
-                >
-                  <Sun />
-                  {t('settings.light')}
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={state.theme === 'dark'}
-                  onClick={() => dispatch({ type: 'theme', theme: 'dark' })}
-                >
-                  <Moon />
-                  {t('settings.dark')}
-                </button>
-              </fieldset>
-            </div>
-          </div>
-          <div className="settings-section">
-            <h2>{t('settings.languageSection')}</h2>
-            <div className="setting-row">
-              <div className="setting-label">{t('settings.language')}</div>
-              <Language />
+            <h2>{t('settings.interfacePreferences')}</h2>
+            <div className="settings-group">
+              <div className="setting-row">
+                <div className="setting-label">{t('settings.theme')}</div>
+                <fieldset className="theme-options" aria-label={t('settings.theme')}>
+                  <button
+                    type="button"
+                    aria-pressed={state.theme === 'light'}
+                    onClick={() => dispatch({ type: 'theme', theme: 'light' })}
+                  >
+                    <Sun />
+                    {t('settings.light')}
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={state.theme === 'dark'}
+                    onClick={() => dispatch({ type: 'theme', theme: 'dark' })}
+                  >
+                    <Moon />
+                    {t('settings.dark')}
+                  </button>
+                </fieldset>
+              </div>
+              <div className="setting-row">
+                <div className="setting-label">{t('settings.language')}</div>
+                <Language />
+              </div>
             </div>
           </div>
           <Notifications />
@@ -131,7 +130,11 @@ export function Settings({
       id: 'models',
       label: t('models.title'),
       icon: Waypoints,
-      content: <Models />,
+      content: (
+        <div className="settings-group">
+          <Models />
+        </div>
+      ),
     },
     {
       id: 'search',
@@ -149,107 +152,111 @@ export function Settings({
             runtime.snapshot.linux?.available) && (
             <div className="settings-section">
               <h2>{t('settings.executionEnvironmentPermissions')}</h2>
-              <div className="setting-row">
-                <SettingLabel label={t('settings.fullPermissionsInsideVm')}>
-                  {t('settings.botsCanManageLinuxUseSudoNetwork')}
-                </SettingLabel>
-              </div>
-              <div className="setting-row">
-                <SettingLabel label={t('settings.hostAgentService')}>
-                  {t('settings.modelsKeysApprovalsStayOutsideVmBackground')}
-                </SettingLabel>
+              <div className="settings-group">
+                <div className="setting-row">
+                  <SettingLabel label={t('settings.fullPermissionsInsideVm')}>
+                    {t('settings.botsCanManageLinuxUseSudoNetwork')}
+                  </SettingLabel>
+                </div>
+                <div className="setting-row">
+                  <SettingLabel label={t('settings.hostAgentService')}>
+                    {t('settings.modelsKeysApprovalsStayOutsideVmBackground')}
+                  </SettingLabel>
+                </div>
               </div>
             </div>
           )}
           <div className="settings-section">
             <h2>{nativeOnly ? t('localComputer.computer') : t('settings.localLinux')}</h2>
-            {error && (
-              <p role="alert" className="form-error">
-                {error}
-              </p>
-            )}
-            <div className="setting-row">
-              <div>
-                <SettingLabel label={computerLabel}>
-                  {runtime.enabled &&
-                    (nativeOnly
-                      ? t('localComputer.settingsDescription')
-                      : t('settings.botDesktopsTasksFilesRunLocalVirtual'))}
-                </SettingLabel>
-                {runtime.enabled ? (
-                  connectionError && (
-                    <p className="setting-description">
-                      {isMessageKey(connectionError) ? t(connectionError) : connectionError}
-                    </p>
-                  )
-                ) : (
-                  <p className="setting-description">
-                    {t('settings.computerPanelExamplePreviewNoRealTerminal')}
-                  </p>
-                )}
-              </div>
-              {runtime.enabled ? (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={
-                    preparation?.phase === 'cancelling' || preparation?.phase === 'unavailable'
-                  }
-                  onClick={async () => {
-                    setError('');
-                    try {
-                      await runtime.command({
-                        type: preparation
-                          ? preparing
-                            ? 'setup.cancel'
-                            : 'setup.start'
-                          : 'connect',
-                      });
-                    } catch (error) {
-                      setError(runtimeError(error));
-                    }
-                  }}
-                >
-                  {preparation
-                    ? t(preparing ? 'setup.pauseSetup' : 'setup.continueSetup')
-                    : runtime.snapshot.phase === 'ready'
-                      ? t('settings.reconnect')
-                      : t('settings.retryConnection')}
-                </button>
-              ) : (
-                <span className="badge">{t('settings.notConnected')}</span>
+            <div className="settings-group">
+              {error && (
+                <p role="alert" className="form-error">
+                  {error}
+                </p>
               )}
-            </div>
-            {local?.platform === 'darwin' && local.available && (
-              <>
-                <div className="setting-row">
-                  <div>
-                    <div className="setting-label">{t('localComputer.permissionsLabel')}</div>
+              <div className="setting-row">
+                <div>
+                  <SettingLabel label={computerLabel}>
+                    {runtime.enabled &&
+                      (nativeOnly
+                        ? t('localComputer.settingsDescription')
+                        : t('settings.botDesktopsTasksFilesRunLocalVirtual'))}
+                  </SettingLabel>
+                  {runtime.enabled ? (
+                    connectionError && (
+                      <p className="setting-description">
+                        {isMessageKey(connectionError) ? t(connectionError) : connectionError}
+                      </p>
+                    )
+                  ) : (
                     <p className="setting-description">
-                      {t(
-                        hasComputerPermissions(local)
-                          ? 'localComputer.permissionsReady'
-                          : 'localComputer.permissionsNeeded',
-                      )}
+                      {t('settings.computerPanelExamplePreviewNoRealTerminal')}
                     </p>
-                  </div>
+                  )}
+                </div>
+                {runtime.enabled ? (
                   <button
                     type="button"
                     className="secondary"
-                    aria-expanded={showPermissions}
-                    aria-controls={permissionGuide}
-                    onClick={() => setShowPermissions((shown) => !shown)}
+                    disabled={
+                      preparation?.phase === 'cancelling' || preparation?.phase === 'unavailable'
+                    }
+                    onClick={async () => {
+                      setError('');
+                      try {
+                        await runtime.command({
+                          type: preparation
+                            ? preparing
+                              ? 'setup.cancel'
+                              : 'setup.start'
+                            : 'connect',
+                        });
+                      } catch (error) {
+                        setError(runtimeError(error));
+                      }
+                    }}
                   >
-                    {t('localComputer.permissions')}
+                    {preparation
+                      ? t(preparing ? 'setup.pauseSetup' : 'setup.continueSetup')
+                      : runtime.snapshot.phase === 'ready'
+                        ? t('settings.reconnect')
+                        : t('settings.retryConnection')}
                   </button>
-                </div>
-                <div id={permissionGuide}>
-                  {showPermissions && category === 'computer' && (
-                    <Permissions status={local} showTitle={false} />
-                  )}
-                </div>
-              </>
-            )}
+                ) : (
+                  <span className="badge">{t('settings.notConnected')}</span>
+                )}
+              </div>
+              {local?.platform === 'darwin' && local.available && (
+                <>
+                  <div className="setting-row">
+                    <div>
+                      <div className="setting-label">{t('localComputer.permissionsLabel')}</div>
+                      <p className="setting-description">
+                        {t(
+                          hasComputerPermissions(local)
+                            ? 'localComputer.permissionsReady'
+                            : 'localComputer.permissionsNeeded',
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary"
+                      aria-expanded={showPermissions}
+                      aria-controls={permissionGuide}
+                      onClick={() => setShowPermissions((shown) => !shown)}
+                    >
+                      {t('localComputer.permissions')}
+                    </button>
+                  </div>
+                  <div id={permissionGuide} hidden={!showPermissions}>
+                    {showPermissions && category === 'computer' && (
+                      <Permissions status={local} showTitle={false} />
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <AgentUpgradePanel onDialogChange={setConnectionDialog} />
           <LinuxSetup />
@@ -257,8 +264,10 @@ export function Settings({
           {(!nativeOnly || runtime.snapshot.linux?.available) && (
             <div className="settings-section">
               <h2>{t('settings.runtime')}</h2>
-              <Diagnostics />
-              <RecoveryEntry open={onRecovery} />
+              <div className="settings-group">
+                <Diagnostics />
+                <RecoveryEntry open={onRecovery} />
+              </div>
             </div>
           )}
         </>
@@ -268,7 +277,11 @@ export function Settings({
       id: 'integrations',
       label: t('common.externalTools'),
       icon: Plug,
-      content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
+      content: (
+        <div className="settings-group">
+          <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />
+        </div>
+      ),
     },
     {
       id: 'archive',
@@ -293,33 +306,35 @@ export function Settings({
       content: (
         <div className="settings-section">
           <h2>{t('settings.workspaceData')}</h2>
-          <div className="setting-row">
-            <SettingLabel label={t('settings.localWorkspaceData')}>
-              {t('settings.appStoresChatCachesDraftsPreferenceCopies')}
-            </SettingLabel>
-            <span className="badge">{t('settings.localStorage')}</span>
-          </div>
-          <div className="setting-row">
-            <SettingLabel label={t('settings.exportWorkspace')}>
-              {t('settings.exportJsonCopyPrivateChatCachesDrafts')}
-            </SettingLabel>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() =>
-                download({
-                  id: 'workspace-export',
-                  name: 'daban-workspace.json',
-                  kind: 'JSON',
-                  size: '',
-                  modified: '',
-                  content: serialize(state),
-                })
-              }
-            >
-              <Download />
-              {t('settings.export')}
-            </button>
+          <div className="settings-group">
+            <div className="setting-row">
+              <SettingLabel label={t('settings.localWorkspaceData')}>
+                {t('settings.appStoresChatCachesDraftsPreferenceCopies')}
+              </SettingLabel>
+              <span className="badge">{t('settings.localStorage')}</span>
+            </div>
+            <div className="setting-row">
+              <SettingLabel label={t('settings.exportWorkspace')}>
+                {t('settings.exportJsonCopyPrivateChatCachesDrafts')}
+              </SettingLabel>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() =>
+                  download({
+                    id: 'workspace-export',
+                    name: 'daban-workspace.json',
+                    kind: 'JSON',
+                    size: '',
+                    modified: '',
+                    content: serialize(state),
+                  })
+                }
+              >
+                <Download />
+                {t('settings.export')}
+              </button>
+            </div>
           </div>
         </div>
       ),
@@ -331,7 +346,9 @@ export function Settings({
       content: (
         <div className="settings-section">
           <h2>{t('common.aboutDaban')}</h2>
-          <UpdatesPanel onDialogChange={setUpdateDialog} />
+          <div className="settings-group">
+            <UpdatesPanel onDialogChange={setUpdateDialog} />
+          </div>
         </div>
       ),
     },

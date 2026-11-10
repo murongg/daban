@@ -77,8 +77,8 @@ export function Integrations({
   return (
     <>
       {!bot && (
-        <div className="field-label">
-          {t('capabilities.chooseBot')}
+        <div className="setting-row">
+          <div className="setting-label">{t('capabilities.chooseBot')}</div>
           <Select
             label={t('capabilities.chooseBot')}
             value={selected}

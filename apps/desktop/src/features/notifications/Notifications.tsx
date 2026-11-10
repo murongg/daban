@@ -123,81 +123,83 @@ export function Notifications() {
   return (
     <section className="settings-section" aria-label={t('notifications.title')}>
       <h2>{t('notifications.title')}</h2>
-      <div className="setting-row">
-        <div className="setting-title">
-          <div className="setting-label">{t('notifications.allowDesktopNotifications')}</div>
-          <Help topic={t('notifications.allowDesktopNotifications')}>
-            <p>{t('notifications.notifyBackgroundWhenTasksFinishFailNeed')}</p>
-            <p>{t('notifications.fullyQuittingAppNewDesktopNotificationsNot')}</p>
-          </Help>
+      <div className="settings-group">
+        <div className="setting-row">
+          <div className="setting-title">
+            <div className="setting-label">{t('notifications.allowDesktopNotifications')}</div>
+            <Help topic={t('notifications.allowDesktopNotifications')}>
+              <p>{t('notifications.notifyBackgroundWhenTasksFinishFailNeed')}</p>
+              <p>{t('notifications.fullyQuittingAppNewDesktopNotificationsNot')}</p>
+            </Help>
+          </div>
+          <label
+            className="skill-toggle"
+            aria-disabled={busy || !status?.available || !status.supported}
+          >
+            <input
+              type="checkbox"
+              aria-label={t('notifications.allowDesktopNotifications')}
+              checked={!!status?.enabled}
+              disabled={busy || !status?.available || !status.supported}
+              onChange={() =>
+                status &&
+                perform({ type: 'configure', revision: status.revision, enabled: !status.enabled })
+              }
+            />
+            {busy
+              ? t('common.saving')
+              : status?.enabled
+                ? t('notifications.on')
+                : t('notifications.off')}
+          </label>
         </div>
-        <label
-          className="secondary skill-toggle"
-          aria-disabled={busy || !status?.available || !status.supported}
-        >
-          <input
-            type="checkbox"
-            aria-label={t('notifications.allowDesktopNotifications')}
-            checked={!!status?.enabled}
-            disabled={busy || !status?.available || !status.supported}
-            onChange={() =>
-              status &&
-              perform({ type: 'configure', revision: status.revision, enabled: !status.enabled })
-            }
-          />
-          {busy
-            ? t('common.saving')
-            : status?.enabled
-              ? t('notifications.on')
-              : t('notifications.off')}
-        </label>
+        {!bridge && (
+          <p className="inline-note">
+            {t('notifications.useSystemNotificationsDesktopAppWebPreviews')}
+          </p>
+        )}
+        {bridge && !status && !failure && (
+          <p className="inline-note" role="status">
+            {t('notifications.loadingNotificationSettings')}
+          </p>
+        )}
+        {status && !status.supported && (
+          <p className="inline-note">
+            {t('notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable')}
+          </p>
+        )}
+        {status?.runtime === 'partial' && (
+          <p className="inline-note">
+            {t('notifications.someTaskResultNotificationsUnavailableCheckUpdate')}
+          </p>
+        )}
+        {status?.runtime === 'offline' && (
+          <p className="inline-note">
+            {t('notifications.runtimeNotConnectedTestingSystemNotificationsDoes')}
+          </p>
+        )}
+        <div className="setting-row">
+          <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy || !status?.available || !status.supported || !status.enabled}
+            onClick={() => perform({ type: 'test' })}
+          >
+            {t('notifications.sendTestNotification')}
+          </button>
+        </div>
+        {tested && status?.delivery === 'submitted' && !failure && (
+          <p className="inline-note" role="status">
+            {t('notifications.testNotificationSubmittedSystemIfDoesNot')}
+          </p>
+        )}
+        {failure && (
+          <p className="form-error" role="alert">
+            {failure}
+          </p>
+        )}
       </div>
-      {!bridge && (
-        <p className="inline-note">
-          {t('notifications.useSystemNotificationsDesktopAppWebPreviews')}
-        </p>
-      )}
-      {bridge && !status && !failure && (
-        <p className="inline-note" role="status">
-          {t('notifications.loadingNotificationSettings')}
-        </p>
-      )}
-      {status && !status.supported && (
-        <p className="inline-note">
-          {t('notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable')}
-        </p>
-      )}
-      {status?.runtime === 'partial' && (
-        <p className="inline-note">
-          {t('notifications.someTaskResultNotificationsUnavailableCheckUpdate')}
-        </p>
-      )}
-      {status?.runtime === 'offline' && (
-        <p className="inline-note">
-          {t('notifications.runtimeNotConnectedTestingSystemNotificationsDoes')}
-        </p>
-      )}
-      <div className="setting-row">
-        <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
-        <button
-          type="button"
-          className="secondary"
-          disabled={busy || !status?.available || !status.supported || !status.enabled}
-          onClick={() => perform({ type: 'test' })}
-        >
-          {t('notifications.sendTestNotification')}
-        </button>
-      </div>
-      {tested && status?.delivery === 'submitted' && !failure && (
-        <p className="inline-note" role="status">
-          {t('notifications.testNotificationSubmittedSystemIfDoesNot')}
-        </p>
-      )}
-      {failure && (
-        <p className="form-error" role="alert">
-          {failure}
-        </p>
-      )}
       {status?.bots && (
         <fieldset className="notice-bots" aria-describedby="notice-bots-description">
           <legend className="setting-label">
@@ -221,21 +223,23 @@ export function Notifications() {
               {t('notifications.createBotChoosePrivateChatNotificationsHere')}
             </p>
           )}
-          {status.bots.map((bot) => (
-            <div className="setting-row" key={bot.id}>
-              <div className="setting-label">{bot.name}</div>
-              <label className="secondary skill-toggle" aria-disabled={botsDisabled}>
-                <input
-                  type="checkbox"
-                  aria-label={t('notifications.botDesktopNotifications', { 0: bot.name })}
-                  checked={bot.enabled}
-                  disabled={botsDisabled}
-                  onChange={() => configureBot(bot)}
-                />
-                {bot.enabled ? t('notifications.accept') : t('notifications.notAccepted')}
-              </label>
-            </div>
-          ))}
+          <div className="settings-group">
+            {status.bots.map((bot) => (
+              <div className="setting-row" key={bot.id}>
+                <div className="setting-label">{bot.name}</div>
+                <label className="skill-toggle" aria-disabled={botsDisabled}>
+                  <input
+                    type="checkbox"
+                    aria-label={t('notifications.botDesktopNotifications', { 0: bot.name })}
+                    checked={bot.enabled}
+                    disabled={botsDisabled}
+                    onChange={() => configureBot(bot)}
+                  />
+                  {bot.enabled ? t('notifications.accept') : t('notifications.notAccepted')}
+                </label>
+              </div>
+            ))}
+          </div>
         </fieldset>
       )}
     </section>

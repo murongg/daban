@@ -1,4 +1,6 @@
 .dialog.settings-dialog {
+  --settings-header-height: 60px;
+  position: relative;
   width: 1000px;
   height: min(720px, calc(100dvh - 48px));
   display: flex;
@@ -28,14 +30,20 @@
   color: var(--muted);
 }
 .settings-dialog > .dialog-header {
-  flex: 0 0 auto;
-  min-height: 64px;
-  padding: 16px 22px 16px 26px;
-  border-bottom: 1px solid var(--line);
+  /* Keep the close button above the scrolling panel without blocking its content. */
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  height: var(--settings-header-height);
+  padding: 12px 16px 12px 24px;
+  pointer-events: none;
 }
 .settings-dialog > .dialog-header h2 {
-  font-size: 19px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 650;
+}
+.settings-dialog > .dialog-header button {
+  pointer-events: auto;
 }
 .settings-dialog > .dialog-body {
   flex: 1;
@@ -44,10 +52,12 @@
   overflow: hidden;
 }
 .settings-layout {
+  --settings-rail-width: 216px;
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-columns: var(--settings-rail-width) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+  background: var(--sidebar);
 }
 .main > .settings-layout {
   flex: 1;
@@ -56,24 +66,26 @@
 .settings-nav {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
   min-height: 0;
-  padding: 18px 12px;
+  padding: 18px 12px 16px;
   overflow-y: auto;
-  background: var(--sidebar);
-  border-right: 1px solid var(--line);
+}
+.settings-dialog .settings-nav {
+  margin-top: var(--settings-header-height);
+  padding-top: 4px;
 }
 .settings-tab {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
-  min-height: 42px;
-  padding: 9px 12px;
+  min-height: 38px;
+  padding: 7px 12px;
   border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
   cursor: pointer;
   outline: none;
 }
@@ -84,11 +96,9 @@
 }
 .settings-tab[data-hovered] {
   background: var(--hover);
-  color: var(--ink);
 }
 .settings-tab[data-selected] {
   background: var(--selected);
-  color: var(--ink);
   font-weight: 550;
 }
 .settings-tab[data-focus-visible] {
@@ -98,16 +108,25 @@
 .settings-panel {
   min-height: 0;
   min-width: 0;
-  padding: 28px 32px 32px;
+  padding: 32px 56px 40px 48px;
+  border-left: 1px solid var(--line);
+  background: var(--canvas);
   overflow-y: auto;
   overscroll-behavior: contain;
+  overflow-wrap: anywhere;
   outline: none;
 }
 .settings-panel[hidden] {
   display: none;
 }
 .settings-heading {
-  margin-bottom: 26px;
+  margin-bottom: 28px;
+}
+.settings-heading h3 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.5px;
 }
 .setting-title {
   display: flex;
@@ -115,14 +134,144 @@
   gap: 4px;
   min-width: 0;
 }
-.settings-heading h3 {
-  margin: 0;
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: -0.3px;
-}
-.settings-panel > .settings-heading + div.settings-section {
+.settings-panel > .settings-heading + .settings-section {
   margin-top: 0;
+}
+.settings-panel .settings-section > h2 {
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.settings-group {
+  padding-inline: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.settings-group:empty {
+  display: none;
+}
+.settings-group > :is(.inline-note, .form-error, .setting-description) {
+  margin: 0;
+  padding-block: 12px;
+}
+.settings-group > .setting-row:last-child,
+.settings-group > [data-window-list] > .setting-row:last-child {
+  border-bottom: 0;
+}
+.settings-group > :is(.provider-settings, .update-panel) {
+  margin-top: 0;
+  padding-bottom: 16px;
+}
+.settings-group > [data-window-list]:not(:empty) {
+  border-top: 1px solid var(--line);
+}
+.settings-group > .integration-settings {
+  margin: 0;
+  padding-block: 16px;
+}
+.settings-group > .setting-row > .select-field {
+  width: min(240px, 100%);
+}
+.settings-panel .integration-row {
+  gap: 10px 18px;
+  padding-block: 14px;
+}
+.settings-panel .integration-actions {
+  justify-content: flex-end;
+}
+.settings-panel .integration-settings > .integration-actions {
+  justify-content: flex-start;
+}
+.settings-panel .integration-actions button {
+  white-space: normal;
+}
+.notice-bots > .settings-group {
+  margin-top: 12px;
+}
+.settings-panel .setting-row {
+  align-items: center;
+  gap: 10px 18px;
+  flex-wrap: wrap;
+  padding-block: 14px;
+}
+.settings-panel .setting-row:not(.archive-row) > div:first-child:not(:last-child) {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.settings-panel .archive-copy {
+  flex-basis: 8rem;
+}
+.settings-panel .setting-row > :last-child:not(:first-child) {
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+.settings-panel .setting-row :is(.secondary, .text-button) {
+  white-space: normal;
+}
+.settings-panel .setting-label {
+  font-size: 14px;
+  font-weight: 550;
+}
+.settings-panel .setting-description {
+  max-width: 65ch;
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.settings-panel .language-control {
+  min-width: min(120px, 100%);
+}
+.settings-panel .language-control .select-trigger {
+  padding-block: 7px;
+  min-height: 36px;
+}
+.settings-panel .theme-options button {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+.settings-panel .skill-toggle {
+  min-height: 36px;
+  white-space: normal;
+}
+.settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"] {
+  position: relative;
+  order: 1;
+  width: 34px;
+  height: 20px;
+  border-color: var(--muted);
+  border-radius: 99px;
+  background: var(--soft);
+}
+.settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"]:checked {
+  border-color: var(--success);
+  background: var(--success);
+}
+.settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--muted);
+  transform: none;
+}
+.settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"]:checked::after {
+  background: var(--canvas);
+  transform: translateX(14px);
+}
+@media (forced-colors: active) {
+  .settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"] {
+    appearance: auto;
+  }
+  .settings-panel :is(.skill-toggle, .search-enable) input[type="checkbox"]::after {
+    content: none;
+  }
 }
 .settings-panel .provider-row {
   gap: 16px;
@@ -138,36 +287,41 @@
 }
 @media (max-width: 740px) {
   .settings-layout {
-    grid-template-columns: 158px minmax(0, 1fr);
+    --settings-rail-width: 158px;
   }
   .settings-panel {
-    padding: 23px 22px 26px;
+    padding: 24px 56px 28px 24px;
   }
   .settings-nav {
-    padding: 14px 9px;
+    padding-inline: 8px;
   }
   .settings-tab {
-    padding: 9px 10px;
+    padding-inline: 10px;
     gap: 8px;
+    font-size: 13px;
   }
 }
 @media (max-width: 540px) {
+  .settings-layout {
+    --settings-rail-width: 116px;
+  }
   .dialog.settings-dialog {
     height: calc(100dvh - 32px);
   }
-  .settings-layout {
-    grid-template-columns: 132px minmax(0, 1fr);
-  }
   .settings-dialog > .dialog-header {
-    min-height: 58px;
-    padding: 13px 16px;
+    position: static;
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
   }
-  .settings-nav {
-    padding: 12px 7px;
+  .settings-nav,
+  .settings-dialog .settings-nav {
+    margin-top: 0;
+    padding: 8px 5px;
   }
   .settings-tab {
-    padding: 9px 8px;
-    gap: 7px;
+    padding-inline: 7px;
+    gap: 6px;
     font-size: 12px;
   }
   .settings-tab svg {
@@ -175,9 +329,13 @@
     height: 15px;
   }
   .settings-panel {
-    padding: 21px 16px 24px;
+    padding: 18px 12px 24px;
   }
   .settings-heading h3 {
-    font-size: 19px;
+    font-size: 22px;
+  }
+  .settings-group {
+    padding-inline: 10px;
+    border-radius: 12px;
   }
 }

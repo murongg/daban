@@ -1,8 +1,10 @@
 .search-settings {
   display: grid;
   gap: 18px;
-  max-width: 640px;
   container-type: inline-size;
+}
+.search-form {
+  padding-block: 14px;
 }
 .search-form,
 .search-form .model-fields {
@@ -48,10 +50,7 @@
 .search-status {
   display: grid;
   gap: 6px;
-  padding: 12px 14px;
-  background: var(--sidebar);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  padding-block: 14px;
 }
 .search-status-header,
 .search-status-title,
