@@ -489,6 +489,11 @@ export const english = {
   'onboarding.startupFailed':
     'The background service could not start. Retry the connection; downloaded components are retained and reused.',
   'onboarding.modelTitle': 'Connect your first model',
+  'onboarding.permissionsTitle': 'Set up local computer permissions',
+  'onboarding.permissionsDescription':
+    'Let Bots use this Mac with your approval. You can set this up later in Settings.',
+  'onboarding.continue': 'Continue',
+  'onboarding.skipPermissions': 'Set up later',
   'onboarding.modelDescription':
     'Choose a provider, enter your API key, then load or enter a model to use.',
   'onboarding.readyTitle': 'You’re ready to start',
@@ -2384,26 +2389,23 @@ export const english = {
   'localComputer.screenPermission': 'Screen recording',
   'localComputer.inputPermission': 'Accessibility',
   'localComputer.permissions': 'Set permissions',
+  'localComputer.permissionsLabel': 'System permissions',
+  'localComputer.permissionsNeeded': 'Accessibility and screen recording required.',
   'localComputer.permissionsTitle': 'Set up local permissions',
-  'localComputer.permissionsIntro':
-    'Complete these two settings so the Bot can observe your screen and use your signed-in apps.',
-  'localComputer.inputPurpose': 'Allow Daban to click and type in your browser and other apps.',
-  'localComputer.screenPurpose':
-    'Allow Daban to observe the primary display so the Bot can act on the actual screen.',
+  'localComputer.inputPurpose': 'Let Daban click and type.',
+  'localComputer.screenPurpose': 'Let Daban see the screen.',
   'localComputer.permissionAllowed': 'Allowed',
   'localComputer.permissionMissing': 'Not enabled',
   'localComputer.enableInput': 'Enable Accessibility',
   'localComputer.enableScreen': 'Enable screen recording',
   'localComputer.checkPermissions': 'Check permissions again',
   'localComputer.permissionsInstructions':
-    'Use the button below to open System Settings. Under Privacy & Security, find the Daban app you are using and turn on its switch.',
-  'localComputer.permissionsReturn':
-    'Permissions are checked when you return to Daban. Once both are ready, choose Connect this computer to review this Bot’s access.',
-  'localComputer.permissionsReady':
-    'System permissions are ready. Connect to review this Bot’s local access.',
+    'Turn on the switch for Daban in System Settings → Privacy & Security.',
+  'localComputer.permissionsReturn': 'Daban checks permissions when you return.',
+  'localComputer.permissionsReady': 'System permissions are ready.',
   'localComputer.permissionsTrouble': 'Enabled but still not detected?',
   'localComputer.permissionsRecovery':
-    'If macOS asks you to quit and reopen, reopen Daban as prompted. If the current app is missing, use + to add it. After a development build update, remove the old entry and add the current app if needed.',
+    'Reopen Daban if prompted. If Daban is missing, click + to add it. After a development build update, you may need to remove the old entry and add it again.',
   'localComputer.connect': 'Connect this computer',
   'localComputer.disconnect': 'Disconnect this computer',
   'localComputer.connected': 'Local computer connected',

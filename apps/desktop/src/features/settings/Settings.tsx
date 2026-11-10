@@ -12,7 +12,7 @@ import {
   Trash2,
   Waypoints,
 } from 'lucide-react';
-import { type Dispatch, type ReactNode, useState } from 'react';
+import { type Dispatch, type ReactNode, useId, useState } from 'react';
 import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
@@ -24,6 +24,7 @@ import { ArchiveList } from '../bots/Archive';
 import { TrashList } from '../chat/ConversationTrash';
 import type { TrashController } from '../chat/useTrash';
 import { Diagnostics } from '../computer/Diagnostics';
+import { hasComputerPermissions, Permissions } from '../computer/Permissions';
 import { RecoveryEntry } from '../computer/Recovery';
 import { download } from '../files/files';
 import { Integrations } from '../integrations/Integrations';
@@ -75,6 +76,9 @@ export function Settings({
     !!preparation &&
     ['downloading', 'extracting', 'verifying', 'cancelling'].includes(preparation.phase);
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
+  const local = runtime.snapshot.localComputer;
+  const permissionGuide = useId();
+  const [showPermissions, setShowPermissions] = useState(false);
   const computerLabel = nativeOnly ? t('localComputer.computer') : t('settings.localLinuxRuntime');
   const connectionError = runtime.snapshot.error;
   const [category, setCategory] = useState('general');
@@ -216,6 +220,36 @@ export function Settings({
                 <span className="badge">{t('settings.notConnected')}</span>
               )}
             </div>
+            {local?.platform === 'darwin' && local.available && (
+              <>
+                <div className="setting-row">
+                  <div>
+                    <div className="setting-label">{t('localComputer.permissionsLabel')}</div>
+                    <p className="setting-description">
+                      {t(
+                        hasComputerPermissions(local)
+                          ? 'localComputer.permissionsReady'
+                          : 'localComputer.permissionsNeeded',
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-expanded={showPermissions}
+                    aria-controls={permissionGuide}
+                    onClick={() => setShowPermissions((shown) => !shown)}
+                  >
+                    {t('localComputer.permissions')}
+                  </button>
+                </div>
+                <div id={permissionGuide}>
+                  {showPermissions && category === 'computer' && (
+                    <Permissions status={local} showTitle={false} />
+                  )}
+                </div>
+              </>
+            )}
           </div>
           <AgentUpgradePanel onDialogChange={setConnectionDialog} />
           <LinuxSetup />

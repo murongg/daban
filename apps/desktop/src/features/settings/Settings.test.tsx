@@ -5,7 +5,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -21,12 +21,14 @@ function connect(
   setup?: RuntimeSnapshot['setup'],
   searchSettings = false,
   linux?: RuntimeSnapshot['linux'],
+  localComputer?: RuntimeSnapshot['localComputer'],
 ) {
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.agent = agent;
   snapshot.setup = setup;
   snapshot.linux = linux;
+  snapshot.localComputer = localComputer;
   if (searchSettings) snapshot.searchSettings = true;
   snapshot.model = {
     configured: true,
@@ -54,6 +56,10 @@ function connect(
   const listeners = new Set<(value: RuntimeSnapshot) => unknown>();
   let writes = 0;
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
+    if (command.type === 'local.status' || command.type === 'local.permissions') {
+      for (const listener of listeners) listener(structuredClone(snapshot));
+      return { ok: true, value: snapshot.localComputer };
+    }
     if (command.type === 'search.status')
       return {
         ok: true,
@@ -303,6 +309,39 @@ it('explains native-only setup without offering Linux installation or VM recover
   expect(screen.getByRole('dialog', { name: '本机电脑说明' })).toHaveTextContent(
     '在 Bot 的电脑面板单独授权桌面操作，无需创建 Linux 虚拟机。',
   );
+});
+
+it('opens the macOS permission guide from Computer & permissions without connecting a Bot', async () => {
+  const localComputer = {
+    platform: 'darwin' as const,
+    available: true,
+    permissions: { screen: false, accessibility: false },
+    shortcut: true,
+  };
+  const invoke = connect(
+    false,
+    { location: 'host', execution: 'local-workspace', privilege: 'workspace', approvals: 'host' },
+    undefined,
+    false,
+    undefined,
+    localComputer,
+  );
+  render(<App />);
+  await userEvent.keyboard('{Control>},{/Control}');
+  const settings = await screen.findByRole('dialog', { name: '设置' });
+  await userEvent.click(within(settings).getByRole('tab', { name: '电脑与权限' }));
+  const panel = within(settings).getByRole('tabpanel', { name: '电脑与权限' });
+  const authorize = within(panel).getByRole('button', { name: '设置权限' });
+  await userEvent.click(authorize);
+  expect(authorize).toHaveAttribute('aria-expanded', 'true');
+  expect(invoke).not.toHaveBeenCalledWith({ type: 'local.permissions' });
+  await userEvent.click(within(panel).getByRole('button', { name: '开启辅助功能' }));
+  expect(invoke).toHaveBeenCalledWith({ type: 'local.permissions' });
+
+  localComputer.permissions.accessibility = true;
+  fireEvent.focus(window);
+  expect(await within(panel).findByRole('button', { name: '开启屏幕录制' })).toBeEnabled();
+  expect(invoke).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'local.connect' }));
 });
 
 it('keeps Linux recovery reachable when ordinary tasks use the native workspace', async () => {
