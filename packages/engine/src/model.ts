@@ -907,8 +907,12 @@ export class ModelRuns {
     });
     this.templateService = new TemplateService(this.templates, this.bundles);
     this.templates.pinned = (bot, runId) => {
-      const job = this.jobs.get(bot);
-      return job?.id === runId ? job.template : undefined;
+      const direct = this.jobs.get(bot);
+      if (direct?.id === runId && !direct.assistant) return direct.template;
+      // Assigned chats retain their own run identity while reading the assigned Bot's library.
+      for (const job of this.jobs.values())
+        if (job.id === runId && job.assistant === bot) return job.template;
+      return undefined;
     };
     this.tools.memory = new MemoryTools(this.profiles);
     this.interactions = new Interactions(
@@ -1822,7 +1826,7 @@ export class ModelRuns {
     let inputDirectory: TaskDirectory | undefined;
     try {
       // Capture the pointer before awaiting: one task must never combine two template generations.
-      job.template = this.templates.capture(bot);
+      job.template = this.templates.capture(assistant?.id ?? bot);
       job.skills = task
         ? await this.skills.capture(bot, this.templates.skillOwners(job.template))
         : { available: true, key: '', skills: [] };
