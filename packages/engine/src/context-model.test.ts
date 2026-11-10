@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
@@ -70,18 +70,20 @@ async function fixture(
 ) {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-context-model-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
-  const prompts: string[] = [];
+  const contexts: string[] = [];
   let count = 0;
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = `mock-session-${++count}`) {
       return {
         id,
         run: async (prompt: unknown, observer: { onNotification: (note: unknown) => unknown }) => {
-          prompts.push(String(prompt));
+          expect(typeof prompt).toBe('string');
+          contexts.push(await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8'));
           await emit?.(observer.onNotification, id);
-          return { sessionId: id, finalResponse: `SYNTHETIC RESULT ${prompts.length}` };
+          return { sessionId: id, finalResponse: `SYNTHETIC RESULT ${contexts.length}` };
         },
       };
     }
@@ -97,7 +99,7 @@ async function fixture(
     origin: 'http://127.0.0.1:12345',
   };
   await settings.save({ apiKey: 'mock-context-key' });
-  return { root, settings, prompts, options, models: new ModelRuns(options) };
+  return { root, settings, contexts, options, models: new ModelRuns(options) };
 }
 
 test('model changes and restart recover an initial constraint beyond the last three turns', async () => {
@@ -118,7 +120,7 @@ test('model changes and restart recover an initial constraint beyond the last th
     models = new ModelRuns(value.options);
     await models.start('a', { requestId: 'mock-recovery', prompt: 'Continue the synthetic task.' });
     await models.jobs.get('a')!.done;
-    const restored = value.prompts.at(-1)!;
+    const restored = value.contexts.at(-1)!;
     expect.assert(restored.includes(initial));
     expect(restored).toMatch(/mock-turn-|runId/);
     expect(restored.includes('mock-context-key')).toBe(false);

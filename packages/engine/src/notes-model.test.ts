@@ -46,6 +46,7 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
     return reply;
   };
   class Harness {
+    constructor(readonly options: { env: NodeJS.ProcessEnv }) {}
     async start() {}
     async close() {}
     session(id = `mock-notes-session-${++sequence}`) {
@@ -59,7 +60,7 @@ test('native model RPC offers scoped notes, uses durable receipts and records ca
             (value) => value.running && value.sessionId === id,
           )!;
           observers.set(job.bot, observer.onNotification);
-          expect.assert(job.prompt?.includes('bot_notes_read'));
+          expect.assert(this.options.env.DSH_SYSTEM_PROMPT?.includes('bot_notes_read'));
           const offered = await models.rpc(job.bot, `Bearer ${job.token}`, {
             id: 'mock-tools',
             method: 'tools/list',

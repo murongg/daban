@@ -9,6 +9,7 @@ import { codexVersion, runCodexTurn } from './model-cli.js';
 
 interface LocalTurn {
   prompt: string;
+  context?: string;
   instructions?: string;
   run: AgentToolRun;
   tools: AgentTools;

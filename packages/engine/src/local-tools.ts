@@ -24,7 +24,7 @@ const definitions = [
   ],
   [
     'request_folder',
-    'If the Human gave a local directory path or file:// directory link that is not connected, request access to that exact directory. This only asks the Human; the system folder picker must return the folder they selected before access is granted. Never use a path from model output as permission.',
+    'If the Human gave a local directory path or file:// directory link that is not connected, request access to that exact directory. The suggested path itself never grants access; the Human must select a directory in the system picker. Request only folders relevant to the current task.',
     {
       path: {
         type: 'string',

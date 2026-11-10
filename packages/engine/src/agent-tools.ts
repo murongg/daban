@@ -104,7 +104,7 @@ const workspaceToolList = [
   {
     name: 'read_file',
     description:
-      'Read UTF-8 text such as CSV, Markdown or JSON, including a saved output you need to verify. Pass only path for an ordinary read. Returns the actual content and a reusable reference. If nextOffset is present, continue from it.',
+      'Read UTF-8 text such as CSV, Markdown or JSON by exact filename or reference, including a saved output you need to verify. Omit offset and limit on the first read. Returns the actual content and a reusable reference. If nextOffset is present, continue from it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -176,7 +176,7 @@ const fields: Record<string, string[]> = {
 const csvTool = {
   name: 'verify_csv',
   description:
-    'Read a saved CSV in this task and check it against independently computed expectations. Use when asked to check row count or amounts. The result includes the actual values. The runtime retains these checks and re-runs them before the task can complete.',
+    'Use immediately after saving a CSV that must be checked for row count or amounts. Compute expectations from the inputs. The result includes the actual values, so read_file is only needed for other properties. Correct a failed output without changing expectations to match it. The runtime retains these checks and re-runs them before the task can complete.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -372,6 +372,8 @@ export class AgentTools {
         this.options.nativeOnly && !this.options.execution && tool.name === 'write_file'
           ? {
               ...tool,
+              description:
+                'Save complete UTF-8 text such as CSV, Markdown or JSON in this task. Returns the byte count and a reference for verification. Set createOnly for a new deliverable. On a known filename conflict or FILE_EXISTS, preserve the original. If the user has not authorized another name, use ask_user_question and wait for the answer. Replace an existing file only when the user requested it.',
               inputSchema: {
                 ...tool.inputSchema,
                 properties: {

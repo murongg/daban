@@ -219,9 +219,10 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-conversation-scope-'));
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   const resumed: string[] = [],
-    prompts: string[] = [];
+    contexts: string[] = [];
   let sequence = 0;
   class FakeHarness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = `mock-scope-${++sequence}`) {
@@ -229,7 +230,7 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
         id,
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
-          prompts.push(prompt);
+          contexts.push(await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8'));
           return { sessionId: id, finalResponse: '合成作用域回答' };
         },
       };
@@ -278,8 +279,8 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
     await models.jobs.get('mock-scope')!.done;
     const groupSession = models.jobs.get('mock-scope')!.sessionId;
     expect(groupSession).not.toBe(directSession);
-    expect.assert(prompts.at(-1)!.includes('GROUP-A-53'));
-    expect.assert(!prompts.at(-1)!.includes('PRIVATE-DM-47'));
+    expect.assert(contexts.at(-1)!.includes('GROUP-A-53'));
+    expect.assert(!contexts.at(-1)!.includes('PRIVATE-DM-47'));
     const job = models.jobs.get('mock-scope')!;
     const patch = JSON.parse(
       await readFile(path.join(job.privateDir, 'computer.patch.yml'), 'utf8'),
@@ -298,7 +299,7 @@ test('conversation scopes cannot reuse a DM request, DSH session or private fall
     );
     await models.jobs.get('mock-scope')!.done;
     expect.assert(
-      !prompts.at(-1)!.includes('GROUP-A-53') && !prompts.at(-1)!.includes('PRIVATE-DM-47'),
+      !contexts.at(-1)!.includes('GROUP-A-53') && !contexts.at(-1)!.includes('PRIVATE-DM-47'),
     );
     await models.start('mock-scope', { requestId: 'private-second', prompt: '私聊续接' });
     await models.jobs.get('mock-scope')!.done;
@@ -437,7 +438,9 @@ test('document references copy immutable originals and extracted text into fresh
   const settings = new ModelSettings(path.join(root, 'model/credentials.json'));
   await settings.save({ apiKey: 'synthetic-document-key' });
   const prompts: string[] = [];
+  let context = '';
   class FakeHarness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = 'mock-document-session') {
@@ -446,6 +449,7 @@ test('document references copy immutable originals and extracted text into fresh
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
           prompts.push(prompt);
+          context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
           return { sessionId: id, finalResponse: '合成文件已读取' };
         },
       };
@@ -487,7 +491,9 @@ test('document references copy immutable originals and extracted text into fresh
     const mapping = first.documentInputs![0];
     expect(mapping.textName).not.toBe('document-1.txt');
     expect(await readFile(path.join(first.workdir, mapping.textName), 'utf8')).toBe('MOCK-47');
-    expect.assert(prompts[0].includes(mapping.textName) && prompts[0].includes('extracted text'));
+    expect(prompts[0]).toBe('读取附件，不操作电脑');
+    expect(context).toContain(mapping.textName);
+    expect(context).toContain('extracted text');
     expect((await models.knowledge.list('a')).length).toBe(0);
     expect((await models.start('a', request)).runId).toBe(first.id);
     expect(prompts.length).toBe(1);
@@ -827,6 +833,7 @@ test('retiring a computer-only session preserves its conversation context and st
     const resumed: string[] = [];
     let observed = '';
     class FakeHarness {
+      constructor(readonly options: { cwd: string }) {}
       async start() {}
       async close() {}
       session() {
@@ -834,7 +841,8 @@ test('retiring a computer-only session preserves its conversation context and st
           id: 'new-general-session',
           run: async (prompt: unknown) => {
             expect.assert(typeof prompt === 'string');
-            observed = prompt;
+            expect(prompt).toBe('你能做什么');
+            observed = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
             return { sessionId: 'new-general-session', finalResponse: '我是通用助手。' };
           },
         };
@@ -947,11 +955,11 @@ test('durable Bot persona reaches DSH, preferences survive restart, and changed 
     const settings = new ModelSettings(path.join(root, 'credentials.json'));
     await settings.save({ apiKey: 'synthetic-persona-key' });
     let system = '',
-      prompt = '';
+      context = '';
     const resumed: string[] = [];
     let sequence = 0;
     class FakeHarness {
-      constructor(options: { env: NodeJS.ProcessEnv }) {
+      constructor(readonly options: { env: NodeJS.ProcessEnv; cwd: string }) {
         system = options.env.DSH_SYSTEM_PROMPT || '';
       }
       async start() {}
@@ -961,7 +969,7 @@ test('durable Bot persona reaches DSH, preferences survive restart, and changed 
           id,
           run: async (text: unknown) => {
             expect.assert(typeof text === 'string');
-            prompt = text;
+            context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
             return { sessionId: id, finalResponse: '合成回复' };
           },
         };
@@ -990,7 +998,8 @@ test('durable Bot persona reaches DSH, preferences survive restart, and changed 
     await models.start('mock-persona', { requestId: 'mock-persona-first', prompt: '你叫什么' });
     await models.jobs.get('mock-persona')!.done;
     expect.assert(system.includes('合成研究助理') && system.includes('先给两条依据'));
-    expect.assert(prompt.includes('使用编号'));
+    expect(context).toContain('使用编号');
+    expect(system).not.toContain('使用编号');
     await models.start('mock-persona', { requestId: 'mock-persona-second', prompt: '接着聊' });
     await models.jobs.get('mock-persona')!.done;
     expect(resumed.length).toBe(1);
@@ -1018,10 +1027,10 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   const configured: string[] = [],
     resumed: string[] = [],
-    prompts: string[] = [];
+    contexts: string[] = [];
   let sequence = 0;
   class FakeHarness {
-    constructor(options: { model: string }) {
+    constructor(readonly options: { model: string; cwd: string }) {
       configured.push(options.model);
     }
     async start() {}
@@ -1031,7 +1040,7 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
         id,
         run: async (prompt: unknown) => {
           expect.assert(typeof prompt === 'string');
-          prompts.push(prompt);
+          contexts.push(await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8'));
           return { sessionId: id, finalResponse: '合成模型回复 MODEL-47' };
         },
       };
@@ -1063,7 +1072,7 @@ test('a selected model reaches DSH and only matching model sessions resume, incl
     expect(configured.at(-1)).toBe('deepseek-v4-pro');
     expect(resumed.length, 'a changed model must not resume the frozen route').toBe(1);
     expect.assert(
-      prompts.at(-1)!.includes('MODEL-47'),
+      contexts.at(-1)!.includes('MODEL-47'),
       'preserve bounded history when changing models',
     );
     const job = models.jobs.get('mock-model')!;

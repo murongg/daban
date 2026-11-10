@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Group } from '@daban/protocol';
@@ -141,9 +141,11 @@ test('model RPC forms a group for the authoritative task intent, resumes its rec
   const settings = new ModelSettings(path.join(root, 'credentials.json'));
   let models: ModelRuns;
   let sequence = 0;
-  let act: (bot: string, prompt: string) => Promise<unknown> = async () => {};
-  const sessions: { id: string; bot: string; group?: string; prompt: string }[] = [];
+  let act: (bot: string, prompt: string, context: string) => Promise<unknown> = async () => {};
+  const sessions: { id: string; bot: string; group?: string; prompt: string; context: string }[] =
+    [];
   class Harness {
+    constructor(readonly options: { cwd: string }) {}
     async start() {}
     async close() {}
     session(id = `mock-group-session-${++sequence}`) {
@@ -152,8 +154,9 @@ test('model RPC forms a group for the authoritative task intent, resumes its rec
         run: async (input: unknown) => {
           const job = [...models.jobs.values()].find((job) => job.running && job.sessionId === id)!;
           const prompt = String(input);
-          sessions.push({ id, bot: job.bot, group: job.conversationId, prompt });
-          await act(job.bot, prompt);
+          const context = await readFile(path.join(this.options.cwd, 'task-context.json'), 'utf8');
+          sessions.push({ id, bot: job.bot, group: job.conversationId, prompt, context });
+          await act(job.bot, prompt, context);
           return { sessionId: id, finalResponse: 'SYNTHETIC SCOPED RESULT' };
         },
       };
@@ -216,9 +219,9 @@ test('model RPC forms a group for the authoritative task intent, resumes its rec
     await models.jobs.get('mock-beta')!.done;
     const betaDM = models.jobs.get('mock-beta')!.sessionId;
     const betaPrivateRun = models.jobs.get('mock-beta')!.id;
-    act = async (bot, prompt) => {
-      expect(prompt).toContain('group_directory');
-      expect(prompt).toContain('group_create');
+    act = async (bot, _prompt, context) => {
+      expect(context).toContain('group_directory');
+      expect(context).toContain('group_create');
       const directory = result<{ items: { id: string }[] }>(await call(bot, 'group_directory'));
       expect(directory.items.map((item) => item.id)).toStrictEqual(['mock-beta']);
       created = result(await call(bot, 'group_create', request));
@@ -250,7 +253,8 @@ test('model RPC forms a group for the authoritative task intent, resumes its rec
     await models.jobs.get('mock-alpha')!.done;
     expect(models.jobs.get('mock-alpha')!.phase).toBe('completed');
     expect((await groups.status()).items).toHaveLength(1);
-    act = async (bot, prompt) => {
+    act = async (bot, prompt, context) => {
+      expect(context).toContain('The current task message is a group handoff');
       const list = await rpc(bot, 'tools/list');
       expect.assert(list && 'result' in list);
       const offered = list.result as { tools: { name: string }[] };
