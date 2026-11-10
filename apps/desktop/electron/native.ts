@@ -53,6 +53,7 @@ export function desktopDriver(
   load?: () => unknown,
 ): LocalDriver {
   let loaded: Automation | undefined;
+  const windows = platform === 'darwin' || platform === 'win32' ? cuaWindows(platform) : undefined;
   const pressed = new Set<string>();
   const native = () => {
     if (loaded) return loaded;
@@ -108,7 +109,7 @@ export function desktopDriver(
     supported: ['darwin', 'win32'].includes(platform),
     platform: platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'unsupported',
     permissions,
-    ...(platform === 'darwin' || platform === 'win32' ? cuaWindows(platform) : {}),
+    ...windows,
     prepare() {
       native();
       return undefined;
@@ -203,10 +204,14 @@ export function desktopDriver(
         api.keyTap(key, [...new Set(mods)]);
       } else if (input.type === 'text') {
         const characters = Array.from(input.text);
+        const chunkSize = platform === 'win32' ? 16 : 64;
         // Yield between bounded Unicode chunks so pause/stop can fence the remaining input.
-        for (let offset = 0; offset < characters.length; offset += 64) {
+        for (let offset = 0; offset < characters.length; offset += chunkSize) {
           checkContext();
-          api.typeString(characters.slice(offset, offset + 64).join(''));
+          const text = characters.slice(offset, offset + chunkSize).join('');
+          // libnut's Windows key-string path corrupts non-Latin input. The SDK sends Unicode without using the clipboard.
+          if (platform === 'win32') await windows!.typeText(text, checkContext);
+          else api.typeString(text);
           await yieldInput();
         }
       } else {
@@ -215,10 +220,13 @@ export function desktopDriver(
           ('button' in input ? input.button : undefined) ?? 0
         ];
         if (input.type === 'scroll') {
+          if (!input.deltaY) return;
           api.moveMouse(location.x, location.y);
+          // Windows libnut accepts raw wheel units (120 per notch); macOS accepts notch counts.
+          const unit = platform === 'win32' ? 120 : 1;
           api.scrollMouse(
             0,
-            -Math.sign(input.deltaY) * Math.max(1, Math.round(Math.abs(input.deltaY) / 40)),
+            -Math.sign(input.deltaY) * Math.max(1, Math.round(Math.abs(input.deltaY) / 40)) * unit,
           );
         } else if (input.type === 'click') {
           api.moveMouse(location.x, location.y);

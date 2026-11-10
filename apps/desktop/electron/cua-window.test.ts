@@ -9,6 +9,8 @@ const sdk = vi.hoisted(() => ({
   uniffiDestroy: vi.fn(),
 }));
 const pointer = vi.hoisted(() => ({ show: vi.fn(async () => {}), hide: vi.fn() }));
+const pixels = vi.hoisted(() => ({ capture: vi.fn(), close: vi.fn() }));
+vi.mock('./window-capture', () => ({ windowCapture: () => pixels }));
 vi.mock('@trycua/cua-driver', () => ({ CuaDriver: { create: sdk.create } }));
 vi.mock('./window-pointer', () => ({ windowPointer: () => pointer }));
 vi.mock('electron', () => ({
@@ -47,6 +49,11 @@ function captured(state: object) {
 }
 
 beforeEach(() => {
+  pixels.capture.mockResolvedValue({
+    image: 'data:image/jpeg;base64,U1lOVEhFVElD',
+    width: 800,
+    height: 600,
+  });
   sdk.create.mockReturnValue(sdk);
   sdk.listWindows.mockResolvedValue({ windows: [window] });
   sdk.callTool.mockImplementation(async (name: string) =>
@@ -140,6 +147,81 @@ it('uses the approved Windows UI Automation element for a background click', asy
     element_token: 'synthetic-snapshot:1',
   });
   expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 }, frame.context);
+});
+
+it('keeps Windows capture live through background actions and obtains UIA tokens after its new frame', async () => {
+  const target = await cuaWindows('win32').forWindow('11:22');
+  const initial = {
+    ...snapshot,
+    elements: [{ ...snapshot.elements[0], role: 'Button', actions: ['invoke'] }],
+  };
+  sdk.callTool.mockResolvedValueOnce(captured(initial));
+  const frame = await target.capture();
+  await target.input({ type: 'click', x: 200, y: 100 }, frame, () => {});
+  sdk.callTool.mockResolvedValueOnce(
+    captured({
+      ...initial,
+      elements: [{ ...initial.elements[0], element_token: 'synthetic-fresh:1' }],
+    }),
+  );
+  const refreshed = await target.capture();
+  await target.input({ type: 'click', x: 200, y: 100 }, refreshed, () => {});
+  expect(pixels.capture).toHaveBeenNthCalledWith(2, 11, expect.any(AbortSignal));
+  expect(sdk.callTool.mock.calls.filter(([name]) => name === 'get_window_state')).toHaveLength(2);
+  expect(JSON.parse(sdk.callTool.mock.calls[0]![1]).include_screenshot).toBe(false);
+  expect(JSON.parse(sdk.callTool.mock.calls.at(-1)![1]).element_token).toBe('synthetic-fresh:1');
+  expect(sdk.callTool.mock.calls.filter(([name]) => name === 'click')).toHaveLength(2);
+});
+
+it('sends Windows Unicode to the authorized primary desktop and checks ownership after SDK initialization', async () => {
+  const driver = cuaWindows('win32');
+  const check = vi.fn();
+  await driver.typeText('合成 Windows 123，🙂。', check);
+  expect(check).toHaveBeenCalledOnce();
+  expect(JSON.parse(sdk.callTool.mock.calls[0]![1])).toEqual({
+    target: { kind: 'desktop', display_id: 'primary' },
+    text: '合成 Windows 123，🙂。',
+    delivery_mode: 'foreground',
+  });
+  expect(sdk.callTool.mock.calls[0]![0]).toBe('type_text');
+});
+
+it('refuses stale ownership before desktop text and never replays uncertain Unicode input', async () => {
+  const driver = cuaWindows('win32');
+  await expect(
+    driver.typeText('合成', () => {
+      throw Error('LOCAL_PAUSED');
+    }),
+  ).rejects.toThrow('LOCAL_PAUSED');
+  expect(sdk.callTool).not.toHaveBeenCalled();
+  sdk.callTool.mockResolvedValueOnce({ isError: true });
+  await expect(driver.typeText('合成', () => {})).rejects.toThrow('LOCAL_INPUT_FAILED');
+  expect(sdk.callTool).toHaveBeenCalledOnce();
+});
+
+it('does not publish a refreshed Windows frame after interruption', async () => {
+  const target = await cuaWindows('win32').forWindow('11:22');
+  sdk.callTool.mockResolvedValueOnce(
+    captured({ ...snapshot, elements: [{ ...snapshot.elements[0], actions: ['invoke'] }] }),
+  );
+  const frame = await target.capture();
+  await target.input({ type: 'click', x: 200, y: 100 }, frame, () => {});
+  let finish!: (value: { image: string; width: number; height: number }) => unknown;
+  pixels.capture.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const pending = target.capture();
+  const result = expect(pending).rejects.toThrow();
+  await vi.waitFor(() => expect(pixels.capture).toHaveBeenCalledTimes(2));
+  target.interrupt?.();
+  finish({ image: 'data:image/jpeg;base64,U1lOVEhFVElD', width: 800, height: 600 });
+  await result;
+  expect(pixels.close).toHaveBeenCalledOnce();
+  await expect(target.input({ type: 'click', x: 200, y: 100 }, frame, () => {})).rejects.toThrow(
+    'LOCAL_SCREEN_CHANGED',
+  );
 });
 
 it('clears the pointer on interruption and suppresses an in-flight click result', async () => {
