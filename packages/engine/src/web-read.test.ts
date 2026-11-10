@@ -304,6 +304,24 @@ test('retains nested content within the existing DSH conversion depth ceiling', 
   ).toMatch(/SYNTHETIC-NESTED-TEXT/);
 });
 
+test('accepts an empty snapshot ID on the first read but requires an ID to continue', async () => {
+  const fetched = source('Synthetic RSS text. '.repeat(20));
+  const reader = new WebReader(async () => fetched, createConverter(sdkFile));
+  const args = { url: fetched.url, pageId: '', limit: 128 };
+  const first = await reader.read({ ...args, offset: 0 }, 'mock-session', signal());
+  expect(first.content).toBe(fetched.body.content.slice(0, 128));
+  expect(first.nextOffset).toBe(128);
+  await expect(
+    reader.read({ ...args, offset: first.nextOffset }, 'mock-session', signal()),
+  ).rejects.toMatchObject({ code: 'INVALID_WEB_READ' });
+  const next = await reader.read(
+    { ...args, pageId: first.pageId, offset: first.nextOffset },
+    'mock-session',
+    signal(),
+  );
+  expect(first.content + next.content).toBe(fetched.body.content.slice(0, 256));
+});
+
 test('rejects incomplete downloads and invalid paging rather than presenting a partial article as complete', async () => {
   let calls = 0;
   const reader = new WebReader(async () => {
