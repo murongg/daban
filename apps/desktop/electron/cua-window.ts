@@ -1,6 +1,7 @@
 import type { CuaDriverLike, WindowElement, WindowInfo } from '@trycua/cua-driver';
 import { nativeImage, type Point } from 'electron';
 import type { LocalCapture, WindowDriver } from './local-computer';
+import { windowCapture } from './window-capture';
 import { windowPointer } from './window-pointer';
 
 const windowId = (window: WindowInfo) => `${window.windowId}:${window.pid}`;
@@ -61,6 +62,7 @@ function elementAt(
 
 export function cuaWindows(platform: CuaPlatform) {
   const pointer = windowPointer(platform);
+  const pixels = platform === 'win32' ? windowCapture() : undefined;
   let driver: Promise<CuaDriverLike> | undefined;
   function native() {
     if (driver) return driver;
@@ -92,6 +94,19 @@ export function cuaWindows(platform: CuaPlatform) {
     );
   }
   return {
+    async typeText(text: string, check: () => unknown) {
+      const sdk = await native();
+      check();
+      const result = await sdk.callTool(
+        'type_text',
+        JSON.stringify({
+          target: { kind: 'desktop', display_id: 'primary' },
+          text,
+          delivery_mode: 'foreground',
+        }),
+      );
+      if (result.isError || result.action?.error) throw new Error('LOCAL_INPUT_FAILED');
+    },
     async windows() {
       return (await available()).map((window) => ({
         id: windowId(window),
@@ -126,13 +141,16 @@ export function cuaWindows(platform: CuaPlatform) {
         interrupt() {
           active?.abort();
           observation = undefined;
+          pixels?.close();
           pointer.hide();
         },
         capture() {
           observation = undefined;
           return run(async (sdk, signal) => {
             const window = await current(signal);
-            // The generic result retains AX subroles, which distinguish password fields.
+            const live = await pixels?.capture(target.window_id, signal);
+            signal.throwIfAborted();
+            // Keep the authorized stream alive while reading UIA so Chromium does not freeze its tree when occluded.
             const result = await sdk.callTool(
               'get_window_state',
               JSON.stringify({
@@ -140,12 +158,13 @@ export function cuaWindows(platform: CuaPlatform) {
                 window_id: target.window_id,
                 include_accessibility_tree: true,
                 tree_format: 'elements',
-                include_screenshot: true,
+                include_screenshot: !live,
                 max_image_dimension: 1280,
               }),
               { signal },
             );
-            if (result.isError || !result.structuredJson || result.images.length !== 1)
+            // The generic result retains AX subroles, which distinguish password fields.
+            if (result.isError || !result.structuredJson || (!live && result.images.length !== 1))
               throw new Error('LOCAL_SCREEN_UNAVAILABLE');
             const state = JSON.parse(result.structuredJson) as WindowSnapshot;
             if (
@@ -156,14 +175,16 @@ export function cuaWindows(platform: CuaPlatform) {
             )
               throw new Error('LOCAL_SCREEN_CHANGED');
             if (state.screenshot_frame_valid === false) throw new Error('LOCAL_SCREEN_UNAVAILABLE');
-            const image = nativeImage.createFromBuffer(
-              Buffer.from(result.images[0].dataBase64, 'base64'),
-            );
-            if (image.isEmpty()) throw new Error('LOCAL_SCREEN_UNAVAILABLE');
+            const image = live
+              ? undefined
+              : nativeImage.createFromBuffer(Buffer.from(result.images[0].dataBase64, 'base64'));
+            if (image?.isEmpty()) throw new Error('LOCAL_SCREEN_UNAVAILABLE');
             signal.throwIfAborted();
             const frame = {
-              image: `data:image/jpeg;base64,${image.toJPEG(80).toString('base64')}`,
-              ...image.getSize(),
+              ...(live ?? {
+                image: `data:image/jpeg;base64,${image!.toJPEG(80).toString('base64')}`,
+                ...image!.getSize(),
+              }),
               context: context(window),
               bounds: window.bounds,
             };
@@ -222,6 +243,7 @@ export function cuaWindows(platform: CuaPlatform) {
     },
     async close() {
       pointer.hide();
+      pixels?.close();
       if (!driver) return;
       const sdk = await driver.catch(() => undefined);
       driver = undefined;

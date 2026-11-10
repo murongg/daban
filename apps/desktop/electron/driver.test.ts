@@ -5,6 +5,10 @@ const mocks = vi.hoisted(() => ({
   screenPermission: vi.fn(() => 'granted'),
   accessibility: vi.fn(() => true),
   dip: vi.fn((point: { x: number; y: number }) => ({ x: point.x * 1.25, y: point.y * 1.25 })),
+  typeText: vi.fn(async (_text: string, check: () => unknown) => check()),
+}));
+vi.mock('./cua-window', () => ({
+  cuaWindows: () => ({ forWindow: async () => undefined, typeText: mocks.typeText }),
 }));
 vi.mock('electron', () => ({
   app: { getAppPath: () => '/mock/app' },
@@ -87,6 +91,69 @@ it('types bounded Unicode chunks without overwriting the clipboard and checks st
     true,
   );
   expect(checks.mock.calls.length).toBeGreaterThan(2);
+});
+
+it('uses Unicode desktop input on Windows, preserving Chinese, spaces and surrogate pairs', async () => {
+  const api = automation();
+  const driver = desktopDriver(
+    () => undefined,
+    'win32',
+    () => api,
+  );
+  const text = '合成测试 Windows 123，中文🙂。'.repeat(8);
+  await driver.input({ type: 'text', text }, frame, () => {});
+  expect(mocks.typeText.mock.calls.map(([part]) => part).join('')).toBe(text);
+  expect(mocks.typeText.mock.calls.every(([part]) => Array.from(part).length <= 16)).toBe(true);
+  expect(api.typeString).not.toHaveBeenCalled();
+});
+
+it('stops Windows Unicode input before the next chunk when the foreground changes', async () => {
+  const api = automation();
+  let active = 1;
+  api.getActiveWindow = () => active;
+  mocks.typeText.mockImplementationOnce(async (_text, check) => {
+    check();
+    active = 2;
+  });
+  const driver = desktopDriver(
+    () => undefined,
+    'win32',
+    () => api,
+  );
+  await expect(
+    driver.input({ type: 'text', text: '合成🙂'.repeat(30) }, frame, () => {}),
+  ).rejects.toThrow('LOCAL_SCREEN_CHANGED');
+  expect(mocks.typeText).toHaveBeenCalledOnce();
+  expect(api.typeString).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['win32', 561, -1680],
+  ['win32', -240, 720],
+  ['darwin', 561, -14],
+] as const)(
+  'converts scroll units for %s without changing its direction',
+  async (platform, deltaY, expected) => {
+    const api = automation();
+    const driver = desktopDriver(
+      () => undefined,
+      platform,
+      () => api,
+    );
+    await driver.input({ type: 'scroll', deltaY, x: 400, y: 300 }, frame, () => {});
+    expect(api.scrollMouse).toHaveBeenCalledWith(0, expected);
+  },
+);
+
+it('does not scroll for a zero wheel delta', async () => {
+  const api = automation();
+  const driver = desktopDriver(
+    () => undefined,
+    'win32',
+    () => api,
+  );
+  await driver.input({ type: 'scroll', deltaY: 0 }, frame, () => {});
+  expect(api.scrollMouse).not.toHaveBeenCalled();
 });
 
 it('checks the foreground window on the primary display in DIP coordinates on scaled Windows desktops', async () => {

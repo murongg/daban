@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => ({
     lib: {
       // Sandboxed preloads cannot require local shared chunks; build each entry independently.
       entry: {
+        ...(mode === 'preload' ? { capture: join(root, 'electron/capture.ts') } : {}),
         [mode === 'preload' ? 'preload' : 'main']: join(
           root,
           `electron/${mode === 'preload' ? 'preload' : 'main'}.ts`,
