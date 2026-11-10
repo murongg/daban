@@ -1,4 +1,9 @@
-import { type ModelConnection, modelCatalog, modelReference } from '@daban/protocol';
+import {
+  localCodexModel,
+  type ModelConnection,
+  modelCatalog,
+  modelReference,
+} from '@daban/protocol';
 import { createElement } from 'react';
 import type { SelectOption } from '../../components/controls/Select';
 import { t } from '../../i18n/locale';
@@ -30,13 +35,14 @@ export function modelInputs(id: string | undefined, connections?: ModelConnectio
 
 export function modelName(id: string | undefined, connections?: ModelConnection[]) {
   if (!id) return t('modeloptions.defaultModel');
+  if (id === localCodexModel) return t('models.localCodex');
   return (
     modelCatalog(connections).find((entry) => entry.id === id)?.name ||
     t('modeloptions.notConfigured', { 0: id })
   );
 }
 
-export function modelChoices(connections?: ModelConnection[], selected?: string) {
+export function modelChoices(connections?: ModelConnection[], selected?: string, cli = false) {
   const options: SelectOption[] =
     connections === undefined
       ? modelCatalog().map((entry) => ({
@@ -62,11 +68,17 @@ export function modelChoices(connections?: ModelConnection[], selected?: string)
             }),
           })),
         );
+  if (cli)
+    options.push({
+      value: localCodexModel,
+      label: t('models.localCodex'),
+      description: t('models.localCodexHint'),
+    });
   // Keep a saved route visible when its connection is unavailable; never replace it with another supplier.
   if (selected && !options.some((option) => option.value === selected))
     options.push({
       value: selected,
-      label: t('modeloptions.notConfigured', { 0: selected }),
+      label: modelName(selected, connections),
       disabled: true,
       icon: modelIcon(undefined, connections),
       detail: undefined,

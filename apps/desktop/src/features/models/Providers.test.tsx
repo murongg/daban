@@ -1150,3 +1150,22 @@ it('recovers a lost paid inference test through its exact diagnostic receipt', a
   ).toHaveLength(1);
   expect(await screen.findByText(/7 ms/)).toBeInTheDocument();
 });
+
+it('saves the native Codex workspace default without entering an API key', async () => {
+  const backend = connect();
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-codex-scope',
+    fallback: true,
+    diagnostics: true,
+    cli: true,
+  };
+  mount();
+  await selectOption(userEvent, await findSelectControl('工作区默认模型'), 'local-codex');
+  await userEvent.click(screen.getByRole('button', { name: '保存默认模型' }));
+  expect(backend.writes).toEqual([
+    {
+      type: 'model.configure',
+      input: { model: 'local-codex', revision: 3, requestId: expect.any(String) },
+    },
+  ]);
+});

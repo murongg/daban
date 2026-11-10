@@ -1801,3 +1801,40 @@ test('task search availability and provider selection come from an independent c
   expect(patch(true)).toContain('search-provider.js');
   expect(patch(false)).toContain('"search":false');
 });
+
+test('a Codex default uses the native driver and persists each chat reply and its context', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'mock-codex-chat-'));
+  const prompts: string[] = [];
+  const run = vi.fn(async ({ prompt }: { prompt: string }) => {
+    prompts.push(prompt);
+    return 'synthetic Codex reply';
+  });
+  const settings = new ModelSettings(path.join(root, 'credentials.json'), fetch, {
+    check: async () => {},
+    run,
+  });
+  const models = new ModelRuns({
+    settings,
+    dir: path.join(root, 'model'),
+    workspace: path.join(root, 'workspace'),
+    origin: 'http://127.0.0.1:12345',
+  });
+  try {
+    await settings.configure({ model: 'local-codex', revision: 0, requestId: 'mock-codex-config' });
+    for (const requestId of ['mock-codex-first', 'mock-codex-second']) {
+      await models.start('mock-bot', { requestId, prompt: requestId });
+      await models.jobs.get('mock-bot')!.done;
+      expect(models.findRequest('mock-bot', requestId)).toMatchObject({
+        phase: 'completed',
+        result: 'synthetic Codex reply',
+        model: 'local-codex',
+      });
+    }
+    expect(prompts[0]).not.toContain('synthetic Codex reply');
+    expect(prompts[1]).toContain('synthetic Codex reply');
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally {
+    await models.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

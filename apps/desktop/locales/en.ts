@@ -1414,6 +1414,13 @@ export const english = {
     'The current conversation was updated. Reopen it before sending; your draft is retained.',
   'errors.currentModelCannotObserveDesktopsChooseImage':
     'The current model cannot observe desktops. Choose an image-capable model before using the computer.',
+  'errors.localCodexUnavailable': 'Install the Codex CLI on this Mac to use local Codex.',
+  'errors.localCodexLoginRequired': 'Run codex login in Terminal and sign in with ChatGPT.',
+  'errors.localCodexVersion': 'This build requires Codex CLI 0.167.0.',
+  'errors.localCodexTextOnly':
+    'Local Codex supports text chats. Choose an API model for attachments, plans, or goals.',
+  'errors.localCodexTurnFailed': 'Local Codex could not complete this reply.',
+  'errors.localCodexTimeout': 'Local Codex took too long to reply.',
   'errors.currentModelDoesNotSupportImagesChoose':
     'The current model does not support images. Choose an image-capable model and retry; original attachments are retained.',
   'errors.discussionResponseDoesNotMatchRefreshVerify':
@@ -3570,6 +3577,10 @@ export const english = {
   'models.fallbackInvalid': 'Choose a different, configured API model as the fallback.',
   'models.unknownTools': 'Tool support is unknown; tasks with tools will not switch automatically.',
   'models.credentialsSaved': 'API key saved',
+  'models.localCodex': 'Local Codex',
+  'models.useLocalCodex': 'Use local Codex',
+  'models.localCodexHint':
+    'Uses the Codex CLI on this Mac with your existing ChatGPT sign-in. Supports text chats and reading Daban work items.',
   'models.cliDisabled':
     'CLI sign-in has not passed restricted-tool verification. Use an API connection.',
   'models.removeConnection': 'Remove {0}',

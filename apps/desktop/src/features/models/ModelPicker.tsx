@@ -41,7 +41,11 @@ export function ModelPicker({
       mounted.current = false;
     };
   }, []);
-  const choices = modelChoices(runtime.snapshot.model.connections, model);
+  const choices = modelChoices(
+    runtime.snapshot.model.connections,
+    model,
+    runtime.snapshot.model.modelAccess?.cli,
+  );
   const inherited = conversation ? (conversation.inheritedModel ?? bot.model) : undefined;
   const defaultModel = inherited ?? runtime.snapshot.model.model;
   const selectedAvailable =

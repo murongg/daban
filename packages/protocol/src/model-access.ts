@@ -16,7 +16,7 @@ export interface ModelAccess {
   scope: string;
   fallback: true;
   diagnostics: true;
-  cli: false;
+  cli: boolean;
 }
 interface ModelIntent {
   scope: string;
@@ -149,7 +149,7 @@ export function isModelAccess(value: unknown): value is ModelAccess {
     validAgentId(value.scope) &&
     value.fallback === true &&
     value.diagnostics === true &&
-    value.cli === false
+    typeof value.cli === 'boolean'
   );
 }
 export function isModelSavedRequest(value: unknown): value is ModelSavedRequest {

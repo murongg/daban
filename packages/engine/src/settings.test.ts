@@ -1040,3 +1040,58 @@ test('official search follows the explicitly configured official endpoint even w
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('local Codex is selectable without an API key and preserves existing API connections', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-local-codex-'));
+  try {
+    const file = path.join(root, 'credentials.json');
+    let checks = 0;
+    const local = {
+      check: async () => {
+        checks++;
+      },
+      run: async () => 'synthetic response',
+    };
+    const fetcher: typeof fetch = async () =>
+      Response.json({
+        data: [{ id: 'deepseek-flash' }],
+      });
+    const settings = new ModelSettings(file, fetcher, local);
+    const select = { model: 'local-codex', revision: 0, requestId: 'select-local' };
+    expect((await settings.status(true)).modelAccess?.cli).toBe(true);
+    expect(await settings.configure(select)).toMatchObject({
+      configured: true,
+      model: 'local-codex',
+      revision: 1,
+    });
+    await settings.configure(select);
+    expect(checks).toBe(1);
+    const reopened = new ModelSettings(file, fetcher, local);
+    expect((await reopened.capture()).primary).toMatchObject({
+      model: 'local-codex',
+      vision: false,
+    });
+    const status = await reopened.status(true);
+    expect(isModelStatus(status)).toBe(true);
+    expect(status.connections).toEqual([]);
+    expect(
+      await reopened.saved({
+        ...select,
+        scope: status.modelAccess!.scope,
+        connection: 'local-codex',
+      }),
+    ).toMatchObject({ phase: 'committed', committedRevision: 1 });
+    await reopened.configure({
+      model: 'deepseek-flash',
+      apiKey: 'synthetic-deepseek-key',
+      revision: 1,
+      requestId: 'select-api',
+    });
+    await reopened.configure({ ...select, revision: 2, requestId: 'select-local-again' });
+    expect((await reopened.status(true)).connections?.[0].id).toBe('deepseek-official');
+    expect((await reopened.capture('deepseek-flash')).primary.model).toBe('deepseek-flash');
+    await expect(new ModelSettings(file, fetcher).capture()).rejects.toThrow('CODEX_UNAVAILABLE');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

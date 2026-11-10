@@ -2,6 +2,7 @@ import {
   isModelId,
   isModelSaved,
   isModelStatus,
+  localCodexModel,
   type ModelDiagnoseRequest,
   type ModelDiagnostic,
   type ModelFallbackRequest,
@@ -324,7 +325,14 @@ export function ModelAccess() {
           label={t('models.fallbackTitle')}
           value={selected}
           options={options}
-          disabled={!available || busy || !!pending || !!probe || !model.configured}
+          disabled={
+            !available ||
+            busy ||
+            !!pending ||
+            !!probe ||
+            !model.configured ||
+            model.model === localCodexModel
+          }
           onValueChange={(value) => setChoice({ model: value, revision: model.revision! })}
         />
         <div className="inline-form-actions">
@@ -337,6 +345,7 @@ export function ModelAccess() {
               !!pending ||
               !!probe ||
               !model.configured ||
+              model.model === localCodexModel ||
               selected === (model.fallbackModel || '')
             }
             onClick={configureFallback}
@@ -359,7 +368,7 @@ export function ModelAccess() {
             </button>
           </div>
         ))}
-        <p className="field-help">{t('models.cliDisabled')}</p>
+        {!access.cli && <p className="field-help">{t('models.cliDisabled')}</p>}
       </details>
       {confirm && (
         <Dialog

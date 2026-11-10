@@ -85,6 +85,7 @@ import { integrationCommand } from './integration-api.js';
 import { jinaEnabled, jinaSettingFile, setJinaEnabled } from './jina.js';
 import { BotLifecycle } from './lifecycle.js';
 import { LinuxTools } from './linux-tools.js';
+import { LocalCodex } from './local-codex.js';
 import { LocalCommandTools } from './local-command-tools.js';
 import { LocalTools } from './local-tools.js';
 import { Machine } from './machine.js';
@@ -340,7 +341,11 @@ export async function startPrototype({
     : undefined;
   if (host && (computers || desktop)) throw new Fault('AGENT_REMOTE_REQUIRED');
   await mkdir(host ? modelDir : profileDir, { recursive: true, mode: 0o700 });
-  const settings = new ModelSettings(path.join(modelDir, 'credentials.json'));
+  const settings = new ModelSettings(
+    path.join(modelDir, 'credentials.json'),
+    fetch,
+    process.platform === 'darwin' && host?.nativeWorkspace ? new LocalCodex() : undefined,
+  );
   const searches = new SearchSettings(path.join(modelDir, 'search.json'), settings);
   const jinaFile = path.join(modelDir, jinaSettingFile);
   // Search configuration is optional; its status endpoint reports corruption without blocking ordinary Host startup.

@@ -1267,6 +1267,12 @@ export const chinese = {
     '当前对话已更新，请重新打开对话后发送；草稿保留。',
   'errors.currentModelCannotObserveDesktopsChooseImage':
     '当前模型不支持桌面观察，请切换为支持图片的模型后操作电脑。',
+  'errors.localCodexUnavailable': '请先在这台 Mac 上安装 Codex CLI。',
+  'errors.localCodexLoginRequired': '请在终端运行 codex login，并用 ChatGPT 账号登录。',
+  'errors.localCodexVersion': '此版本的 Daban 需要 Codex CLI 0.167.0。',
+  'errors.localCodexTextOnly': '本机 Codex 支持文字聊天。附件、计划或目标请选用 API 模型。',
+  'errors.localCodexTurnFailed': '本机 Codex 未能完成这次回复。',
+  'errors.localCodexTimeout': '本机 Codex 回复超时。',
   'errors.currentModelDoesNotSupportImagesChoose':
     '当前模型不支持图片，请切换为支持图片的模型后重试；原附件仍保留。',
   'errors.discussionResponseDoesNotMatchRefreshVerify':
@@ -3226,6 +3232,10 @@ export const chinese = {
   'models.fallbackInvalid': '请选择一个不同的、已配置的备用 API 模型。',
   'models.unknownTools': '工具能力未知，带工具任务不会自动切换。',
   'models.credentialsSaved': 'API 密钥已保存',
+  'models.localCodex': '本机 Codex',
+  'models.useLocalCodex': '使用本机 Codex',
+  'models.localCodexHint':
+    '使用这台 Mac 上的 Codex CLI 和已有的 ChatGPT 登录。支持文字聊天和读取 Daban 工作事项。',
   'models.cliDisabled': 'CLI 登录尚未通过受限工具验证，请使用 API 连接。',
   'models.removeConnection': '移除 {0}',
   'models.removeTitle': '移除模型连接？',
