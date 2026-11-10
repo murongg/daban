@@ -2422,6 +2422,8 @@ export const english = {
   'localComputer.fullDesktop': 'Entire primary display (foreground)',
   'localComputer.windowScope':
     'The Bot will only see and interact with the selected window while you use other apps.',
+  'localComputer.windowsWindowScope':
+    'The Bot will only see and click the selected window. Typing requires foreground control.',
   'localComputer.windowShortcut': 'Press {0} to pause. Quitting disconnects local control.',
   'localComputer.windowConnected': 'Background control connected · {0}',
   'localComputer.windowUnavailable': 'This window is unavailable. Open it and connect again.',

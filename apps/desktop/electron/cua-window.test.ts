@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { macWindows } from './mac-window';
+import { cuaWindows } from './cua-window';
 
 const sdk = vi.hoisted(() => ({
   create: vi.fn(),
@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 it('captures and acts through the embedded SDK with the exact approved window and background delivery', async () => {
-  const driver = macWindows();
+  const driver = cuaWindows('darwin');
   expect(await driver.windows()).toEqual([{ id: '11:22', name: 'Synthetic editor · Example' }]);
   const target = await driver.forWindow('11:22');
   const frame = await target.capture();
@@ -78,7 +78,7 @@ it('captures and acts through the embedded SDK with the exact approved window an
 });
 
 it('refuses a mismatched screenshot or background delivery failure without falling back', async () => {
-  const target = await macWindows().forWindow('11:22');
+  const target = await cuaWindows('darwin').forWindow('11:22');
   sdk.callTool.mockResolvedValueOnce(captured({ ...snapshot, window_id: 12 }));
   await expect(target.capture()).rejects.toThrow('LOCAL_SCREEN_CHANGED');
   const frame = await target.capture();
@@ -90,7 +90,7 @@ it('refuses a mismatched screenshot or background delivery failure without falli
 });
 
 it('targets editable controls and refuses password fields before sending input', async () => {
-  const target = await macWindows().forWindow('11:22');
+  const target = await cuaWindows('darwin').forWindow('11:22');
   const field = { ...snapshot.elements[0], role: 'AXTextField', actions: [] };
   sdk.callTool.mockResolvedValueOnce(
     captured({
@@ -114,4 +114,38 @@ it('targets editable controls and refuses password fields before sending input',
     element_token: 'synthetic-snapshot:1',
     text: 'SYNTHETIC',
   });
+});
+
+it('uses the approved Windows UI Automation element for a background click', async () => {
+  const driver = cuaWindows('win32');
+  sdk.callTool.mockResolvedValueOnce(
+    captured({
+      ...snapshot,
+      elements: [{ ...snapshot.elements[0], role: 'Button', actions: ['invoke'] }],
+    }),
+  );
+  const target = await driver.forWindow('11:22');
+  const frame = await target.capture();
+  await target.input({ type: 'click', x: 200, y: 100 }, frame, () => {});
+  expect(sdk.callTool.mock.calls[1]?.[0]).toBe('click');
+  expect(JSON.parse(sdk.callTool.mock.calls[1]![1])).toEqual({
+    target: { kind: 'window', pid: 22, window_id: 11 },
+    delivery_mode: 'background',
+    element_token: 'synthetic-snapshot:1',
+  });
+});
+
+it('refuses Windows background text when the snapshot cannot identify secure inputs', async () => {
+  const target = await cuaWindows('win32').forWindow('11:22');
+  sdk.callTool.mockResolvedValueOnce(
+    captured({
+      ...snapshot,
+      elements: [{ ...snapshot.elements[0], role: 'Edit', actions: ['set_value'] }],
+    }),
+  );
+  const frame = await target.capture();
+  await expect(
+    target.input({ type: 'text', x: 200, y: 100, text: 'SYNTHETIC' }, frame, () => {}),
+  ).rejects.toThrow('LOCAL_WINDOW_ACTION_UNSUPPORTED');
+  expect(sdk.callTool).toHaveBeenCalledTimes(1);
 });

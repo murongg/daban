@@ -13,7 +13,7 @@ import { demoState } from '../../test/fixtures';
 import { LocalComputer } from './LocalComputer';
 
 afterEach(() => Reflect.deleteProperty(window, 'daban'));
-function fixture(permissions = true) {
+function fixture(permissions = true, platform: 'darwin' | 'win32' = 'darwin') {
   let snapshot = disconnected('ready');
   snapshot.protocolVersion = 39;
   snapshot.model = {
@@ -40,7 +40,7 @@ function fixture(permissions = true) {
     ],
   };
   snapshot.localComputer = {
-    platform: 'darwin',
+    platform,
     available: true,
     permissions: { screen: permissions, accessibility: permissions },
     shortcut: true,
@@ -76,7 +76,7 @@ function fixture(permissions = true) {
   Object.defineProperty(window, 'daban', {
     configurable: true,
     value: {
-      platform: 'darwin',
+      platform,
       runtime: {
         invoke,
         subscribe: (listener) => {
@@ -97,37 +97,42 @@ function fixture(permissions = true) {
     },
   };
 }
-it('requires a concrete screen-sharing consent before connecting the selected Bot', async () => {
-  const backend = fixture();
-  render(
-    <RuntimeProvider>
-      <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
-    </RuntimeProvider>,
-  );
-  await userEvent.click(await screen.findByRole('button', { name: '连接本机' }));
-  const dialog = screen.getByRole('dialog');
-  expect(within(dialog).getByText(/合成供应商/)).toBeVisible();
-  expect(within(dialog).getByText(/合成视觉模型/)).toBeVisible();
-  expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
-    false,
-  );
-  const allow = within(dialog).getByRole('button', { name: '允许操作本机' });
-  expect(allow).toBeDisabled();
-  await userEvent.click(within(dialog).getByRole('button', { name: /操作范围/ }));
-  await userEvent.click(await screen.findByRole('option', { name: '合成窗口' }));
-  expect(within(dialog).getByText(/只观察和操作/)).toBeVisible();
-  await userEvent.click(allow);
-  expect(await screen.findByRole('button', { name: '断开本机' })).toBeVisible();
-  expect(
-    backend.invoke.mock.calls.find(([command]) => command.type === 'local.connect')?.[0],
-  ).toMatchObject({
-    type: 'local.connect',
-    bot: 'a',
-    model: 'provider:mock-provider:mock-vision',
-    modelRevision: 1,
-    window: '11:22',
-  });
-});
+it.each(['darwin', 'win32'] as const)(
+  'requires concrete screen-sharing consent on %s',
+  async (platform) => {
+    const backend = fixture(true, platform);
+    render(
+      <RuntimeProvider>
+        <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
+      </RuntimeProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: '连接本机' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/合成供应商/)).toBeVisible();
+    expect(within(dialog).getByText(/合成视觉模型/)).toBeVisible();
+    expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
+      false,
+    );
+    const allow = within(dialog).getByRole('button', { name: '允许操作本机' });
+    expect(allow).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole('button', { name: /操作范围/ }));
+    await userEvent.click(await screen.findByRole('option', { name: '合成窗口' }));
+    expect(
+      within(dialog).getByText(platform === 'darwin' ? /只观察和操作/ : /只观察和点击/),
+    ).toBeVisible();
+    await userEvent.click(allow);
+    expect(await screen.findByRole('button', { name: '断开本机' })).toBeVisible();
+    expect(
+      backend.invoke.mock.calls.find(([command]) => command.type === 'local.connect')?.[0],
+    ).toMatchObject({
+      type: 'local.connect',
+      bot: 'a',
+      model: 'provider:mock-provider:mock-vision',
+      modelRevision: 1,
+      window: '11:22',
+    });
+  },
+);
 it('guides each missing permission from live status without granting host control', async () => {
   const backend = fixture(false);
   render(

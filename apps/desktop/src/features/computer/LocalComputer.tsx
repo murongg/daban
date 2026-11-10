@@ -46,6 +46,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   const other = status?.session && !session;
   const sessionId = session?.id,
     sessionRevision = session?.revision;
+  const canChooseWindow = status?.platform === 'darwin' || status?.platform === 'win32';
   const shortcutHint = (background?: string) =>
     t(background ? 'localComputer.windowShortcut' : 'localComputer.shortcut', { 0: shortcut });
   useEffect(() => {
@@ -113,7 +114,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
     }
     setError('');
     let windows: LocalComputerWindow[] | undefined;
-    if (status?.platform === 'darwin') {
+    if (canChooseWindow) {
       setBusy(true);
       try {
         const value = await runtime.command({ type: 'local.windows' });
@@ -239,7 +240,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             <Monitor size={15} />
             {t('localComputer.connect')}
           </button>
-          {status.platform !== 'darwin' && <p className="field-help">{shortcutHint()}</p>}
+          {!canChooseWindow && <p className="field-help">{shortcutHint()}</p>}
         </>
       )}
       {consent && (
@@ -267,7 +268,9 @@ export function LocalComputer({ bot }: { bot: Bot }) {
                 {t(
                   consent.scope === 'desktop'
                     ? 'localComputer.consentScope'
-                    : 'localComputer.windowScope',
+                    : status.platform === 'win32'
+                      ? 'localComputer.windowsWindowScope'
+                      : 'localComputer.windowScope',
                 )}
               </p>
             )}

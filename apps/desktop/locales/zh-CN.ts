@@ -2157,6 +2157,7 @@ export const chinese = {
   'localComputer.scope': '操作范围',
   'localComputer.fullDesktop': '整个主显示器（前台）',
   'localComputer.windowScope': 'Bot 只观察和操作所选窗口，你可以继续使用其他应用。',
+  'localComputer.windowsWindowScope': 'Bot 只观察和点击所选窗口。输入文字需要前台控制。',
   'localComputer.windowShortcut': '按 {0} 可暂停。退出客户端会断开本机控制。',
   'localComputer.windowConnected': '后台控制已连接 · {0}',
   'localComputer.windowUnavailable': '此窗口暂不可用。请打开窗口后重新连接。',

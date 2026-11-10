@@ -59,14 +59,13 @@ export async function packageNative(
       await copy(dependency, manifestFile, true);
   }
   await copy(dependency, owner);
-  if (platform === 'darwin') {
-    await copy('@trycua/cua-driver', owner);
-    await copy(`@trycua/cua-driver-darwin-${process.arch}`, owner);
-    await copyFile(
-      new URL('../apps/desktop/licenses/cua-driver-LICENSE', import.meta.url),
-      path.join(directory, 'node_modules/@trycua/cua-driver/LICENSE'),
-    );
-  }
+  await copy('@trycua/cua-driver', owner);
+  const cuaBinary = platform === 'win32' ? `win32-${process.arch}-msvc` : `darwin-${process.arch}`;
+  await copy(`@trycua/cua-driver-${cuaBinary}`, owner);
+  await copyFile(
+    new URL('../apps/desktop/licenses/cua-driver-LICENSE', import.meta.url),
+    path.join(directory, 'node_modules/@trycua/cua-driver/LICENSE'),
+  );
   await writeFile(
     path.join(directory, 'NATIVE-NOTICES.md'),
     [

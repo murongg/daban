@@ -67,6 +67,7 @@ it('maps screenshot coordinates through Windows DPI conversion before native inp
     () => api,
   );
   expect(driver.permissions()).toEqual({ screen: true, accessibility: true });
+  expect(driver.forWindow).toBeTypeOf('function');
   await driver.input({ type: 'click', x: 400, y: 300 }, frame, () => {});
   expect(api.moveMouse).toHaveBeenCalledWith(960, 540);
   expect(api.mouseClick).toHaveBeenCalledWith('left');

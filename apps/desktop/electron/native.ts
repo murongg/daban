@@ -8,8 +8,8 @@ import {
   shell,
   systemPreferences,
 } from 'electron';
+import { cuaWindows } from './cua-window';
 import type { LocalCapture, LocalDriver } from './local-computer';
-import { macWindows } from './mac-window';
 
 interface Automation {
   getActiveWindow(): number;
@@ -108,7 +108,7 @@ export function desktopDriver(
     supported: ['darwin', 'win32'].includes(platform),
     platform: platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'unsupported',
     permissions,
-    ...(platform === 'darwin' ? macWindows() : {}),
+    ...(platform === 'darwin' || platform === 'win32' ? cuaWindows(platform) : {}),
     prepare() {
       native();
       return undefined;

@@ -15,7 +15,8 @@ type Bounds = LocalCapture['bounds'];
 const geometry = ({ x, y, width, height }: Bounds) => [x, y, width, height].join(':');
 const context = (window: WindowInfo) => `${windowId(window)}:${geometry(window.bounds)}`;
 
-type MacElement = Pick<WindowElement, 'actions' | 'depth' | 'enabled' | 'frame' | 'role'> & {
+type CuaPlatform = 'darwin' | 'win32';
+type CuaElement = Pick<WindowElement, 'actions' | 'depth' | 'enabled' | 'frame' | 'role'> & {
   element_token?: string;
   in_web_content?: boolean;
   subrole?: string;
@@ -25,18 +26,21 @@ type WindowSnapshot = {
   window_id?: number;
   window_bounds?: Bounds;
   screenshot_frame_valid?: boolean;
-  elements?: MacElement[];
+  elements?: CuaElement[];
 };
 
 function elementAt(
-  elements: MacElement[],
+  elements: CuaElement[],
   frame: LocalCapture,
   x: number,
   y: number,
   action: 'click' | 'text',
+  platform: CuaPlatform,
 ) {
   const left = frame.bounds.x + (x / frame.width) * frame.bounds.width;
   const top = frame.bounds.y + (y / frame.height) * frame.bounds.height;
+  const clickActions =
+    platform === 'win32' ? ['invoke', 'toggle', 'select', 'expand'] : ['AXPress'];
   return elements
     .filter((element) => {
       const box = element.frame;
@@ -49,7 +53,7 @@ function elementAt(
         top >= box.y &&
         top < box.y + box.h &&
         (action === 'click'
-          ? element.actions?.includes('AXPress')
+          ? element.actions?.some((name) => clickActions.includes(name))
           : !element.in_web_content &&
             element.subrole !== 'AXSecureTextField' &&
             ['AXTextField', 'AXTextArea', 'AXComboBox'].includes(element.role))
@@ -58,7 +62,7 @@ function elementAt(
     .sort((a, b) => b.depth - a.depth)[0]?.element_token;
 }
 
-export function macWindows() {
+export function cuaWindows(platform: CuaPlatform) {
   let driver: Promise<CuaDriverLike> | undefined;
   function native() {
     if (driver) return driver;
@@ -106,7 +110,7 @@ export function macWindows() {
       const initial = await current();
       const target = { kind: 'window', pid, window_id: Number(initial.windowId) };
       let active: AbortController | undefined;
-      let observation: { frame: LocalCapture; elements: MacElement[] } | undefined;
+      let observation: { frame: LocalCapture; elements: CuaElement[] } | undefined;
       async function run<T>(operation: (sdk: CuaDriverLike, signal: AbortSignal) => Promise<T>) {
         const abort = new AbortController();
         active = abort;
@@ -170,7 +174,9 @@ export function macWindows() {
         },
         input(action, frame, check) {
           return run(async (sdk, signal) => {
-            if (action.type !== 'text' && !(action.type === 'click' && !action.button))
+            // The pinned Windows SDK does not expose UI Automation's password property in snapshots.
+            const textAllowed = platform === 'darwin' && action.type === 'text';
+            if (!textAllowed && !(action.type === 'click' && !action.button))
               throw new Error('LOCAL_WINDOW_ACTION_UNSUPPORTED');
             const { x, y } = action;
             if (
@@ -186,10 +192,10 @@ export function macWindows() {
             if (observed?.frame !== frame || context(await current(signal)) !== frame.context)
               throw new Error('LOCAL_SCREEN_CHANGED');
             signal.throwIfAborted();
-            const token = elementAt(observed.elements, frame, x, y, action.type);
+            const token = elementAt(observed.elements, frame, x, y, action.type, platform);
             if (!token) throw new Error('LOCAL_WINDOW_ACTION_UNSUPPORTED');
             check();
-            // A coordinate-based Cua action can move the system pointer. Use the AX token from this frame.
+            // A coordinate-based action can move the system pointer. Use the element token from this frame.
             const result = await sdk.callTool(
               action.type === 'text' ? 'type_text' : 'click',
               JSON.stringify({

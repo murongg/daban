@@ -44,21 +44,31 @@ test('the bundled native channel uses Node cryptography when generating a Window
   }
 });
 
-test.skipIf(process.platform !== 'darwin')(
-  'loads the staged Cua SDK outside the workspace',
+test.skipIf(process.platform !== 'darwin' && process.platform !== 'win32')(
+  'loads the staged Cua SDK in Electron outside the workspace',
   async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'mock-native-dependencies-'));
     try {
       const owner = fileURLToPath(new URL('../apps/desktop/package.json', import.meta.url));
       await packageNative(directory, owner);
+      const electron = createRequire(owner)('electron') as string;
       const output = execFileSync(
-        process.execPath,
+        electron,
         [
           '--input-type=module',
           '-e',
           "import { CuaDriver } from '@trycua/cua-driver'; const driver = CuaDriver.create({ embedded: true }); await driver.shutdown(); driver.uniffiDestroy(); console.log('staged SDK loaded')",
         ],
-        { cwd: directory, encoding: 'utf8' },
+        {
+          cwd: directory,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+            CUA_DRIVER_RS_TELEMETRY_ENABLED: 'false',
+          },
+          timeout: 15000,
+        },
       );
       expect(output.trim()).toBe('staged SDK loaded');
     } finally {

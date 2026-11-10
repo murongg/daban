@@ -52,7 +52,7 @@ export const localComputerToolList: LocalComputerPort['list'] = [
   {
     name: 'screenshot',
     description:
-      "Observe the person's approved real local desktop or macOS window. Requires an explicit local-computer connection and a vision model. Use surface desktop only. Follow the returned image dimensions. Ordinary conversation needs no screenshot.",
+      "Observe the person's approved real local desktop or application window. Requires an explicit local-computer connection and a vision model. Use surface desktop only. Follow the returned image dimensions. Ordinary conversation needs no screenshot.",
     inputSchema: {
       type: 'object',
       properties: { surface: { type: 'string', enum: ['desktop'] } },
@@ -63,7 +63,7 @@ export const localComputerToolList: LocalComputerPort['list'] = [
   {
     name: 'act',
     description:
-      'Operate the real local surface observed by your latest screenshot. Coordinates are image pixels. For scope window, use one action at a time: left-click an accessible control or use text with x/y pointing at an editable field. Ask the user to handle unsupported controls. For desktop scope, use up to four sequential inputs. Use cmd on macOS, ctrl on Windows; win is the Windows key. A failed or uncertain action must not be replayed: observe first.',
+      'Operate the real local surface observed by your latest screenshot. Coordinates are image pixels. For scope window, use one action at a time. Left-click an accessible control on macOS or Windows. On macOS, use text with x/y pointing at an editable field. Ask the user to handle unsupported controls. For desktop scope, use up to four sequential inputs. Use cmd on macOS, ctrl on Windows; win is the Windows key. A failed or uncertain action must not be replayed: observe first.',
     inputSchema: {
       type: 'object',
       properties: {
