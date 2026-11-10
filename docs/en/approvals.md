@@ -10,8 +10,8 @@ Updated clients and services (protocol 44 onward) offer three modes for the curr
 
 | Mode | Behavior |
 | --- | --- |
-| Request approval | Ask before every Linux command, public webpage read, external tool call, or software installation |
-| Approve for me (default) | Retain risk review: routine Linux operations run automatically; risky or uncertain operations, unauthorized webpages, and external tools ask |
+| Request approval | Ask before every command, public webpage read, external tool call, or software installation |
+| Approve for me (default) | Commands in the local task sandbox and routine Linux operations run automatically. Risky or uncertain Linux operations, unauthorized webpages, and external tools ask |
 | Full access | Automatically approve enabled tools through the existing approval gates. Records identify automatic policy decisions. On Daban desktop, tasks can also open the built-in browser and use saved sign-ins |
 
 The choice survives a local reload. A new conversation returns to the default. Changes apply to future task starts and continuations. Running tasks, messages inserted into those tasks, and sends awaiting receipt reconciliation retain their captured policy. Questions still require human answers.

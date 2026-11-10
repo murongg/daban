@@ -569,7 +569,7 @@ it('shows the local folder boundary and exact one-time command before host appro
   render(<App />);
   expect(await screen.findByRole('heading', { name: '在本机运行命令' })).toBeVisible();
   expect(screen.getByText('Process a synthetic workbook.')).toBeVisible();
-  expect(screen.getByText('本机 · 仅限已连接文件夹 · 禁止网络 · 每条命令单独确认')).toBeVisible();
+  expect(screen.getByText('本机 · 仅限授权目录 · 禁止网络')).toBeVisible();
   expect(screen.getByText('python3 convert.py')).not.toBeVisible();
   await userEvent.click(screen.getByLabelText('查看命令与目录'));
   expect(screen.getByRole('region', { name: '本机执行范围' })).toBeVisible();

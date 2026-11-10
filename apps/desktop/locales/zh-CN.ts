@@ -240,8 +240,8 @@ export const chinese = {
   'approval.ask': '请求批准',
   'approval.auto': '帮我批准',
   'approval.full': '完全访问权限',
-  'approval.askDescription': '执行 Linux 命令、读取网页和调用外部工具前请求批准。',
-  'approval.autoDescription': '普通 Linux 操作自动执行；风险操作和外部工具请求批准。',
+  'approval.askDescription': '执行命令、读取网页和调用外部工具前请求批准。',
+  'approval.autoDescription': '自动在本机任务沙箱内运行命令；风险操作和外部工具请求批准。',
   'approval.fullDescription': '当前会话的后续任务自动批准已启用工具；保留执行环境与文件访问限制。',
   'approval.previousFull': '完全访问权限（旧范围）',
   'approval.fullBrowserDescription':
@@ -694,10 +694,10 @@ export const chinese = {
   'command.runsOnlyLinuxExecutionVmMayUse':
     '只在 Linux 执行虚拟机中运行，可以使用 sudo；不会在宿主机执行，也不会授予宿主机文件访问权限。',
   'command.scope': 'Linux 虚拟机 · 可使用 sudo · 仅限本次',
-  'command.localScope': '本机 · 仅限已连接文件夹 · 禁止网络 · 每条命令单独确认',
+  'command.localScope': '本机 · 仅限授权目录 · 禁止网络',
   'command.authorizedFolder': '本机执行范围',
   'command.localCommand': '本机命令',
-  'command.localRestrictions': '可访问已连接文件夹和系统工具；无法访问其他用户文件、网络或 sudo。',
+  'command.localRestrictions': '可访问上方所示目录和系统工具；无法访问其他用户文件、网络或 sudo。',
   'command.details': '查看命令与目录',
   'requests.viewOperationDetails': '查看操作详情',
   'requests.viewArguments': '查看调用参数',

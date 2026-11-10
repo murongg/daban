@@ -176,7 +176,7 @@ export class Commands {
             : ['command'];
       if (
         !(target === 'host-local'
-          ? tool === 'local_shell'
+          ? tool === 'local_shell' || tool === 'workspace_shell'
           : ['shell', 'process_start', 'process_input'].includes(tool)) ||
         Object.keys(input).some((key) => !fields.includes(key))
       )
@@ -225,9 +225,11 @@ export class Commands {
         ...(target === 'host-local' ? { root: run.root } : {}),
         purpose:
           run.task?.prompt.trim().slice(0, 500) ||
-          (target === 'host-local'
-            ? 'Run an approved command in a connected local folder.'
-            : 'Execute the current Linux VM task.'),
+          (tool === 'workspace_shell'
+            ? 'Run a command in the current local task directory.'
+            : target === 'host-local'
+              ? 'Run an approved command in a connected local folder.'
+              : 'Execute the current Linux VM task.'),
         target,
       };
       if (target === 'host-local' && !run.root) throw new Fault('COMMAND_INVALID_REQUEST');
@@ -295,9 +297,9 @@ export class Commands {
         .values({ id, fingerprint, request: canonical(request), phase: 'reviewing' })
         .run();
       const decision =
-        request.target === 'host-local' || request.approvalMode === 'ask'
+        request.tool === 'local_shell' || request.approvalMode === 'ask'
           ? 'ask'
-          : request.approvalMode === 'full'
+          : request.tool === 'workspace_shell' || request.approvalMode === 'full'
             ? 'allow'
             : await (this.options.review?.(structuredClone(request), run.abort.signal) ?? 'ask');
       this.live(run);

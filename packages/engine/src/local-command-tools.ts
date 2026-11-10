@@ -22,11 +22,24 @@ const commandTool = {
   },
 } as const;
 
+const workspaceShell = {
+  name: 'workspace_shell',
+  description:
+    'Run Bash on this computer in the current task directory. Use write_file to create a script there, then use this tool to run it with an installed interpreter and check its output. Use relative paths. The sandbox permits only this task directory, temporary files, and standard system tools, without network or sudo. Use web_fetch separately for public URLs.',
+  inputSchema: {
+    type: 'object',
+    properties: { command: { type: 'string', description: 'Bash command to run in this task.' } },
+    required: ['command'],
+    additionalProperties: false,
+  },
+} as const;
+
 export class LocalCommandTools {
   readonly surface = 'host-command';
-  readonly list = [commandTool];
+  readonly list = [workspaceShell, commandTool];
   readonly fields: Record<string, string[]> = {
     local_shell: ['folder', 'cwd', 'command'],
+    workspace_shell: ['command'],
   };
 
   constructor(
@@ -36,16 +49,26 @@ export class LocalCommandTools {
   ) {}
 
   async invoke(run: AgentToolRun, name: string, args: Record<string, unknown>, wireId?: string) {
+    const { command, folder, cwd } = args;
     if (
-      name !== 'local_shell' ||
-      Object.keys(args).some((key) => !this.fields.local_shell.includes(key)) ||
-      typeof args.command !== 'string' ||
-      !args.command.trim() ||
-      args.command.length > 12000 ||
-      args.command.includes('\0')
+      !Object.hasOwn(this.fields, name) ||
+      Object.keys(args).some((key) => !this.fields[name].includes(key)) ||
+      typeof command !== 'string' ||
+      !command.trim() ||
+      command.length > 12000 ||
+      command.includes('\0')
     )
       throw new Fault('COMMAND_INVALID_REQUEST', 400);
-    const directory = await this.folders.commandDirectory(run.bot, args.folder, args.cwd);
+    const taskDirectory = name === 'workspace_shell' ? run.localTaskDirectory : undefined;
+    if (
+      name === 'workspace_shell' &&
+      (!taskDirectory || taskDirectory.canonical !== run.canonicalRoot)
+    )
+      throw new Fault('TASK_DIRECTORY_MOVED', 409);
+    await taskDirectory?.verify();
+    const directory = taskDirectory
+      ? { root: taskDirectory.canonical, cwd: taskDirectory.canonical }
+      : await this.folders.commandDirectory(run.bot, folder, cwd);
     return this.commands.invoke(
       {
         id: run.id,
@@ -63,11 +86,20 @@ export class LocalCommandTools {
       args,
       wireId,
       async () => {
-        const current = await this.folders.commandDirectory(run.bot, args.folder, args.cwd);
-        if (current.root !== directory.root || current.cwd !== directory.cwd)
-          throw new Fault('LOCAL_FOLDER_CHANGED');
+        if (taskDirectory) {
+          // Approval can outlive the directory named in the card. Recheck the original task lease.
+          try {
+            await taskDirectory.verify();
+          } catch {
+            return { isError: true, content: [{ type: 'text', text: 'TASK_DIRECTORY_MOVED' }] };
+          }
+        } else {
+          const current = await this.folders.commandDirectory(run.bot, folder, cwd);
+          if (current.root !== directory.root || current.cwd !== directory.cwd)
+            throw new Fault('LOCAL_FOLDER_CHANGED');
+        }
         return this.execute(
-          { command: args.command as string, cwd: directory.cwd, root: directory.root },
+          { command, cwd: directory.cwd, root: directory.root },
           run.abort.signal,
         );
       },

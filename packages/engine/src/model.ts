@@ -1831,7 +1831,7 @@ export class ModelRuns {
       job.vision = config.vision;
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
       job.binding = this.tools.options.nativeOnly
-        ? createHash('sha256').update(`${config.binding}:native-workspace-v2`).digest('hex')
+        ? createHash('sha256').update(`${config.binding}:native-workspace-v3`).digest('hex')
         : config.binding;
       if (job.searchCapture)
         job.binding = createHash('sha256')
@@ -1906,6 +1906,7 @@ export class ModelRuns {
       }
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
+      if (this.tools.options.nativeOnly) job.localTaskDirectory = inputDirectory;
       let patch = '';
       if (!('driver' in config)) {
         await this.tools.open(job);

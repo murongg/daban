@@ -37,15 +37,15 @@ Example: “Generate a CSV from the attachment, save it, and check its headers a
 
 ## Sharing and paths
 
-Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there without starting a VM. These tools grant neither arbitrary host-file access nor a host shell.
+Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there. On macOS and Linux with the required sandbox, a Bot can write and run a script in the current task directory without connecting a folder or starting a VM. Request approval mode asks for each task command. Other modes let task commands run within the sandbox, with access to the task directory, temporary files, and standard tools. The sandbox blocks network and sudo.
 
-Linux keeps separate task and shared directories. A Bot starts installed Linux when commands or Linux software are needed, explicitly transfers additional inputs, and brings outputs back. The whole native workspace is never synchronized automatically. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path. Retained Linux files remain in Linux and can be found with the Linux file tools.
+Linux keeps separate task and shared directories. A Bot starts installed Linux for commands when you explicitly request execution in the VM. It explicitly transfers additional inputs and brings outputs back. The whole native workspace is never synchronized automatically. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path. Retained Linux files remain in Linux and can be found with the Linux file tools.
 
 Independent screens do not isolate files. Overwriting, moving, or deleting shared material can affect other Bots. Host files do not automatically appear in the VM simply because they exist in a Mac or Windows folder; use attachments, downloads, or an explicit transfer.
 
 ## Limits
 
-- Ordinary workspace tools stay inside application-managed directories. Separate local tools access only folders connected to the current Bot. Links and private application data are excluded. Local commands require approval each time and are supported on macOS/Linux; Windows is not enabled. Linux shells and processes run in the separate Linux VM, which starts on actual use. Native applications still require separately authorized desktop control.
+- Local task commands and connected-folder commands are available on macOS/Linux. Commands in connected folders require approval each time. Native applications still require separately authorized desktop control.
 - Previews do not replace specialized applications. Large, binary, or complex formats may need downloading.
 - Historical links refer to retained current files rather than an immutable complete backup.
 - Workspace export excludes native and Linux work files and VM disks. Download important outputs separately. See [Workspace export](workspace-export.md).
