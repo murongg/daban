@@ -180,6 +180,7 @@ export function taskEnvironment(
     computerConnected = false,
     browserToolsConnected = false,
     localComputerConnected = false,
+    computerAccess = [],
     nativeOnly = false,
     linuxAvailable = false,
   }: {
@@ -188,12 +189,16 @@ export function taskEnvironment(
     computerConnected?: boolean;
     browserToolsConnected?: boolean;
     localComputerConnected?: boolean;
+    computerAccess?: readonly string[];
     nativeOnly?: boolean;
     linuxAvailable?: boolean;
   } = {},
 ) {
   return [
     `Daban task environment (do not recite): approval mode ${task.approvalMode ?? 'auto'}.`,
+    computerAccess.length
+      ? `When the task needs an unattached GUI, call computer_access with an offered target (${computerAccess.join(', ')}). For a native application, use target app and its name. This tool asks in the current conversation when required and returns after authorization. Use it for GUI requests instead of launching apps via workspace_shell. If denied, stop using that surface. After a successful grant, prefer browser_snapshot for websites or screenshot with surface desktop for the authorized native window or Linux desktop. Native window access stays in the background and is limited to the selected app window; do not switch to foreground input.`
+      : '',
     computerConnected
       ? localComputerConnected
         ? 'Access to the user’s real macOS/Windows desktop (primary display) is authorized, rather than a Linux VM. screenshot, act and open_app operate real applications; use the returned screenshot dimensions. Daban hides when control begins. If the user returns to Daban or pauses control, wait for handback and observe again. Do not assume VM paths or login state apply to the host. Obtain the user’s confirmation for each high-risk host operation, including installation, deletion and sending. Do not read credentials or open unrelated private content; leave passwords and verification codes to the user.'
@@ -202,9 +207,11 @@ export function taskEnvironment(
           : 'A computer is connected. Use computer tools when a graphical interface is explicitly needed; the browser supports only the local demo site.'
       : browserToolsConnected
         ? 'The connected real browser DOM tools are available. Browser-only screenshot and act may also be offered to vision models for canvas or other controls unavailable through DOM tools. These do not grant desktop or native application control. Ordinary conversation and file work do not require a computer.'
-        : nativeOnly
-          ? 'Host desktop control is unavailable. Use the offered task tools, including workspace_shell for local scripts when available.'
-          : 'No computer is connected, and desktop and browser tools are unavailable. You can converse, work with workspace files and run restricted code; do not claim graphical interface access.',
+        : computerAccess.length
+          ? 'No GUI is connected yet. Ordinary conversation and file work do not require one.'
+          : nativeOnly
+            ? 'Host desktop control is unavailable. Use the offered task tools, including workspace_shell for local scripts when available.'
+            : 'No computer is connected, and desktop and browser tools are unavailable. You can converse, work with workspace files and run restricted code; do not claim graphical interface access.',
     nativeOnly
       ? `This task uses a native workspace. Its file tools can access the task directory and the read-only shared workspace. When offered, workspace_shell runs in this task directory on the host. Separate local_* tools access only Human-connected folders for this Bot. Browser transfers require the offered tools and an authorized destination. ${linuxAvailable ? 'Linux is installed but starts only on demand. For explicitly requested VM execution, shell/process tools use a separate Linux directory with copies of captured inputs. Use relative command paths, linux_upload for additional input files and linux_download for outputs. Use skill_prepare with target:"linux" before running a skill’s scripts in Linux, and cd to its returned Linux directory. linux_list_files with /shared can find retained Linux outputs from earlier tasks.' : 'Linux shell/process tools are unavailable. Use offered local tools for execution.'}`
       : 'File and command tools execute only in the Linux workspace, not the host terminal. Operate host files through the host GUI.',

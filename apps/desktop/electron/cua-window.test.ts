@@ -3,6 +3,7 @@ import { cuaWindows } from './cua-window';
 
 const sdk = vi.hoisted(() => ({
   create: vi.fn(),
+  listApps: vi.fn(),
   listWindows: vi.fn(),
   callTool: vi.fn(),
   shutdown: vi.fn(),
@@ -55,10 +56,33 @@ beforeEach(() => {
     height: 600,
   });
   sdk.create.mockReturnValue(sdk);
+  sdk.listApps.mockResolvedValue({ apps: [] });
   sdk.listWindows.mockResolvedValue({ windows: [window] });
   sdk.callTool.mockImplementation(async (name: string) =>
     name === 'get_window_state' ? captured(snapshot) : { isError: false },
   );
+});
+
+it('opens only the approved Mac app and selects its own window', async () => {
+  const driver = cuaWindows('darwin');
+  const signal = new AbortController().signal;
+  const installed = { name: 'Synthetic editor', bundleId: 'test.synthetic.editor', running: false };
+  sdk.listApps
+    .mockResolvedValueOnce({ apps: [installed] })
+    .mockResolvedValueOnce({ apps: [installed] })
+    .mockResolvedValueOnce({ apps: [{ ...installed, running: true, pid: 22 }] });
+  sdk.callTool.mockResolvedValueOnce({
+    isError: false,
+    structuredJson: JSON.stringify({ self_activation_suppressed: true }),
+  });
+  sdk.listWindows.mockResolvedValueOnce({ windows: [{ ...window, pid: 23 }, window] });
+  const app = await driver.resolveApp('Synthetic editor', signal);
+  expect(app).toEqual({ id: 'test.synthetic.editor', name: 'Synthetic editor' });
+  expect(sdk.callTool).not.toHaveBeenCalled();
+  expect(await driver.appWindow(app.id, signal)).toBe('11:22');
+  expect(sdk.callTool).toHaveBeenCalledWith('launch_app', '{"bundle_id":"test.synthetic.editor"}', {
+    signal,
+  });
 });
 
 it('captures and acts through the embedded SDK with the exact approved window and background delivery', async () => {

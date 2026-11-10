@@ -21,6 +21,12 @@ function draftAnswer(drafts: State['replyDrafts'][string], id: string) {
   return Object.hasOwn(drafts, id) ? drafts[id] : { selected: [], custom: '' };
 }
 
+function computerTarget(request: Extract<Interaction, { tool: 'computer_access' }>) {
+  return request.target === 'app'
+    ? request.app
+    : t(request.target === 'browser' ? 'hostBrowser.title' : 'localComputer.virtual');
+}
+
 function Approval({ request }: { request: Extract<Interaction, { kind: 'approval' }> }) {
   return (
     <>
@@ -54,6 +60,20 @@ function Approval({ request }: { request: Extract<Interaction, { kind: 'approval
         </>
       )}
       {request.tool === 'software_install' && <Software request={request} />}
+      {request.tool === 'computer_access' && (
+        <>
+          <p className="request-value">{computerTarget(request)}</p>
+          <p className="approval-description">
+            {request.target === 'app'
+              ? t('requests.computerAppAccess', { 0: request.model })
+              : t(
+                  request.target === 'browser'
+                    ? 'requests.browserComputerAccess'
+                    : 'requests.linuxComputerAccess',
+                )}
+          </p>
+        </>
+      )}
       {request.tool === 'mcp_call' && (
         <>
           <p className="approval-description">
@@ -135,7 +155,9 @@ function Request({
           ? current.path
           : current.tool === 'mcp_call'
             ? `${current.name} · ${current.operation}`
-            : current.url
+            : current.tool === 'computer_access'
+              ? computerTarget(current)
+              : current.url
       : '';
 
   const savedAnswers = current.reply?.kind === 'answer' ? current.reply.answers : [];
@@ -240,7 +262,9 @@ function Request({
                       ? t('requests.allowInstallationSoftware')
                       : current.tool === 'mcp_call'
                         ? t('requests.allowExternalToolCall')
-                        : t('requests.allowReadingUrl')}
+                        : current.tool === 'computer_access'
+                          ? t('requests.allowComputerAccess')
+                          : t('requests.allowReadingUrl')}
         </h3>
       )}
       {current.kind === 'approval' &&

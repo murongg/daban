@@ -38,6 +38,30 @@ const binding = (controller: LocalComputer) => ({
   ...bound,
   session: controller.status().session?.id || 'mock-missing-session',
 });
+it('limits an automatic window grant to the approving run and revokes it at task end', async () => {
+  const { controller, driver } = fixture();
+  driver.appWindow = async () => 'mock-window';
+  driver.forWindow = () => ({
+    name: 'Synthetic editor',
+    capture: driver.capture,
+    context: driver.context,
+    input: driver.input,
+  });
+  const { session } = await controller.connectApp(
+    bound,
+    'test.synthetic.editor',
+    new AbortController().signal,
+  );
+  expect(session?.window).toBe('Synthetic editor');
+  await expect(controller.capture({ ...binding(controller), runId: 'mock-other' })).rejects.toThrow(
+    'LOCAL_RUN_STALE',
+  );
+  expect(await controller.capture(binding(controller))).toMatchObject({ width: 800, height: 600 });
+  await controller.pause(session!.id, session!.revision);
+  await expect(controller.capture(binding(controller))).rejects.toThrow('LOCAL_PAUSED');
+  await controller.cancel(bound.runId, session!.id);
+  expect(controller.status().session).toBeUndefined();
+});
 it('requires explicit consent, enforces a single Bot, and rejects model changes or stale observations', async () => {
   const { controller, actions } = fixture();
   await expect(controller.capture(binding(controller))).rejects.toThrow('LOCAL_NOT_CONNECTED');

@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   browserFilesCapability,
   browserTaskCapability,
+  type ComputerAccess,
   documentLimit,
   isRuntimeDownload,
   isTaskFileName,
@@ -16,7 +17,7 @@ import {
   validAgentId,
 } from '@daban/protocol';
 import type { BotTools } from './bot-tools.js';
-import { BrowserTools } from './browser-tools.js';
+import { BrowserTools, browserToolList } from './browser-tools.js';
 import type { CatalogTools } from './catalog.js';
 import {
   browserComputerToolList,
@@ -49,6 +50,12 @@ import type { SkillSnapshot } from './skills.js';
 import type { SoftwareTools } from './software.js';
 import type { WorkTools } from './work-tools.js';
 import { type AgentWorkspace, type TaskDirectory, WorkspaceFiles } from './workspace.js';
+
+const computerAccessTool = {
+  name: 'computer_access',
+  description:
+    'When the user needs GUI work, request access to the named native app, the browser, or the Linux computer. This opens the selected surface and waits for any required approval. Use this before attempting GUI work on an unconnected surface. For a local desktop app use target app and its name, never a shell command. After success use the browser tools or screenshot and act for the chosen surface.',
+};
 
 export interface AgentToolRun extends ToolRun {
   assistant?: string;
@@ -257,7 +264,12 @@ export class AgentTools {
     ToolRun,
     { scope: 'bot' | 'task'; pending?: Promise<(() => Promise<unknown>) | undefined> }
   >();
+  private readonly computerStarts = new WeakMap<
+    AgentToolRun,
+    { target: string; app: unknown; pending: Promise<ToolResult> }
+  >();
   authorizeComputer?: (run: ToolRun) => Promise<unknown>;
+  requestComputerAccess?: (run: AgentToolRun, target: ComputerAccess) => Promise<string>;
   executeRemote?: (
     run: AgentToolRun,
     name: string,
@@ -354,6 +366,16 @@ export class AgentTools {
       return false;
     }
   }
+  accessTargets(run: AgentToolRun) {
+    if (!this.requestComputerAccess) return [];
+    const vision = run.vision ?? (!run.model || modelHasVision(run.model));
+    const targets: ComputerAccess['target'][] = [];
+    if (this.options.hostBrowser?.browser.autoStart && this.hostBrowser) targets.push('browser');
+    if (this.linux?.enabled) targets.push('linux');
+    if (vision && this.localComputer?.resolveApp && this.localComputer.connectApp)
+      targets.push('app');
+    return targets;
+  }
   list(bot: string, model?: ModelId, conversationId?: string, run?: AgentToolRun) {
     const tools = this.options.execution
       ? this.remoteCatalogs.get(bot) || workspaceToolList
@@ -390,7 +412,7 @@ export class AgentTools {
             }
           : tool,
       );
-    return [
+    const catalog = [
       ...(local || hosted
         ? visible.filter(
             (tool) =>
@@ -439,6 +461,43 @@ export class AgentTools {
         ? this.integrations?.list(run) || []
         : []),
     ];
+    const targets = run ? this.accessTargets(run) : [];
+    if (!targets.length) return catalog;
+    const vision = run?.vision ?? (!model || modelHasVision(model));
+    const additional = [
+      ...(vision
+        ? computerToolList
+            .filter((tool) => tool.name !== 'open_app' || targets.includes('linux'))
+            .map((tool) =>
+              tool.name === 'screenshot'
+                ? {
+                    ...tool,
+                    description:
+                      'Observe the authorized surface before acting. Use desktop for the approved native window or Linux desktop, browser for the connected browser. If needed, first call computer_access.',
+                  }
+                : tool,
+            )
+        : []),
+      ...(targets.includes('browser') || targets.includes('linux')
+        ? (this.hostBrowser?.list || browserToolList).filter(
+            (tool) =>
+              this.browserFiles() || !['browser_upload', 'browser_download'].includes(tool.name),
+          )
+        : []),
+    ];
+    return [
+      ...catalog,
+      ...additional.filter((tool) => !catalog.some((entry) => entry.name === tool.name)),
+      {
+        ...computerAccessTool,
+        inputSchema: {
+          type: 'object',
+          properties: { target: { type: 'string', enum: targets }, app: { type: 'string' } },
+          required: ['target'],
+          additionalProperties: false,
+        },
+      },
+    ];
   }
   async open(run: AgentToolRun) {
     if (!this.localRuns.has(run))
@@ -449,6 +508,8 @@ export class AgentTools {
       const connected = this.hostSelected(run.bot);
       const eligible =
         !!autoStart &&
+        // A legacy browser preference must not claim a modern task before it picks a surface.
+        !(this.options.nativeOnly && this.requestComputerAccess) &&
         !connected &&
         !this.localSelected(run.bot, run) &&
         !this.linux?.hasComputer(run.bot) &&
@@ -1144,12 +1205,108 @@ export class AgentTools {
       await directory.close();
     }
   }
+  private async startComputer(
+    run: AgentToolRun,
+    target: ComputerAccess['target'],
+    name?: string,
+  ): Promise<ToolResult> {
+    try {
+      if (++run.toolCount > run.limit) {
+        run.onLimit?.();
+        throw new Fault('TOOL_LIMIT');
+      }
+      run.abort.signal.throwIfAborted();
+      await this.authorizeComputer?.(run);
+      if (this.localSelected(run.bot, run)) throw new Fault('LOCAL_COMPUTER_BUSY');
+      if (target !== 'browser' && this.hostSelected(run.bot, run))
+        throw new Fault('HOST_BROWSER_CONNECTED');
+      let access: ComputerAccess;
+      let appId: string | undefined;
+      if (target === 'app') {
+        const app = await this.localComputer!.resolveApp!(run, name!).catch((error) => {
+          // No approval or launch has happened; a clarified app name may be tried in this turn.
+          this.computerStarts.delete(run);
+          throw error;
+        });
+        access = { target, app: app.name, model: String(run.model) };
+        appId = app.id;
+      } else access = { target };
+      run.abort.signal.throwIfAborted();
+      const id = await this.requestComputerAccess!(run, access);
+      run.abort.signal.throwIfAborted();
+      await this.authorizeComputer?.(run);
+      if (target === 'browser') {
+        const start = this.hostStarts.get(run) ?? { scope: 'task' as const };
+        start.pending ??= this.options.hostBrowser!.browser.autoStart!.open(
+          run.bot,
+          start.scope,
+          run.abort.signal,
+        );
+        this.hostStarts.set(run, start);
+        await start.pending;
+        this.hostRuns.set(run, true);
+      } else if (target === 'linux') {
+        await this.linux!.connectComputer(run, id);
+      } else {
+        await this.localComputer!.connectApp!(run, appId!);
+        this.localRuns.set(run, true);
+      }
+      return { content: [{ type: 'text', text: JSON.stringify({ connected: target }) }] };
+    } catch (error) {
+      const code = errorCode(error) || errorMessage(error);
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: /^[A-Z][A-Z_0-9]{2,79}$/.test(code) ? code : 'COMPUTER_ACCESS_FAILED',
+          },
+        ],
+      };
+    }
+  }
+
+  private accessComputer(run: AgentToolRun, args: Record<string, unknown>): Promise<ToolResult> {
+    const { target, app } = args;
+    const valid = target === 'browser' || target === 'linux' || target === 'app';
+    const failure = (code: string): ToolResult => ({
+      isError: true,
+      content: [{ type: 'text', text: code }],
+    });
+    if (
+      !valid ||
+      !this.accessTargets(run).includes(target) ||
+      Object.keys(args).some((key) => key !== 'target' && key !== 'app') ||
+      (target === 'app'
+        ? !run.model ||
+          typeof app !== 'string' ||
+          !app.trim() ||
+          app.length > 256 ||
+          Array.from(app).some((character) => character.charCodeAt(0) < 32)
+        : app !== undefined)
+    )
+      return Promise.resolve(failure('COMPUTER_ACCESS_UNAVAILABLE'));
+    const existing = this.computerStarts.get(run);
+    if (existing)
+      return existing.target === target && existing.app === app
+        ? existing.pending
+        : Promise.resolve(failure('COMPUTER_ACCESS_ALREADY_REQUESTED'));
+    const pending = this.startComputer(
+      run,
+      target,
+      typeof app === 'string' ? app.trim() : undefined,
+    );
+    this.computerStarts.set(run, { target, app, pending });
+    return pending;
+  }
+
   private async perform(
     run: AgentToolRun,
     name: string,
     args: Record<string, unknown>,
     wireId?: string,
   ): Promise<ToolResult> {
+    if (name === 'computer_access') return this.accessComputer(run, args);
     const hosted = this.hostSelected(run.bot, run);
     const hostInput = hosted && ['screenshot', 'act'].includes(name) && args?.surface === 'browser';
     const linuxOnly = name === 'shell' || name.startsWith('process_') || name.startsWith('linux_');

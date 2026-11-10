@@ -97,42 +97,6 @@ function fixture(permissions = true, platform: 'darwin' | 'win32' = 'darwin') {
     },
   };
 }
-it.each(['darwin', 'win32'] as const)(
-  'requires concrete screen-sharing consent on %s',
-  async (platform) => {
-    const backend = fixture(true, platform);
-    render(
-      <RuntimeProvider>
-        <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
-      </RuntimeProvider>,
-    );
-    await userEvent.click(await screen.findByRole('button', { name: '连接本机' }));
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText(/合成供应商/)).toBeVisible();
-    expect(within(dialog).getByText(/合成视觉模型/)).toBeVisible();
-    expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
-      false,
-    );
-    const allow = within(dialog).getByRole('button', { name: '允许操作本机' });
-    expect(allow).toBeDisabled();
-    await userEvent.click(within(dialog).getByRole('button', { name: /操作范围/ }));
-    await userEvent.click(await screen.findByRole('option', { name: '合成窗口' }));
-    expect(
-      within(dialog).getByText(platform === 'darwin' ? /只观察和操作/ : /只观察和点击/),
-    ).toBeVisible();
-    await userEvent.click(allow);
-    expect(await screen.findByRole('button', { name: '断开本机' })).toBeVisible();
-    expect(
-      backend.invoke.mock.calls.find(([command]) => command.type === 'local.connect')?.[0],
-    ).toMatchObject({
-      type: 'local.connect',
-      bot: 'a',
-      model: 'provider:mock-provider:mock-vision',
-      modelRevision: 1,
-      window: '11:22',
-    });
-  },
-);
 it('guides each missing permission from live status without granting host control', async () => {
   const backend = fixture(false);
   render(
@@ -140,8 +104,7 @@ it('guides each missing permission from live status without granting host contro
       <LocalComputer bot={demoState().bots.find((bot) => bot.id === 'research')!} />
     </RuntimeProvider>,
   );
-  expect(await screen.findByRole('button', { name: '连接本机' })).toBeDisabled();
-  const guide = screen.getByRole('region', { name: '设置本机权限' });
+  const guide = await screen.findByRole('region', { name: '设置本机权限' });
   expect(within(guide).getByText(/允许 Daban 点击和输入/)).toBeVisible();
   expect(within(guide).getByText(/允许 Daban 查看屏幕画面/)).toBeVisible();
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.permissions')).toBe(
@@ -154,11 +117,9 @@ it('guides each missing permission from live status without granting host contro
   act(() => backend.permissions(false, true));
   expect(within(guide).getByRole('button', { name: '开启屏幕录制' })).toBeEnabled();
   expect(within(guide).queryByRole('button', { name: '开启辅助功能' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
   await userEvent.click(within(guide).getByRole('button', { name: '开启屏幕录制' }));
   act(() => backend.permissions(true, true));
-  expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
-  expect(screen.getByRole('status')).toHaveTextContent('系统权限已就绪');
+  expect(screen.getByText('Bot 会在需要时申请使用。')).toBeVisible();
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
     false,
   );
@@ -174,7 +135,7 @@ it('rechecks current permissions without opening System Settings or starting a s
   await screen.findByRole('button', { name: '开启辅助功能' });
   backend.permissions(true, true, false);
   await userEvent.click(screen.getByRole('button', { name: '重新检查权限' }));
-  expect(await screen.findByRole('button', { name: '连接本机' })).toBeEnabled();
+  expect(await screen.findByText('Bot 会在需要时申请使用。')).toBeVisible();
   expect(
     backend.invoke.mock.calls.some(([command]) =>
       ['local.permissions', 'local.connect'].includes(command.type),
@@ -193,7 +154,6 @@ it('preserves the guide and connection lock when checking permissions fails', as
   backend.invoke.mockImplementationOnce(async () => ({ ok: false, error: 'RUNTIME_OFFLINE' }));
   await userEvent.click(screen.getByRole('button', { name: '重新检查权限' }));
   expect(await screen.findByRole('alert')).toBeVisible();
-  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '开启辅助功能' })).toBeEnabled();
 });
 
@@ -210,9 +170,8 @@ it('refreshes permissions on returning to the app without requesting additional 
   await screen.findByRole('button', { name: '开启辅助功能' });
   backend.permissions(true, true, false);
   fireEvent.focus(window);
-  expect(await screen.findByRole('status')).toHaveTextContent('系统权限已就绪');
+  expect(await screen.findByText('Bot 会在需要时申请使用。')).toBeVisible();
   expect(backend.invoke).toHaveBeenCalledWith({ type: 'local.status' });
-  expect(screen.getByRole('button', { name: '连接本机' })).toBeEnabled();
   expect(
     backend.invoke.mock.calls.some(([command]) =>
       ['local.permissions', 'local.connect'].includes(command.type),
@@ -234,5 +193,4 @@ it('only offers the accessibility step if screen recording is already allowed', 
   );
   expect(await screen.findByRole('button', { name: '开启辅助功能' })).toBeEnabled();
   expect(screen.queryByRole('button', { name: '开启屏幕录制' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '连接本机' })).toBeDisabled();
 });

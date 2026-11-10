@@ -10,16 +10,13 @@ Ordinary conversations keep using the native background service after Linux is i
 
 Upgrades from older installations whose background data still lives inside the VM complete the existing migration first, then hand off to native execution when idle. An empty native database never replaces retained guest data.
 
-Linux starts when a Bot invokes a Linux shell, process, or Linux file tool, prepares a skill explicitly for Linux, parses a PDF or Office attachment through Linux, or you explicitly connect a computer. Initial installation and an explicit environment recovery can also start Linux. An environment that is not installed must first be installed through the interface; ordinary chat never downloads it automatically.
+Linux starts when a Bot invokes a Linux shell, process, or Linux file tool, prepares a skill explicitly for Linux, parses a PDF or Office attachment through Linux, or it gets access to a graphical Linux desktop. Initial installation and an explicit environment recovery can also start Linux. An environment that is not installed must first be installed through the interface; ordinary chat never downloads it automatically.
 
 Native and Linux task directories remain separate. Only captured task inputs are copied to Linux by default. Other files require explicit transfers, and outputs brought back into the native task appear in the files panel. Commands retain their approval and execution receipts; uncertain effects are never replayed automatically. Closing the client neither cancels accepted background tasks nor shuts down the VM automatically.
 
 ## Connect a Bot's computer
 
-1. Select a Bot and open its computer panel.
-2. Select the Linux VM and connect. Follow any prompts about active tasks or environment recovery first.
-3. Wait for the connected state and inspect the Linux desktop or browser view.
-4. Request graphical work when needed. Calculations and file processing can use workspace tools without opening a terminal window.
+Ask the Bot to perform the graphical task in Linux. When access is needed, the Bot asks in the conversation and then starts the installed environment. **Full access** skips the confirmation. Use the Linux VM tab in the computer panel to view the connected desktop or browser. Calculations and file processing can still use workspace tools without opening a desktop.
 
 The app shows the available computer slots. A Bot can still chat without a connected computer. Resources whose cleanup is unconfirmed may continue occupying a slot.
 

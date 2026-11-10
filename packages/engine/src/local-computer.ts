@@ -24,6 +24,8 @@ export interface LocalComputerPort {
   readonly list: { name: string; description: string; inputSchema: Record<string, unknown> }[];
   selected(bot: string): boolean;
   prepare(run: AgentToolRun): Promise<boolean>;
+  resolveApp?(run: AgentToolRun, name: string): Promise<{ id: string; name: string }>;
+  connectApp?(run: AgentToolRun, app: string): Promise<unknown>;
   invoke(run: AgentToolRun, name: string, args: Record<string, unknown>): Promise<ToolResult>;
   cancel(run: AgentToolRun): Promise<unknown>;
 }
@@ -185,7 +187,7 @@ export class LocalComputerClient implements LocalComputerPort {
           });
         },
       );
-      req.setTimeout(method === 'status' ? 500 : 10_000, () =>
+      req.setTimeout(method === 'status' ? 500 : method === 'app.connect' ? 30_000 : 10_000, () =>
         req.destroy(new Error('LOCAL_CLIENT_UNAVAILABLE')),
       );
       req.on('error', reject);
@@ -218,6 +220,40 @@ export class LocalComputerClient implements LocalComputerPort {
     if (status.session?.bot !== run.bot) return false;
     this.leases.set(run, status.session.id);
     return true;
+  }
+  async resolveApp(run: AgentToolRun, name: string) {
+    const value = await this.rpc('app.resolve', { name }, run.abort.signal);
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      !('id' in value) ||
+      typeof value.id !== 'string' ||
+      !('name' in value) ||
+      typeof value.name !== 'string'
+    )
+      throw new Error('LOCAL_INVALID_RESPONSE');
+    return { id: value.id, name: value.name };
+  }
+  async connectApp(run: AgentToolRun, app: string) {
+    if (!run.id || !run.model) throw new Error('LOCAL_INVALID_REQUEST');
+    await this.authorize?.(run);
+    const modelRevision = await this.modelRevision();
+    const value = await this.rpc(
+      'app.connect',
+      { app, bot: run.bot, runId: run.id, model: run.model, modelRevision },
+      run.abort.signal,
+    );
+    if (!isLocalComputerStatus(value) || !value.session?.window || value.session.bot !== run.bot)
+      throw new Error('LOCAL_INVALID_RESPONSE');
+    this.leases.set(run, value.session.id);
+    try {
+      if ((await this.modelRevision()) !== modelRevision) throw new Error('LOCAL_MODEL_CHANGED');
+      await this.authorize?.(run);
+      run.abort.signal.throwIfAborted();
+    } catch (error) {
+      await this.cancel(run);
+      throw error;
+    }
   }
   private async binding(run: AgentToolRun) {
     const session = this.leases.get(run);

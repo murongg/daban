@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   type ExecutionSnapshot,
+  isComputerAck,
+  isComputerStatus,
   isRuntimeDownload,
   isTaskFileName,
   type SkillPackage,
@@ -90,6 +92,33 @@ export class LinuxTools {
         (item) => item.bot === bot && item.phase === 'connected',
       ) === true
     );
+  }
+  async connectComputer(run: AgentToolRun, id: string) {
+    if (!this.enabled) throw new Fault('LOCAL_VM_UNAVAILABLE');
+    if (this.hasComputer(run.bot)) return;
+    const signal = run.abort.signal;
+    await this.files.base();
+    const status = await this.execution.call('computer.status', {}, signal);
+    if (!isComputerStatus(status)) throw new Fault('EXECUTION_INVALID_RESPONSE');
+    const current = status.items.find((item) => item.bot === run.bot);
+    if (current?.phase !== 'connected') {
+      const ack = await this.execution.call(
+        'computer.request',
+        {
+          method: 'POST',
+          path: '/api/computers/action',
+          body: { id, bot: run.bot, action: 'connect', revision: current?.revision ?? 0 },
+        },
+        signal,
+      );
+      if (!isComputerAck(ack) || ack.receipt.id !== id || ack.state.bot !== run.bot)
+        throw new Fault('EXECUTION_INVALID_RESPONSE');
+      if (ack.state.phase !== 'connected')
+        throw new Fault(ack.receipt.error || 'COMPUTER_NOT_CONNECTED');
+    }
+    await this.observe?.();
+    signal.throwIfAborted();
+    if (!this.hasComputer(run.bot)) throw new Fault('COMPUTER_NOT_CONNECTED');
   }
   listFor(bot: string, vision: boolean, local: boolean) {
     return [

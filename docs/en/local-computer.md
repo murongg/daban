@@ -2,35 +2,24 @@
 
 [User guide](README.md) · [简体中文](../zh-CN/local-computer.md)
 
-Native mode controls your real computer. On macOS and Windows, choose an open window for background control or use the primary display in the foreground.
+Ask the Bot in chat to use an application on your Mac or Windows PC. Use a model that supports images, and name the application and what you want done. The Bot requests access in the conversation and continues the task when you allow it. **Full access** skips this confirmation for the current task.
 
-## Authorize a connection
+On macOS, first enable **Accessibility** and **Screen Recording** for Daban in System Settings. The native desktop tab guides you through setup. If macOS asks you to reopen Daban, do so. These system permissions are required in every approval mode.
 
-1. Select an image-capable model for the Bot and let its current task finish.
-2. Open the computer panel and select the native Mac or Windows mode.
-3. On macOS, follow the two-step guide: choose **Enable Accessibility**, then **Enable screen recording**, and enable each permission for the current Daban app in System Settings. Daban checks permissions when you return; you can also choose **Check permissions again**. Reopen the app if macOS asks you to. OS permissions and the Bot's temporary control authorization are separate.
-4. Connect and select an open window or **Entire primary display (foreground)**. Review the Bot, provider, and model before authorizing actions and screenshots in the selected scope.
-5. Specify the application and task. Keep the computer unlocked and awake.
+The Bot can also request the built-in browser or an installed Linux desktop in chat. Neither needs a separate approval in the computer panel. Full access applies to those requests as well.
 
-Close or move windows you do not want included in model screenshots. Native mode does not automatically grant administrator privileges.
+## Background control
 
-## Pause, resume, and disconnect
+Daban uses the bundled Cua Driver to capture and operate one window of the authorized app. The Bot does not take over the system pointer. It can launch a supported Mac app in the background. On Windows, open the target app before asking the Bot to use it.
 
-- Choose **Pause control** in Daban. In foreground mode, returning to Daban also pauses control.
-- Emergency pause: **Ctrl + Option + Esc** on Mac; **Ctrl + Alt + Esc** on Windows.
-- Review the state in the panel before explicitly resuming or handing back. Focus changes, screen locking, sleep, and stale observations can also pause actions.
-- Disconnecting or fully quitting revokes the session authorization. Confirm again on reconnection. Model or connection changes may also require authorization again.
+The Bot can click supported controls and enter text in supported macOS fields. A window can be covered by another app, but it must not be minimized, hidden or closed. Some controls, scrolling, dragging and shortcuts are unavailable in the background. Daban does not switch to foreground control when a background action fails.
 
-Only one Bot can use the native desktop at a time. Disconnect the existing session before authorizing another Bot. Other Bots do not receive independent Mac or Windows screens.
+Background clicks briefly show the colored Bot pointer. It glides from the previous click when the clicks are in the same window on the same display.
 
-## Scope and limits
+## Pause and disconnect
 
-Background mode uses the bundled Cua Driver SDK to capture the authorized window and click supported controls through macOS Accessibility or Windows UI Automation. On macOS, the Bot can also insert text into supported editable fields. On Windows, typing requires foreground mode. The Bot can work while other apps cover the window. Minimized, hidden, and closed windows become unavailable. Connect again to authorize another window. Scrolling, dragging, shortcuts, and custom-drawn controls require foreground mode.
+- Pause, resume or disconnect from the native desktop tab while a task is using it.
+- For emergency pause, use **Ctrl + Option + Esc** on Mac or **Ctrl + Alt + Esc** on Windows.
+- Only one Bot can control a native window at a time. Native window access ends when the task ends or you disconnect.
 
-Background clicks briefly show a colored Bot pointer over the target window, beneath any windows covering it. Between clicks in the same window on the same display, the pointer glides from the last click and pulses at the new position. The system pointer stays under your control. Pausing or disconnecting clears the Bot pointer and its last position.
-
-In foreground mode, the Bot can observe, click, type, scroll, and use the Dock, Start menu, and real applications. This mode does not expose a host shell or arbitrary host file tools that bypass the GUI. It does not guarantee control of administrator windows, UAC, the secure desktop, or secondary displays.
-
-Native GUI actions affect real files and signed-in accounts. Do not assume the Linux command-approval mechanism prompts before every native click. Set boundaries for consequential actions and take over when human completion is appropriate.
-
-If OS permissions appear enabled but control remains unavailable, see [Troubleshooting](troubleshooting.md).
+If system permissions appear enabled but control remains unavailable, see [Troubleshooting](troubleshooting.md).

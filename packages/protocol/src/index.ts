@@ -1570,6 +1570,7 @@ export interface RuntimeSnapshot {
   appWorkspace?: true;
   localFolders?: true;
   hostCommandFullAccess?: true;
+  computerAccess?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
@@ -2927,8 +2928,13 @@ export type UserReply =
   | { kind: 'answer'; answers: { id: string; selected: string[]; custom?: string }[] }
   | { kind: 'decision'; allow: boolean }
   | { kind: 'folder_grant'; folderId: string; path: string };
+export type ComputerAccess =
+  | { target: 'browser' | 'linux' }
+  | { target: 'app'; app: string; model: string };
+
 export type InteractionInput = { id: string; sessionId: string } & (
   | { kind: 'question'; questions: UserQuestion[] }
+  | ({ kind: 'approval'; tool: 'computer_access' } & ComputerAccess)
   | { kind: 'approval'; tool: 'web_fetch'; url: string }
   | { kind: 'approval'; tool: 'software_install'; plan: SoftwarePlan; purpose: string }
   | { kind: 'approval'; tool: 'local_file'; path: string; operation: string; arguments: string }
@@ -3030,6 +3036,13 @@ export function publicUrl(value: unknown): value is string {
 export function isInteractionInput(value: unknown): value is InteractionInput {
   if (!profileObject(value) || !validAgentId(value.id) || !boundedText(value.sessionId, 200))
     return false;
+  if (value.kind === 'approval' && value.tool === 'computer_access')
+    return value.target === 'app'
+      ? exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'target', 'app', 'model']) &&
+          boundedText(value.app, 256) &&
+          boundedText(value.model, 256)
+      : (value.target === 'browser' || value.target === 'linux') &&
+          exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'target']);
   if (value.kind === 'approval' && value.tool === 'web_fetch')
     return (
       exactKeys(value, ['id', 'sessionId', 'kind', 'tool', 'url']) &&

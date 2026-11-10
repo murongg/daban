@@ -83,41 +83,47 @@ export function projectInteraction(
       ? { questions: item.questions }
       : item.tool === 'web_fetch'
         ? { tool: item.tool, url: item.url }
-        : item.tool === 'software_install'
-          ? { tool: item.tool, plan: item.plan, purpose: item.purpose }
-          : item.tool === 'vm_command'
-            ? {
-                tool: item.tool,
-                command: item.command,
-                cwd: item.cwd,
-                purpose: item.purpose,
-                target: item.target,
-              }
-            : item.tool === 'host_command'
+        : item.tool === 'computer_access'
+          ? {
+              tool: item.tool,
+              target: item.target,
+              ...(item.target === 'app' ? { app: item.app, model: item.model } : {}),
+            }
+          : item.tool === 'software_install'
+            ? { tool: item.tool, plan: item.plan, purpose: item.purpose }
+            : item.tool === 'vm_command'
               ? {
                   tool: item.tool,
                   command: item.command,
                   cwd: item.cwd,
-                  root: item.root,
                   purpose: item.purpose,
                   target: item.target,
                 }
-              : item.tool === 'local_file'
+              : item.tool === 'host_command'
                 ? {
                     tool: item.tool,
-                    path: item.path,
-                    operation: item.operation,
-                    arguments: transcriptText(item.arguments, redact),
+                    command: item.command,
+                    cwd: item.cwd,
+                    root: item.root,
+                    purpose: item.purpose,
+                    target: item.target,
                   }
-                : item.tool === 'local_folder'
-                  ? { tool: item.tool, path: item.path }
-                  : {
+                : item.tool === 'local_file'
+                  ? {
                       tool: item.tool,
-                      name: item.name,
-                      origin: item.origin,
+                      path: item.path,
                       operation: item.operation,
                       arguments: transcriptText(item.arguments, redact),
-                    };
+                    }
+                  : item.tool === 'local_folder'
+                    ? { tool: item.tool, path: item.path }
+                    : {
+                        tool: item.tool,
+                        name: item.name,
+                        origin: item.origin,
+                        operation: item.operation,
+                        arguments: transcriptText(item.arguments, redact),
+                      };
   return {
     source: `human:${item.id}:${item.status}:${item.updatedAt}`,
     kind: 'interaction',

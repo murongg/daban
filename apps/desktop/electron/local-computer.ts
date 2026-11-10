@@ -24,6 +24,8 @@ export interface LocalDriver {
   requestPermissions?: () => Promise<unknown>;
   windows?: () => Promise<LocalComputerWindow[]> | LocalComputerWindow[];
   forWindow?: (id: string) => Promise<WindowDriver> | WindowDriver;
+  resolveApp?: (name: string, signal: AbortSignal) => Promise<{ id: string; name: string }>;
+  appWindow?: (app: string, signal: AbortSignal) => Promise<string>;
   close?: () => Promise<unknown>;
   permissions(): { screen: boolean; accessibility: boolean };
   capture(): Promise<LocalCapture>;
@@ -59,6 +61,7 @@ export class LocalComputer {
   };
   private last?: LocalComputerFrame;
   private run?: string;
+  private automaticRun?: string;
   private started = false;
   private readonly cancelled = new Set<string>();
   private closed = false;
@@ -99,43 +102,82 @@ export class LocalComputer {
     this.observation = undefined;
     this.last = undefined;
     this.run = undefined;
+    this.automaticRun = undefined;
     this.started = false;
     if (hadSession) this.enqueue(() => this.driver.release()).catch(() => {});
   }
   async connect(request: Extract<LocalComputerCommand, { type: 'local.connect' }>) {
     const generation = this.generation;
-    return this.enqueue(async () => {
-      this.requirePermissions();
-      if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
-      if (!this.shortcut) throw new Error('LOCAL_SHORTCUT_UNAVAILABLE');
-      if (this.consent?.id === request.id) {
-        if (JSON.stringify(this.consent) !== JSON.stringify(request))
-          throw new Error('LOCAL_CONSENT_CONFLICT');
-        return this.status();
-      }
-      if (this.session) throw new Error('LOCAL_COMPUTER_BUSY');
-      if (this.retired.has(request.id)) throw new Error('LOCAL_CONSENT_EXPIRED');
-      if (this.retired.size >= 200) throw new Error('LOCAL_SESSION_LIMIT');
-      const window = request.window ? await this.driver.forWindow?.(request.window) : undefined;
-      // Revocation and permission changes can occur while the SDK looks up the window.
-      if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
-      this.requirePermissions();
-      if (request.window && !window) throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
-      if (!window) this.driver.prepare?.();
-      this.retired.add(request.id);
-      this.cancelled.clear();
-      this.consent = structuredClone(request);
-      this.window = window;
-      this.session = {
-        id: randomUUID(),
-        bot: request.bot,
-        revision: 1,
-        owner: 'agent',
-        model: request.model,
-        modelRevision: request.modelRevision,
-        ...(window ? { window: window.name } : {}),
-      };
+    return this.enqueue(() => this.connectSession(request, generation));
+  }
+  private async connectSession(
+    request: Extract<LocalComputerCommand, { type: 'local.connect' }>,
+    generation: number,
+    automatic?: { runId: string; signal: AbortSignal },
+  ) {
+    automatic?.signal.throwIfAborted();
+    this.requirePermissions();
+    if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
+    if (!this.shortcut) throw new Error('LOCAL_SHORTCUT_UNAVAILABLE');
+    if (this.consent?.id === request.id) {
+      if (JSON.stringify(this.consent) !== JSON.stringify(request))
+        throw new Error('LOCAL_CONSENT_CONFLICT');
       return this.status();
+    }
+    if (this.session) throw new Error('LOCAL_COMPUTER_BUSY');
+    if (!automatic && this.retired.has(request.id)) throw new Error('LOCAL_CONSENT_EXPIRED');
+    if (!automatic && this.retired.size >= 200) throw new Error('LOCAL_SESSION_LIMIT');
+    const window = request.window ? await this.driver.forWindow?.(request.window) : undefined;
+    automatic?.signal.throwIfAborted();
+    // Revocation and permission changes can occur while the SDK looks up the window.
+    if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
+    this.requirePermissions();
+    if (request.window && !window) throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
+    if (!window) this.driver.prepare?.();
+    // Only manually supplied consent IDs can be replayed; automatic IDs are generated here.
+    if (!automatic) this.retired.add(request.id);
+    this.cancelled.clear();
+    this.consent = structuredClone(request);
+    this.window = window;
+    this.automaticRun = automatic?.runId;
+    this.session = {
+      id: randomUUID(),
+      bot: request.bot,
+      revision: 1,
+      owner: 'agent',
+      model: request.model,
+      modelRevision: request.modelRevision,
+      ...(window ? { window: window.name } : {}),
+    };
+    return this.status();
+  }
+  async resolveApp(name: string, signal: AbortSignal) {
+    this.requirePermissions();
+    if (!this.driver.resolveApp) throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
+    return this.driver.resolveApp(name, signal);
+  }
+  async connectApp(binding: Omit<LocalBinding, 'session'>, app: string, signal: AbortSignal) {
+    const generation = this.generation;
+    return this.enqueue(async () => {
+      signal.throwIfAborted();
+      this.requirePermissions();
+      if (!this.shortcut) throw new Error('LOCAL_SHORTCUT_UNAVAILABLE');
+      if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
+      if (this.session) throw new Error('LOCAL_COMPUTER_BUSY');
+      if (!this.driver.appWindow) throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
+      const window = await this.driver.appWindow(app, signal);
+      return this.connectSession(
+        {
+          type: 'local.connect',
+          id: randomUUID(),
+          bot: binding.bot,
+          model: binding.model,
+          modelRevision: binding.modelRevision,
+          window,
+        },
+        generation,
+        { runId: binding.runId, signal },
+      );
     });
   }
   private current(id: string, revision: number) {
@@ -155,10 +197,11 @@ export class LocalComputer {
   async interrupt() {
     const current = this.session;
     if (current?.owner === 'agent') return this.pause(current.id, current.revision);
+    if (!current) this.generation++;
     return this.status();
   }
   async interruptForeground() {
-    if (!this.window) return this.interrupt();
+    if (this.session && !this.window) return this.interrupt();
     return this.status();
   }
   async resume(id: string, revision: number) {
@@ -185,6 +228,7 @@ export class LocalComputer {
   }
   async cancel(runId: string, session?: string) {
     if (session && this.session?.id !== session) return;
+    if (this.automaticRun === runId) return this.revoke();
     if (this.cancelled.size >= 4096) {
       await this.revoke();
       return;
@@ -201,6 +245,8 @@ export class LocalComputer {
     const session = this.session;
     if (!session || session.bot !== binding.bot) throw new Error('LOCAL_NOT_CONNECTED');
     if (binding.session !== session.id) throw new Error('LOCAL_SESSION_STALE');
+    if (this.automaticRun && binding.runId !== this.automaticRun)
+      throw new Error('LOCAL_RUN_STALE');
     if (session.model !== binding.model || session.modelRevision !== binding.modelRevision) {
       this.clear();
       throw new Error('LOCAL_MODEL_CHANGED');

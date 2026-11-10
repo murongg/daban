@@ -265,40 +265,6 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
     props.expanded,
     props.initialView,
   ]);
-  async function choose(next: 'vm' | 'local' | 'browser') {
-    const hosted = browser?.connections.find((item) => item.bot === canonical);
-    if (next !== 'browser' && hosted) {
-      if (runtime.snapshot.agents[canonical]?.running) return;
-      try {
-        await runtime.command({
-          type: 'hostBrowser',
-          request: {
-            action: 'close',
-            bot: canonical,
-            instance: hosted.state.instance,
-            epoch: hosted.epoch,
-          },
-        });
-      } catch (error) {
-        props.notify(runtimeError(error));
-        return;
-      }
-    }
-    if (next !== 'local' && local?.session?.bot === canonical) {
-      if (runtime.snapshot.agents[canonical]?.running) return;
-      try {
-        await runtime.command({
-          type: 'local.disconnect',
-          session: local.session.id,
-          revision: local.session.revision,
-        });
-      } catch (error) {
-        props.notify(runtimeError(error));
-        return;
-      }
-    }
-    setSource(next);
-  }
   return (
     <>
       {(browser || (local && (!nativeOnly || optionalLinux))) && !props.expanded && (
@@ -307,18 +273,22 @@ export function Computer(props: Parameters<typeof VirtualComputer>[0]) {
             <button
               type="button"
               aria-pressed={source === 'browser'}
-              onClick={() => choose('browser')}
+              onClick={() => setSource('browser')}
             >
               {t('hostBrowser.title')}
             </button>
           )}
           {(!nativeOnly || optionalLinux) && (
-            <button type="button" aria-pressed={source === 'vm'} onClick={() => choose('vm')}>
+            <button type="button" aria-pressed={source === 'vm'} onClick={() => setSource('vm')}>
               {t('localComputer.virtual')}
             </button>
           )}
           {local && (
-            <button type="button" aria-pressed={source === 'local'} onClick={() => choose('local')}>
+            <button
+              type="button"
+              aria-pressed={source === 'local'}
+              onClick={() => setSource('local')}
+            >
               {local.platform === 'win32' ? t('localComputer.windows') : t('localComputer.mac')}
             </button>
           )}

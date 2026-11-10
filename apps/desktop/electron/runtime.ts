@@ -416,6 +416,7 @@ export class RuntimeClient {
         jinaReader?: unknown;
         localFolders?: unknown;
         hostCommandFullAccess?: unknown;
+        computerAccess?: unknown;
         localComputer?: unknown;
         linux?: unknown;
         hostBrowser?: unknown;
@@ -538,6 +539,7 @@ export class RuntimeClient {
       if (typeof raw.jinaReader === 'boolean') snapshot.jinaReader = raw.jinaReader;
       if (this.agent && raw.localFolders === true) snapshot.localFolders = true;
       if (this.agent && raw.hostCommandFullAccess === true) snapshot.hostCommandFullAccess = true;
+      if (this.agent && raw.computerAccess === true) snapshot.computerAccess = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
           ? raw.localComputer

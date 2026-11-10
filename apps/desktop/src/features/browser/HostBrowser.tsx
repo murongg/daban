@@ -42,8 +42,10 @@ export function HostBrowser({
   const status = runtime.snapshot.hostBrowser;
   const connection = status?.connections.find((item) => item.bot === target);
   const task = agentTask(runtime.snapshot, bot.id);
+  const onDemand = runtime.snapshot.computerAccess === true;
   const { command } = runtime;
   const canReadPermission =
+    !onDemand &&
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
     !!status?.available &&
@@ -192,17 +194,22 @@ export function HostBrowser({
           <div className="host-browser-new-tab">
             <div className="host-browser-wordmark">Daban</div>
             <p className="host-browser-tagline">{t('hostBrowser.startTitle')}</p>
-            <button
-              type="button"
-              className="primary"
-              disabled={blocked || !!task?.running}
-              onClick={() => perform({ action: 'open', bot: target })}
-            >
-              <Globe size={15} />
-              {busy ? t('common.connectingComputer') : t('hostBrowser.open')}
-            </button>
-            <p className="host-browser-scope">{t('hostBrowser.consentBrief')}</p>
-            {task?.running && <p className="inline-note">{t('localComputer.taskBusy')}</p>}
+            {onDemand ? (
+              <p className="host-browser-scope">{t('localComputer.onDemand')}</p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={blocked || !!task?.running}
+                  onClick={() => perform({ action: 'open', bot: target })}
+                >
+                  <Globe size={15} />
+                  {busy ? t('common.connectingComputer') : t('hostBrowser.open')}
+                </button>
+                <p className="host-browser-scope">{t('hostBrowser.consentBrief')}</p>
+              </>
+            )}
           </div>
         </>
       )}
@@ -227,7 +234,7 @@ export function HostBrowser({
         </span>
         <details className="host-browser-about">
           <summary>{t('hostBrowser.about')}</summary>
-          {permission?.bot === target && (
+          {!onDemand && permission?.bot === target && (
             <>
               <label>
                 <input
