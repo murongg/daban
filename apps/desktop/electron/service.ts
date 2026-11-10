@@ -632,6 +632,7 @@ export function runtimeService(
     if (isLocalComputerCommand(command)) {
       if (!local || !agentConfig || !state.localComputer)
         throw new Error('LOCAL_AGENT_UPDATE_REQUIRED');
+      if (command.type === 'local.windows') return local.windows();
       if (command.type === 'local.status' || command.type === 'local.permissions') {
         const result =
           command.type === 'local.status' ? local.status() : await local.requestPermissions();

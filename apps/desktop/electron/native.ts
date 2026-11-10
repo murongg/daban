@@ -8,6 +8,7 @@ import {
   shell,
   systemPreferences,
 } from 'electron';
+import { cuaWindows } from './cua-window';
 import type { LocalCapture, LocalDriver } from './local-computer';
 
 interface Automation {
@@ -107,6 +108,7 @@ export function desktopDriver(
     supported: ['darwin', 'win32'].includes(platform),
     platform: platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'unsupported',
     permissions,
+    ...(platform === 'darwin' || platform === 'win32' ? cuaWindows(platform) : {}),
     prepare() {
       native();
       return undefined;

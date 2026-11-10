@@ -52,7 +52,7 @@ export const localComputerToolList: LocalComputerPort['list'] = [
   {
     name: 'screenshot',
     description:
-      "Observe the person's REAL local desktop on its primary display. Requires their explicit local-computer connection and a vision model. Images may contain their real apps and files. Use surface desktop only. Follow the returned image dimensions, never assume VM coordinates. Ordinary conversation needs no screenshot.",
+      "Observe the person's approved real local desktop or application window. Requires an explicit local-computer connection and a vision model. Use surface desktop only. Follow the returned image dimensions. Ordinary conversation needs no screenshot.",
     inputSchema: {
       type: 'object',
       properties: { surface: { type: 'string', enum: ['desktop'] } },
@@ -63,7 +63,7 @@ export const localComputerToolList: LocalComputerPort['list'] = [
   {
     name: 'act',
     description:
-      'Operate the REAL local desktop observed by your latest screenshot. Up to four sequential inputs. Coordinates are image pixels. Use cmd on macOS, ctrl on Windows; win is the Windows key. Keys include Return, Tab, Escape. A failed or uncertain action must not be replayed: observe first. Returning to Daban pauses input; wait for handback. This does not grant access to host shell or private agent files.',
+      'Operate the real local surface observed by your latest screenshot. Coordinates are image pixels. For scope window, use one action at a time. Left-click an accessible control on macOS or Windows. On macOS, use text with x/y pointing at an editable field. Ask the user to handle unsupported controls. For desktop scope, use up to four sequential inputs. Use cmd on macOS, ctrl on Windows; win is the Windows key. A failed or uncertain action must not be replayed: observe first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -87,7 +87,7 @@ export const localComputerToolList: LocalComputerPort['list'] = [
   {
     name: 'open_app',
     description:
-      'Open a native local application after a fresh screenshot: On macOS: Terminal, Finder, TextEdit, Safari. On Windows: command prompt, Explorer, Notepad, browser. This affects the real computer. Other apps can be opened through the observed Dock, Spotlight or Start menu. Returns a fresh screenshot.',
+      'Open a native app in a foreground desktop session after a fresh screenshot. For scope window, ask the user to connect the desired window. On macOS: Terminal, Finder, TextEdit, Safari. On Windows: command prompt, Explorer, Notepad, browser. Returns a fresh screenshot.',
     inputSchema: {
       type: 'object',
       properties: { app: { type: 'string', enum: ['terminal', 'files', 'editor', 'browser'] } },
@@ -194,7 +194,11 @@ export class LocalComputerClient implements LocalComputerPort {
   }
   async status() {
     try {
-      const value = await this.rpc('status');
+      const value = await this.rpc('status', { scope: true }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === 'LOCAL_INVALID_REQUEST')
+          return this.rpc('status');
+        throw error;
+      });
       if (!isLocalComputerStatus(value)) throw new Error('LOCAL_INVALID_RESPONSE');
       this.cached = value;
       this.selection = value.session?.bot;
@@ -242,6 +246,7 @@ export class LocalComputerClient implements LocalComputerPort {
     }
     if (status.session?.bot !== run.bot) throw new Error('LOCAL_NOT_CONNECTED');
     if (status.session.id !== this.leases.get(run)) throw new Error('LOCAL_SESSION_STALE');
+    return status.session;
   }
   async invoke(
     run: AgentToolRun,
@@ -282,7 +287,7 @@ export class LocalComputerClient implements LocalComputerPort {
       )
         throw new Error('LOCAL_INVALID_REQUEST');
       await this.authorize?.(run);
-      await this.ready(run);
+      const session = await this.ready(run);
       await this.authorize?.(run);
       const binding = await this.binding(run);
       const previous = this.observed.get(run);
@@ -313,6 +318,7 @@ export class LocalComputerClient implements LocalComputerPort {
             text: JSON.stringify({
               computer: process.platform === 'win32' ? 'local-windows' : 'local-mac',
               surface: 'desktop',
+              ...(session.window ? { scope: 'window' } : {}),
               width: value.width,
               height: value.height,
             }),

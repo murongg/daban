@@ -2,8 +2,10 @@ import {
   agentId,
   agentTask,
   isLocalComputerFrame,
+  isLocalComputerWindow,
   type LocalComputerCommand,
   type LocalComputerFrame,
+  type LocalComputerWindow,
   modelCatalog,
   modelHasVision,
 } from '@daban/protocol';
@@ -13,6 +15,7 @@ import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { IconButton } from '../../components/controls/Button';
 import { Dialog } from '../../components/controls/Dialog';
+import { Select } from '../../components/controls/Select';
 import { t } from '../../i18n/locale';
 import { modelName } from '../models/model-options';
 import { Permissions } from './Permissions';
@@ -21,6 +24,8 @@ type Consent = {
   command: Extract<LocalComputerCommand, { type: 'local.connect' }>;
   provider: string;
   model: string;
+  windows?: LocalComputerWindow[];
+  scope: string;
 };
 export function LocalComputer({ bot }: { bot: Bot }) {
   const runtime = useRuntime(),
@@ -41,6 +46,9 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   const other = status?.session && !session;
   const sessionId = session?.id,
     sessionRevision = session?.revision;
+  const canChooseWindow = status?.platform === 'darwin' || status?.platform === 'win32';
+  const shortcutHint = (background?: string) =>
+    t(background ? 'localComputer.windowShortcut' : 'localComputer.shortcut', { 0: shortcut });
   useEffect(() => {
     if (status?.platform !== 'darwin' || permissions) return;
     let active = true;
@@ -89,7 +97,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
       setBusy(false);
     }
   }
-  function review() {
+  async function review() {
     const entry = modelCatalog(runtime.snapshot.model.connections).find(
       (item) => item.id === selected,
     );
@@ -105,6 +113,19 @@ export function LocalComputer({ bot }: { bot: Bot }) {
       }
     }
     setError('');
+    let windows: LocalComputerWindow[] | undefined;
+    if (canChooseWindow) {
+      setBusy(true);
+      try {
+        const value = await runtime.command({ type: 'local.windows' });
+        windows = Array.isArray(value) ? value.filter(isLocalComputerWindow) : [];
+      } catch (error) {
+        windows = [];
+        setError(runtimeError(error));
+      } finally {
+        setBusy(false);
+      }
+    }
     setConsent({
       command: {
         type: 'local.connect',
@@ -115,6 +136,8 @@ export function LocalComputer({ bot }: { bot: Bot }) {
       },
       provider,
       model: modelName(selected, runtime.snapshot.model.connections),
+      windows,
+      scope: windows ? '' : 'desktop',
     });
   }
   if (!status) return <p className="panel-description">{t('localComputer.updateRequired')}</p>;
@@ -143,7 +166,11 @@ export function LocalComputer({ bot }: { bot: Bot }) {
         <>
           <div className="local-computer-state">
             <span className={`status-dot ${session.owner === 'agent' ? 'ready' : ''}`} />
-            {session.owner === 'human' ? t('localComputer.paused') : t('localComputer.connected')}
+            {session.owner === 'human'
+              ? t('localComputer.paused')
+              : session.window
+                ? t('localComputer.windowConnected', { 0: session.window })
+                : t('localComputer.connected')}
             <span className="spacer" />
             <IconButton
               label={t('localComputer.disconnect')}
@@ -176,7 +203,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             {session.owner === 'agent' ? <Pause size={15} /> : <Play size={15} />}
             {session.owner === 'agent' ? t('localComputer.pause') : t('localComputer.resume')}
           </button>
-          <p className="field-help">{t('localComputer.shortcut', { 0: shortcut })}</p>
+          <p className="field-help">{shortcutHint(session.window)}</p>
           {frame ? (
             <figure className="local-observation">
               <img src={frame.image} alt={t('localComputer.lastObservation')} />
@@ -213,7 +240,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             <Monitor size={15} />
             {t('localComputer.connect')}
           </button>
-          <p className="field-help">{t('localComputer.shortcut', { 0: shortcut })}</p>
+          {!canChooseWindow && <p className="field-help">{shortcutHint()}</p>}
         </>
       )}
       {consent && (
@@ -224,9 +251,35 @@ export function LocalComputer({ bot }: { bot: Bot }) {
         >
           <div className="local-consent">
             <ShieldCheck size={24} />
-            <p>{t('localComputer.consentScope')}</p>
+            {consent.windows && (
+              <Select
+                label={t('localComputer.scope')}
+                value={consent.scope}
+                disabled={busy}
+                onValueChange={(scope) => setConsent({ ...consent, scope })}
+                options={[
+                  ...consent.windows.map(({ id, name }) => ({ value: id, label: name })),
+                  { value: 'desktop', label: t('localComputer.fullDesktop') },
+                ]}
+              />
+            )}
+            {consent.scope && (
+              <p>
+                {t(
+                  consent.scope === 'desktop'
+                    ? 'localComputer.consentScope'
+                    : status.platform === 'win32'
+                      ? 'localComputer.windowsWindowScope'
+                      : 'localComputer.windowScope',
+                )}
+              </p>
+            )}
             <p>{t('localComputer.consentRecipient', { 0: consent.provider, 1: consent.model })}</p>
-            <p className="field-help">{t('localComputer.shortcut', { 0: shortcut })}</p>
+            {consent.scope && (
+              <p className="field-help">
+                {shortcutHint(consent.scope === 'desktop' ? undefined : consent.scope)}
+              </p>
+            )}
           </div>
           {error && (
             <p className="form-error" role="alert">
@@ -245,8 +298,13 @@ export function LocalComputer({ bot }: { bot: Bot }) {
             <button
               type="button"
               className="primary"
-              disabled={busy}
-              onClick={() => perform(consent.command)}
+              disabled={busy || !consent.scope}
+              onClick={() =>
+                perform({
+                  ...consent.command,
+                  ...(consent.scope === 'desktop' ? {} : { window: consent.scope }),
+                })
+              }
             >
               {busy ? t('common.connectingComputer') : t('localComputer.allow')}
             </button>

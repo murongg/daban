@@ -6,6 +6,7 @@ import {
   type LocalComputerInput,
   type LocalComputerSession,
   type LocalComputerStatus,
+  type LocalComputerWindow,
   validAgentId,
 } from '@daban/protocol';
 
@@ -21,6 +22,9 @@ export interface LocalDriver {
   platform: 'darwin' | 'win32' | 'unsupported';
   prepare?: () => undefined;
   requestPermissions?: () => Promise<unknown>;
+  windows?: () => Promise<LocalComputerWindow[]> | LocalComputerWindow[];
+  forWindow?: (id: string) => Promise<WindowDriver> | WindowDriver;
+  close?: () => Promise<unknown>;
   permissions(): { screen: boolean; accessibility: boolean };
   capture(): Promise<LocalCapture>;
   context(): Promise<string>;
@@ -29,6 +33,10 @@ export interface LocalDriver {
   release(): Promise<unknown>;
   hide(): Promise<unknown>;
 }
+export type WindowDriver = Pick<LocalDriver, 'capture' | 'context' | 'input'> & {
+  name: string;
+  interrupt?: () => unknown;
+};
 export interface LocalBinding {
   bot: string;
   runId: string;
@@ -39,6 +47,7 @@ export interface LocalBinding {
 export class LocalComputer {
   private session?: LocalComputerSession;
   private consent?: Extract<LocalComputerCommand, { type: 'local.connect' }>;
+  private window?: WindowDriver;
   private readonly retired = new Set<string>();
   private observation?: {
     id: string;
@@ -53,6 +62,7 @@ export class LocalComputer {
   private started = false;
   private readonly cancelled = new Set<string>();
   private closed = false;
+  private generation = 0;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(
     readonly driver: LocalDriver,
@@ -81,8 +91,11 @@ export class LocalComputer {
   }
   private clear() {
     const hadSession = !!this.session;
+    this.generation++;
+    this.window?.interrupt?.();
     this.session = undefined;
     this.consent = undefined;
+    this.window = undefined;
     this.observation = undefined;
     this.last = undefined;
     this.run = undefined;
@@ -90,29 +103,40 @@ export class LocalComputer {
     if (hadSession) this.enqueue(() => this.driver.release()).catch(() => {});
   }
   async connect(request: Extract<LocalComputerCommand, { type: 'local.connect' }>) {
-    this.requirePermissions();
-    this.driver.prepare?.();
-    if (!this.shortcut) throw new Error('LOCAL_SHORTCUT_UNAVAILABLE');
-    if (this.consent?.id === request.id) {
-      if (JSON.stringify(this.consent) !== JSON.stringify(request))
-        throw new Error('LOCAL_CONSENT_CONFLICT');
+    const generation = this.generation;
+    return this.enqueue(async () => {
+      this.requirePermissions();
+      if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
+      if (!this.shortcut) throw new Error('LOCAL_SHORTCUT_UNAVAILABLE');
+      if (this.consent?.id === request.id) {
+        if (JSON.stringify(this.consent) !== JSON.stringify(request))
+          throw new Error('LOCAL_CONSENT_CONFLICT');
+        return this.status();
+      }
+      if (this.session) throw new Error('LOCAL_COMPUTER_BUSY');
+      if (this.retired.has(request.id)) throw new Error('LOCAL_CONSENT_EXPIRED');
+      if (this.retired.size >= 200) throw new Error('LOCAL_SESSION_LIMIT');
+      const window = request.window ? await this.driver.forWindow?.(request.window) : undefined;
+      // Revocation and permission changes can occur while the SDK looks up the window.
+      if (generation !== this.generation) throw new Error('LOCAL_CONSENT_EXPIRED');
+      this.requirePermissions();
+      if (request.window && !window) throw new Error('LOCAL_PLATFORM_UNSUPPORTED');
+      if (!window) this.driver.prepare?.();
+      this.retired.add(request.id);
+      this.cancelled.clear();
+      this.consent = structuredClone(request);
+      this.window = window;
+      this.session = {
+        id: randomUUID(),
+        bot: request.bot,
+        revision: 1,
+        owner: 'agent',
+        model: request.model,
+        modelRevision: request.modelRevision,
+        ...(window ? { window: window.name } : {}),
+      };
       return this.status();
-    }
-    if (this.session) throw new Error('LOCAL_COMPUTER_BUSY');
-    if (this.retired.has(request.id)) throw new Error('LOCAL_CONSENT_EXPIRED');
-    if (this.retired.size >= 200) throw new Error('LOCAL_SESSION_LIMIT');
-    this.retired.add(request.id);
-    this.cancelled.clear();
-    this.consent = structuredClone(request);
-    this.session = {
-      id: randomUUID(),
-      bot: request.bot,
-      revision: 1,
-      owner: 'agent',
-      model: request.model,
-      modelRevision: request.modelRevision,
-    };
-    return this.status();
+    });
   }
   private current(id: string, revision: number) {
     if (!this.session || this.session.id !== id || this.session.revision !== revision)
@@ -123,6 +147,7 @@ export class LocalComputer {
     const session = this.current(id, revision);
     session.owner = 'human';
     session.revision++;
+    this.window?.interrupt?.();
     this.observation = undefined;
     await this.enqueue(() => this.driver.release());
     return this.status();
@@ -132,10 +157,14 @@ export class LocalComputer {
     if (current?.owner === 'agent') return this.pause(current.id, current.revision);
     return this.status();
   }
+  async interruptForeground() {
+    if (!this.window) return this.interrupt();
+    return this.status();
+  }
   async resume(id: string, revision: number) {
     const session = this.current(id, revision);
     this.requirePermissions();
-    await this.driver.hide();
+    if (!this.window) await this.driver.hide();
     this.current(id, revision);
     session.owner = 'agent';
     session.revision++;
@@ -162,6 +191,7 @@ export class LocalComputer {
     }
     this.cancelled.add(runId);
     if (this.run !== runId) return;
+    this.window?.interrupt?.();
     this.run = undefined;
     this.observation = undefined;
     await this.enqueue(() => this.driver.release());
@@ -191,13 +221,14 @@ export class LocalComputer {
       revision = session.revision;
     this.run = binding.runId;
     this.observation = undefined;
+    const driver = this.window ?? this.driver;
     if (!this.started) {
       this.started = true;
-      await this.driver.hide();
+      if (!this.window) await this.driver.hide();
     }
     let frame: LocalCapture;
     try {
-      frame = await this.driver.capture();
+      frame = await driver.capture();
     } catch (error) {
       // A pause can change focus while capture is pending; report that control fence before a camera error.
       this.authorize(binding);
@@ -256,6 +287,7 @@ export class LocalComputer {
     const { session, saved } = this.observed(request, request.observation);
     return this.enqueue(async () => {
       this.observed(request, request.observation);
+      const driver = this.window ?? this.driver;
       this.observation = undefined;
       const check = () => {
         this.authorize(request);
@@ -265,7 +297,7 @@ export class LocalComputer {
       try {
         for (const input of request.actions as LocalComputerInput[]) {
           check();
-          if ((await this.driver.context()) !== saved.frame.context)
+          if ((await driver.context()) !== saved.frame.context)
             throw new Error('LOCAL_SCREEN_CHANGED');
           if (
             'x' in input &&
@@ -273,7 +305,7 @@ export class LocalComputer {
             (input.x >= saved.frame.width || (input.y ?? 0) >= saved.frame.height)
           )
             throw new Error('LOCAL_INVALID_COORDINATE');
-          await this.driver.input(input, saved.frame, check);
+          await driver.input(input, saved.frame, check);
         }
         check();
         return await this.take(request);
@@ -290,6 +322,7 @@ export class LocalComputer {
     if (!['terminal', 'files', 'editor', 'browser'].includes(request.app))
       throw new Error('LOCAL_INVALID_REQUEST');
     const { session } = this.observed(request, request.observation);
+    if (this.window) throw new Error('LOCAL_WINDOW_SCOPED');
     return this.enqueue(async () => {
       this.observed(request, request.observation);
       this.observation = undefined;
@@ -307,8 +340,13 @@ export class LocalComputer {
     await this.driver.requestPermissions?.();
     return this.status();
   }
+  windows() {
+    this.requirePermissions();
+    return this.driver.windows?.() ?? [];
+  }
   async close() {
     this.closed = true;
     await this.revoke();
+    await this.driver.close?.();
   }
 }

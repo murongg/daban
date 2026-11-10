@@ -51,7 +51,8 @@
   },
   "optionalDependencies": {
     "@computer-use/libnut-darwin": "2.7.1",
-    "@computer-use/libnut-win32": "2.7.1"
+    "@computer-use/libnut-win32": "2.7.1",
+    "@trycua/cua-driver": "0.46.1"
   },
   "license": "AGPL-3.0-only"
 }

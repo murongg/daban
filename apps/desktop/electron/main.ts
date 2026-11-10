@@ -102,7 +102,7 @@ function createWindow() {
     window.show();
   });
   window.on('focus', () => {
-    localComputer?.interrupt().catch(() => console.error('Local computer pause failed'));
+    localComputer?.interruptForeground().catch(() => console.error('Local computer pause failed'));
     notifications?.focus().catch(() => console.error('Notification focus cleanup failed'));
   });
   // Dedicated guest views host webpages; the privileged app renderer must never navigate.
@@ -322,7 +322,8 @@ if (primary) {
     exiting = true;
     try {
       globalShortcut.unregister(localShortcut);
-      await closeLocalServer?.();
+      if (closeLocalServer) await closeLocalServer();
+      else await localComputer?.close();
       closeBrowserIpc?.();
       await browserHost?.close();
       closeNoticeIpc?.();
