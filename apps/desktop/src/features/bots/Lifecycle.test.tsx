@@ -195,7 +195,7 @@ it('archives and restores a Bot without discarding its draft/history or silently
       ['task.start', 'computer.action', 'schedule.run'].includes(command.type),
     ),
   ).toHaveLength(0);
-  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭' }));
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('SYNTHETIC-UNSENT-DRAFT');
   expect(screen.getByRole('textbox', { name: '发送消息' })).toBeEnabled();
 });

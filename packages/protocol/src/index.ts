@@ -1552,6 +1552,7 @@ export interface RuntimeSnapshot {
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
+  jinaReader?: boolean;
   botCapabilities?: true;
   localComputer?: LocalComputerStatus;
   agent?: {
@@ -4191,6 +4192,7 @@ export type RuntimeCommand =
   | { type: 'group.action'; request: GroupActionRequest }
   | { type: 'group.receipt'; group: string; id: string }
   | SearchCommand
+  | { type: 'web.jina'; enabled: boolean }
   | { type: 'model.configure'; input: ModelUpdate }
   | { type: 'model.saved'; input: ModelSavedRequest }
   | { type: 'model.fallback.configure'; input: ModelFallbackRequest }

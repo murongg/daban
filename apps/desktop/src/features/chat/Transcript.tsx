@@ -2,6 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown } from 'lucide-react';
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useRetention } from '../../components/collection/retention';
+import { reducedMotionQuery } from '../../components/controls/motion';
 import { t } from '../../i18n/locale';
 import type { useFollow } from './follow';
 
@@ -10,16 +11,20 @@ export interface TranscriptEntry {
   content: ReactNode;
   persistent?: boolean;
   anchor?: boolean;
+  bubbleKey?: string;
 }
 
 function Window({
   entries,
   scroll,
+  loading = false,
 }: {
   entries: readonly TranscriptEntry[];
   scroll: ReturnType<typeof useFollow>;
+  loading?: boolean;
 }) {
   const previous = useRef(entries);
+  const motion = useRef({ initialized: false, loading, seen: new Set<string>() });
   const reading = useRef<{ id: string; offset: number } | undefined>(undefined);
   const keys = useMemo(() => entries.map((entry) => entry.id), [entries]);
   const persistent = useMemo(
@@ -91,6 +96,40 @@ function Window({
       }
     }
   });
+  useLayoutEffect(() => {
+    const state = motion.current;
+    const animate =
+      state.initialized &&
+      !state.loading &&
+      !loading &&
+      scroll.isFollowing() &&
+      !window.matchMedia?.(reducedMotionQuery).matches;
+    state.initialized = true;
+    state.loading = loading;
+    // Rows inserted before the first seen bubble are older history, even if loading settled in the same commit.
+    const firstSeen = entries.findIndex(({ bubbleKey }) => bubbleKey && state.seen.has(bubbleKey));
+    // A run keeps its bubble key through streaming and finalization, including virtual remounts.
+    entries.forEach(({ bubbleKey }, index) => {
+      if (!bubbleKey || state.seen.has(bubbleKey)) return;
+      state.seen.add(bubbleKey);
+      if (!animate || index < firstSeen) return;
+      const bubble = scroll.viewport.current?.querySelector(
+        `[data-index="${index}"] .message > .bubble`,
+      );
+      bubble?.animate?.(
+        [
+          {
+            transform: 'translateY(5px) scale(0.976)',
+            opacity: 0.72,
+            easing: 'cubic-bezier(0.18, 0.75, 0.24, 1)',
+          },
+          { transform: 'translateY(-1px) scale(1.008)', opacity: 1, offset: 0.62 },
+          { transform: 'none', opacity: 1 },
+        ],
+        270,
+      );
+    });
+  }, [entries, loading, scroll.isFollowing, scroll.viewport]);
   const measured = items.length > 0;
   const visible = measured
     ? items
@@ -176,6 +215,7 @@ function Window({
 
 export function Transcript(props: {
   scope: string;
+  loading?: boolean;
   entries: readonly TranscriptEntry[];
   scroll: ReturnType<typeof useFollow>;
 }) {

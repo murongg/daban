@@ -61,6 +61,7 @@ import { imageInput } from './images.js';
 import { IntegrationTools } from './integration-tools.js';
 import { Integrations, type McpSnapshot } from './integrations.js';
 import { Interactions } from './interactions.js';
+import { jinaSettingFile } from './jina.js';
 import { Knowledge } from './knowledge.js';
 import { KnowledgeTools } from './knowledge-tools.js';
 import type { LocalComputerClient } from './local-computer.js';
@@ -138,6 +139,7 @@ export function sdkPatch(
   office = false,
   attemptId?: string,
   searchConfig?: SearchCapture & { runId: string },
+  jinaFile?: string,
 ) {
   const search = searchConfig?.available === true;
   const budget = contextBudget(route?.contextWindow ?? 1000000, route?.maxTokens ?? 8192);
@@ -397,7 +399,7 @@ export function sdkPatch(
               {
                 id: 'web-read',
                 name: new URL('./web-read.js', import.meta.url).href,
-                config: { sdkFile },
+                config: { sdkFile, ...(jinaFile ? { jinaFile } : {}) },
               },
             ] as const)
           : []),
@@ -602,6 +604,7 @@ interface ModelJob extends AgentToolRun {
   integrations?: McpSnapshot;
   conversationId?: string;
   conversationContext?: string;
+  groupPromptFromUser?: true;
   model?: ModelId;
   attachmentIds?: string[];
   documentInputs?: DocumentInput[];
@@ -1565,7 +1568,8 @@ export class ModelRuns {
         typeof conversation.context !== 'string' ||
         conversation.context.length > 32000 ||
         conversation.context.includes('\0') ||
-        Object.keys(conversation).some((key) => !['id', 'context'].includes(key)))
+        (conversation.userAuthored !== undefined && conversation.userAuthored !== true) ||
+        Object.keys(conversation).some((key) => !['id', 'context', 'userAuthored'].includes(key)))
     )
       throw new Fault('INVALID_CONVERSATION', 400);
     const scope = conversation ? structuredClone(conversation) : undefined;
@@ -1729,6 +1733,7 @@ export class ModelRuns {
       contextRevision: task?.contextRevision,
       conversationId: scope?.id,
       conversationContext: scope?.context,
+      groupPromptFromUser: scope?.userAuthored,
       planning: task
         ? (planningCommand(task.prompt) ??
           this.journal
@@ -2259,6 +2264,10 @@ export class ModelRuns {
           office,
           job.attemptId,
           job.searchCapture ? { ...job.searchCapture, runId: job.id } : undefined,
+          // A Bot-authored group prompt may repeat URLs from untrusted sources.
+          !job.conversationId || job.groupPromptFromUser
+            ? path.join(this.dir, jinaSettingFile)
+            : undefined,
         ),
       ),
       { mode: 0o600 },

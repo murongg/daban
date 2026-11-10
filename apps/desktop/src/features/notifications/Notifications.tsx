@@ -5,6 +5,7 @@ import {
   type NoticeCommand,
   type NoticeStatus,
 } from '../../../shared/notifications';
+import { Help } from '../../components/controls/Help';
 import { t, useLocale } from '../../i18n/locale';
 
 export function noticeError(cause: unknown) {
@@ -123,11 +124,12 @@ export function Notifications() {
     <section className="settings-section" aria-label={t('notifications.title')}>
       <h2>{t('notifications.title')}</h2>
       <div className="setting-row">
-        <div>
+        <div className="setting-title">
           <div className="setting-label">{t('notifications.allowDesktopNotifications')}</div>
-          <p className="setting-description">
-            {t('notifications.notifyBackgroundWhenTasksFinishFailNeed')}
-          </p>
+          <Help topic={t('notifications.allowDesktopNotifications')}>
+            <p>{t('notifications.notifyBackgroundWhenTasksFinishFailNeed')}</p>
+            <p>{t('notifications.fullyQuittingAppNewDesktopNotificationsNot')}</p>
+          </Help>
         </div>
         <label
           className="secondary skill-toggle"
@@ -176,12 +178,7 @@ export function Notifications() {
         </p>
       )}
       <div className="setting-row">
-        <div>
-          <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
-          <p className="setting-description">
-            {t('notifications.deliveryDependsSystemNotificationSettingsDoNot')}
-          </p>
-        </div>
+        <div className="setting-label">{t('notifications.checkSystemNotifications')}</div>
         <button
           type="button"
           className="secondary"
@@ -201,9 +198,6 @@ export function Notifications() {
           {failure}
         </p>
       )}
-      <p className="setting-description">
-        {t('notifications.fullyQuittingAppNewDesktopNotificationsNot')}
-      </p>
       {status?.bots && (
         <fieldset className="notice-bots" aria-describedby="notice-bots-description">
           <legend className="setting-label">

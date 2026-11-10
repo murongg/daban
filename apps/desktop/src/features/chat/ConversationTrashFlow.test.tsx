@@ -175,10 +175,11 @@ it('pins and archives the exact conversation locally, and restores it after reop
   render(<App />);
   expect((await recent()).queryByRole('button', { name: title })).not.toBeInTheDocument();
 
-  await userEvent.click(await screen.findByText('已归档对话'));
-  const archive = within(screen.getByRole('region', { name: '已归档对话' }));
-  expect(await archive.findByRole('button', { name: title })).toBeVisible();
-  await userEvent.click(archive.getByRole('button', { name: `恢复 ${topic}` }));
+  const search = screen.getByRole('searchbox', { name: '搜索 Bot 和对话' });
+  await userEvent.type(search, topic);
+  expect(await (await recent()).findByRole('button', { name: title })).toBeVisible();
+  await userEvent.click((await recent()).getByRole('button', { name: `恢复 ${topic}` }));
+  await userEvent.clear(search);
   expect((await recent()).getByRole('button', { name: title })).toBeVisible();
   expect(invoke.mock.calls.some(([command]) => command.type === 'conversation.action')).toBe(false);
 });
@@ -189,7 +190,7 @@ it('trashes from the sidebar, undoes, and restores through settings while preser
   await trash('chat');
   expect(await screen.findByText('对话已移到回收站')).toBeVisible();
   expect(
-    within(screen.getByRole('region', { name: '最近对话' })).queryByText(topic),
+    within(screen.getByRole('navigation', { name: '最近对话列表' })).queryByText(topic),
   ).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
   await userEvent.click(screen.getByRole('button', { name: '撤销' }));

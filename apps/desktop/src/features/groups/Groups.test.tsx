@@ -426,7 +426,7 @@ it('archives a group from its header, keeps history and drafts readable, and res
   await userEvent.click(screen.getByRole('tab', { name: '归档管理' }));
   await userEvent.click(await screen.findByRole('button', { name: '恢复 周报协作' }));
   await userEvent.click(screen.getByRole('button', { name: '确认恢复' }));
-  await userEvent.click(screen.getByRole('button', { name: '关闭对话框' }));
+  await userEvent.click(screen.getByRole('button', { name: '关闭' }));
   await userEvent.click(screen.getByRole('button', { name: '周报协作' }));
   expect(await screen.findByRole('textbox', { name: '发送消息' })).toHaveAttribute(
     'aria-readonly',

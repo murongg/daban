@@ -101,6 +101,37 @@
 .select-popover {
   min-width: var(--trigger-width);
 }
+.icon-button.help-trigger {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+.help-trigger[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+.help-trigger svg {
+  width: 15px;
+  height: 15px;
+}
+.help-popover {
+  width: 320px;
+  overflow: auto;
+}
+.help-popover [role="dialog"]:focus-visible {
+  outline-offset: -2px;
+}
+.help-copy {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.help-copy p {
+  margin: 0;
+}
 .select-options {
   max-height: min(280px, var(--available-height, 280px));
   overflow-y: auto;

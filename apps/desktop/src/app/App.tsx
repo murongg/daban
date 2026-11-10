@@ -35,6 +35,7 @@ import {
   Pencil,
   Sun,
   Trash2,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { I18nProvider } from 'react-aria-components';
@@ -211,18 +212,28 @@ function Workbench() {
       clientCache().setItem(storageKey, serialize(updateState.current));
     }, []),
   );
-  const [settingsOpen, setSettingsOpen] = useState(legacySettings.current);
+  const [settingsSurface, setSettingsSurface] = useState<'dialog' | 'page' | undefined>(
+    legacySettings.current ? 'dialog' : undefined,
+  );
+  const settingsOpen = !!settingsSurface;
+  const view = settingsSurface === 'page' ? 'settings' : state.view;
   const dispatch = useCallback((action: Action) => {
     if (action.type === 'view' && action.view === 'settings') {
-      setSettingsOpen(true);
+      setSettingsSurface((current) => current ?? 'dialog');
       return;
     }
-    if (action.type === 'select' || action.type === 'view') setSettingsOpen(false);
+    if (action.type === 'select' || action.type === 'view') setSettingsSurface(undefined);
     update(action);
   }, []);
   const [query, setQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
   const sidebarOverlay = useMediaQuery('(max-width: 700px)');
+  const titlebar = useRef<HTMLElement>(null);
+  const alignTitlebar = useCallback((width: number) => {
+    // The rendered pane width can differ from its saved width when the window is constrained.
+    titlebar.current?.style.setProperty('--titlebar-sidebar-width', `${width}px`);
+  }, []);
   const [modal, setModal] = useState<Modal>(null);
   const actionTrigger = useRef<HTMLButtonElement>(null);
   const actionOpener = useRef<HTMLButtonElement | null>(null);
@@ -276,11 +287,17 @@ function Workbench() {
   const work = useWork(state, dispatch, notify);
   const closeModal = useCallback(() => setModal(null), []);
   const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
+    setSettingsSurface(undefined);
+    if (settingsSurface === 'page') {
+      const opener = sidebarOverlay
+        ? sidebarToggle.current
+        : document.getElementById('sidebar-settings');
+      opener?.focus({ preventScroll: true });
+    }
     if (state.view === 'chat' && !modal && !document.hidden && document.hasFocus()) {
       update({ type: 'bot-read', bot: state.selected, unread: false });
     }
-  }, [state.selected, state.view, modal]);
+  }, [state.selected, state.view, modal, settingsSurface, sidebarOverlay]);
   const preview = useCallback((file: WorkspaceFile) => setModal({ type: 'file', file }), []);
   useNotices((activation) => {
     if (modal || settingsOpen) return false;
@@ -334,6 +351,11 @@ function Workbench() {
   const target = bot ? computerTarget(runtime.snapshot, bot.id) : undefined;
   const computer = target ? runtime.snapshot.bots[target] : undefined;
   const task = bot ? agentTask(runtime.snapshot, bot.id) : undefined;
+  const avatarWorking =
+    runtime.snapshot.phase === 'ready' &&
+    task?.running &&
+    task.phase === 'running' &&
+    computer?.owner !== 'human';
   const pendingLifecycle = bot
     ? lifecycleRequest(
         state,
@@ -430,6 +452,12 @@ function Workbench() {
     subtitle = t('app.conversationActionNeedsVerification');
   else if (pendingLifecycle) subtitle = t('app.botActionNeedsVerification');
   else if (bot?.archived) subtitle = t('app.archivedReadOnlyHistory');
+  const titlebarName = bot?.kind === 'chat' ? title || t('conversations.untitled') : bot?.name;
+  const titlebarStatus = assistant
+    ? t('conversations.botContext', { 0: assistant.name })
+    : bot?.kind === 'chat'
+      ? t('conversations.plainContext')
+      : subtitle;
   useEffect(() => {
     if (!runtime.enabled || runtime.snapshot.phase !== 'ready') {
       ingested.current.clear();
@@ -969,11 +997,13 @@ function Workbench() {
   }, [toast]);
   useLayoutEffect(() => {
     if (sidebarOverlay) {
-      if (sidebarOpen) search.current?.focus({ preventScroll: true });
-      else if (previousSidebarOpen.current) sidebarToggle.current?.focus({ preventScroll: true });
+      if (sidebarOpen) {
+        const target = view === 'chat' ? search.current : document.getElementById('sidebar-chats');
+        target?.focus({ preventScroll: true });
+      } else if (previousSidebarOpen.current) sidebarToggle.current?.focus({ preventScroll: true });
     }
     previousSidebarOpen.current = sidebarOpen;
-  }, [sidebarOpen, sidebarOverlay]);
+  }, [sidebarOpen, sidebarOverlay, view]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       // Local editors share Dialog without owning the main modal state.
@@ -986,7 +1016,9 @@ function Workbench() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (modal) return;
-        setSidebarOpen(true);
+        if (view !== 'chat') dispatch({ type: 'view', view: 'chat' });
+        if (sidebarOverlay) setSidebarOpen(true);
+        else setListCollapsed(false);
         requestAnimationFrame(() => search.current?.focus());
       }
       if ((e.metaKey || e.ctrlKey) && e.key === ',') {
@@ -996,6 +1028,10 @@ function Workbench() {
       if (e.key === 'Escape' && !modal) {
         setSidebarOpen(false);
         if (sidebarOpen && sidebarOverlay) return;
+        if (settingsSurface === 'page') {
+          closeSettings();
+          return;
+        }
         if (document.getElementById('bot-workspace')?.contains(document.activeElement))
           document.getElementById('workspace-toggle')?.focus({ preventScroll: true });
         dispatch({ type: 'panel', panel: null });
@@ -1003,375 +1039,412 @@ function Workbench() {
     }
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
-  }, [modal, dispatch, sidebarOpen, sidebarOverlay]);
+  }, [modal, dispatch, sidebarOpen, sidebarOverlay, view, settingsSurface, closeSettings]);
   const computerBot =
     modal?.type === 'computer' ? state.bots.find((b) => b.id === modal.bot) : undefined;
+  const settingsContent = settingsOpen && (
+    <Settings
+      state={state}
+      dispatch={dispatch}
+      onClose={closeSettings}
+      inline={settingsSurface === 'page'}
+      active={!modal && !trash.issue}
+      trash={trash}
+      onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
+      onRecovery={() => setModal({ type: 'recovery' })}
+    />
+  );
   return (
     <div className="app" data-desktop={window.daban?.platform}>
-      <Sidebar
-        state={state}
-        settingsOpen={settingsOpen}
-        dispatch={dispatch}
-        query={query}
-        setQuery={setQuery}
-        searchRef={search}
-        onImport={() => setModal({ type: 'import' })}
-        onCopy={(bot) => setModal({ type: 'copy', bot })}
-        onCopyGroup={(group) => setModal({ type: 'group-copy', group })}
-        onCreate={(group) => {
-          setSidebarOpen(false);
-          setModal({ type: 'create', group: !!group });
-        }}
-        onNewChat={() => createChat()}
-        onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
-        onTrash={trash.move}
-        onChats={openChats}
-        open={sidebarOpen}
-        inert={sidebarOverlay && !sidebarOpen}
-        close={() => setSidebarOpen(false)}
-      />
-      <main className="main" inert={sidebarOverlay && sidebarOpen}>
-        <header className="chat-header">
-          <IconButton
-            ref={sidebarToggle}
-            className="mobile-menu"
-            label={t('app.openSidebar')}
-            aria-controls="sidebar"
-            aria-expanded={sidebarOpen}
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu />
-          </IconButton>
-          {state.view === 'chat' && bot ? (
-            <>
+      <header
+        ref={titlebar}
+        className="app-titlebar"
+        data-view={view}
+        inert={sidebarOverlay && sidebarOpen}
+      >
+        <IconButton
+          ref={sidebarToggle}
+          className="mobile-menu"
+          label={t('app.openSidebar')}
+          aria-controls="sidebar"
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen(true)}
+        >
+          <Menu />
+        </IconButton>
+        {view === 'chat' && !sidebarOverlay && (
+          <div className="titlebar-leading" aria-hidden="true">
+            <span className="header-divider titlebar-divider" />
+          </div>
+        )}
+        {view === 'chat' && bot ? (
+          <>
+            <div className="titlebar-context">
               {assistant ? (
-                <Avatar bot={assistant} />
+                <Avatar bot={assistant} working={avatarWorking} />
               ) : bot.kind === 'chat' ? (
                 <MessageSquare className="chat-symbol" aria-hidden="true" />
               ) : (
-                <Avatar bot={bot} />
+                <Avatar bot={bot} working={avatarWorking} />
               )}
               <div className="chat-identity">
-                <h1>{bot.kind === 'chat' ? title || t('conversations.untitled') : bot.name}</h1>
-                <p className="chat-subtitle">
-                  {assistant
-                    ? t('conversations.botContext', { 0: assistant.name })
-                    : bot.kind === 'chat'
-                      ? t('conversations.plainContext')
-                      : subtitle}
-                </p>
+                <h1
+                  aria-describedby="titlebar-conversation-status"
+                  title={`${titlebarName} · ${titlebarStatus}`}
+                >
+                  {titlebarName}
+                </h1>
+                <span id="titlebar-conversation-status" className="sr-only">
+                  {titlebarStatus}
+                </span>
               </div>
-              <span className="spacer" />
-              <div className="header-actions">
-                {!bot.members && runtime.snapshot.hostBrowser?.available && (
-                  <button
-                    type="button"
-                    className="header-action"
-                    aria-label={t('hostBrowser.openPanel')}
-                    onClick={() =>
-                      setModal({ type: 'computer', bot: bot.id, surface: 'host-browser' })
-                    }
-                  >
-                    <Globe aria-hidden="true" />
-                    <span>{t('hostBrowser.title')}</span>
-                  </button>
-                )}
-                {!bot.members && (
-                  <button
-                    type="button"
-                    className="header-action"
-                    aria-label={
-                      state.chatRequests[bot.id]
-                        ? t('common.verifyConversationAction')
-                        : t('common.newConversation')
-                    }
-                    disabled={
-                      bot.kind !== 'chat' &&
-                      (!runtime.enabled ||
-                        runtime.snapshot.protocolVersion < 29 ||
-                        (historyOnly && !state.chatRequests[bot.id]))
-                    }
-                    onClick={newConversation}
-                  >
-                    <MessageSquarePlus aria-hidden="true" />
-                    <span>{t('common.newConversation')}</span>
-                  </button>
-                )}
+            </div>
+            <span className="spacer" />
+            <div className="header-actions">
+              {!bot.members && runtime.snapshot.hostBrowser?.available && (
                 <button
                   type="button"
-                  id="workspace-toggle"
-                  aria-controls={workspaceVisible ? 'bot-workspace' : undefined}
-                  className={`header-action ${workspaceVisible ? 'active' : ''}`}
-                  aria-pressed={workspaceVisible}
+                  className="header-action"
+                  aria-label={t('hostBrowser.openPanel')}
                   onClick={() =>
-                    dispatch({ type: 'panel', panel: workspaceVisible ? null : 'computer' })
+                    setModal({ type: 'computer', bot: bot.id, surface: 'host-browser' })
                   }
                 >
-                  <Monitor aria-hidden="true" />
-                  <span>{t('app.workspace')}</span>
+                  <Globe aria-hidden="true" />
+                  <span>{t('hostBrowser.title')}</span>
                 </button>
-                <Actions
-                  key={bot.id}
-                  triggerRef={actionTrigger}
-                  items={[
-                    ...(!bot.members && (!runtime.enabled || runtime.snapshot.protocolVersion >= 46)
-                      ? [
+              )}
+              {!bot.members && (
+                <button
+                  type="button"
+                  className="header-action"
+                  aria-label={
+                    state.chatRequests[bot.id]
+                      ? t('common.verifyConversationAction')
+                      : t('common.newConversation')
+                  }
+                  disabled={
+                    bot.kind !== 'chat' &&
+                    (!runtime.enabled ||
+                      runtime.snapshot.protocolVersion < 29 ||
+                      (historyOnly && !state.chatRequests[bot.id]))
+                  }
+                  onClick={newConversation}
+                >
+                  <MessageSquarePlus aria-hidden="true" />
+                  <span>{t('common.newConversation')}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                id="workspace-toggle"
+                aria-label={t('app.workspace')}
+                aria-controls={workspaceVisible ? 'bot-workspace' : undefined}
+                className={`header-action ${workspaceVisible ? 'active' : ''}`}
+                aria-pressed={workspaceVisible}
+                onClick={() =>
+                  dispatch({ type: 'panel', panel: workspaceVisible ? null : 'computer' })
+                }
+              >
+                <Monitor aria-hidden="true" />
+                <span>{t('app.workspace')}</span>
+              </button>
+              <Actions
+                key={bot.id}
+                triggerRef={actionTrigger}
+                items={[
+                  ...(!bot.members && (!runtime.enabled || runtime.snapshot.protocolVersion >= 46)
+                    ? [
+                        {
+                          id: 'trash-conversation',
+                          label: t('trash.move'),
+                          icon: <Trash2 />,
+                          onSelect: () =>
+                            trash.move(bot.id, chatVersion, title || t('conversations.untitled')),
+                        },
+                        {
+                          id: 'rename-conversation',
+                          label: t('conversations.rename'),
+                          icon: <Pencil />,
+                          onSelect: () =>
+                            openActionModal({
+                              type: 'chat-title',
+                              bot: bot.id,
+                              revision: chatVersion,
+                              title: title || t('conversations.untitled'),
+                            }),
+                        },
+                      ]
+                    : []),
+                  ...(bot.members
+                    ? [
+                        {
+                          id: 'edit-group',
+                          label: t('app.editGroup'),
+                          icon: <Pencil />,
+                          disabled: historyOnly,
+                          onSelect: () => openActionModal({ type: 'group', bot: bot.id }),
+                        },
+                        {
+                          id: 'archive-group',
+                          label: pendingGroup
+                            ? t('app.verifyGroupAction')
+                            : bot.archived
+                              ? t('common.restoreGroup')
+                              : t('common.archiveGroup'),
+                          icon: <ArchiveIcon />,
+                          disabled: !runtime.enabled || runtime.snapshot.protocolVersion < 28,
+                          onSelect: () => openActionModal({ type: 'archive', bot: bot.id }),
+                        },
+                      ]
+                    : bot.kind === 'chat'
+                      ? []
+                      : [
                           {
-                            id: 'trash-conversation',
-                            label: t('trash.move'),
-                            icon: <Trash2 />,
-                            onSelect: () =>
-                              trash.move(bot.id, chatVersion, title || t('conversations.untitled')),
-                          },
-                          {
-                            id: 'rename-conversation',
-                            label: t('conversations.rename'),
-                            icon: <Pencil />,
+                            id: 'history',
+                            label: t('chat.conversationHistory'),
+                            icon: <History />,
+                            disabled:
+                              !runtime.enabled ||
+                              runtime.snapshot.protocolVersion < 29 ||
+                              !boundary,
                             onSelect: () =>
                               openActionModal({
-                                type: 'chat-title',
+                                type: 'chat-history',
                                 bot: bot.id,
-                                revision: chatVersion,
-                                title: title || t('conversations.untitled'),
+                                initialRevision: boundary - 1,
+                                includeCurrent: runtime.snapshot.protocolVersion >= 46,
                               }),
                           },
-                        ]
-                      : []),
-                    ...(bot.members
-                      ? [
                           {
-                            id: 'edit-group',
-                            label: t('app.editGroup'),
+                            id: 'profile',
+                            label: t('app.editBotProfile'),
                             icon: <Pencil />,
-                            disabled: historyOnly,
-                            onSelect: () => openActionModal({ type: 'group', bot: bot.id }),
+                            disabled: historyOnly || bot.kind === 'chat',
+                            onSelect: () => openActionModal({ type: 'profile', bot: bot.id }),
                           },
-                          {
-                            id: 'archive-group',
-                            label: pendingGroup
-                              ? t('app.verifyGroupAction')
-                              : bot.archived
-                                ? t('common.restoreGroup')
-                                : t('common.archiveGroup'),
-                            icon: <ArchiveIcon />,
-                            disabled: !runtime.enabled || runtime.snapshot.protocolVersion < 28,
-                            onSelect: () => openActionModal({ type: 'archive', bot: bot.id }),
-                          },
-                        ]
-                      : bot.kind === 'chat'
-                        ? []
-                        : [
-                            {
-                              id: 'history',
-                              label: t('chat.conversationHistory'),
-                              icon: <History />,
-                              disabled:
-                                !runtime.enabled ||
-                                runtime.snapshot.protocolVersion < 29 ||
-                                !boundary,
-                              onSelect: () =>
-                                openActionModal({
-                                  type: 'chat-history',
-                                  bot: bot.id,
-                                  initialRevision: boundary - 1,
-                                  includeCurrent: runtime.snapshot.protocolVersion >= 46,
-                                }),
-                            },
-                            {
-                              id: 'profile',
-                              label: t('app.editBotProfile'),
-                              icon: <Pencil />,
-                              disabled: historyOnly || bot.kind === 'chat',
-                              onSelect: () => openActionModal({ type: 'profile', bot: bot.id }),
-                            },
-                          ]),
-                    {
-                      id: 'theme',
-                      label:
-                        state.theme === 'light'
-                          ? t('app.switchDarkTheme')
-                          : t('app.switchLightTheme'),
-                      icon: state.theme === 'light' ? <Moon /> : <Sun />,
-                      onSelect: () =>
-                        dispatch({
-                          type: 'theme',
-                          theme: state.theme === 'light' ? 'dark' : 'light',
-                        }),
-                    },
-                  ]}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="chat-identity">
-                <h1>
-                  {state.view === 'chat'
-                    ? t('workspace.title')
-                    : state.view === 'gallery'
-                      ? t('common.botGallery')
-                      : state.view === 'inbox'
-                        ? t('common.inbox')
-                        : state.view === 'tasks'
-                          ? t('common.tasks')
-                          : t('settings.title')}
-                </h1>
+                        ]),
+                  {
+                    id: 'theme',
+                    label:
+                      state.theme === 'light'
+                        ? t('app.switchDarkTheme')
+                        : t('app.switchLightTheme'),
+                    icon: state.theme === 'light' ? <Moon /> : <Sun />,
+                    onSelect: () =>
+                      dispatch({
+                        type: 'theme',
+                        theme: state.theme === 'light' ? 'dark' : 'light',
+                      }),
+                  },
+                ]}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="chat-identity">
+              <h1>
+                {view === 'chat'
+                  ? t('workspace.title')
+                  : view === 'gallery'
+                    ? t('common.botGallery')
+                    : view === 'inbox'
+                      ? t('common.inbox')
+                      : view === 'tasks'
+                        ? t('common.tasks')
+                        : t('settings.title')}
+              </h1>
+              {view !== 'settings' && (
                 <p className="chat-subtitle">
-                  {state.view === 'tasks'
+                  {view === 'tasks'
                     ? t('app.sharedDosVisibleAllBots')
                     : t('workspace.yourWorkspace')}
                 </p>
-              </div>
-              <span className="spacer" />
-              {state.view !== 'chat' && (
+              )}
+            </div>
+            <span className="spacer" />
+            {view === 'settings' ? (
+              <IconButton label={t('common.close')} onClick={closeSettings}>
+                <X />
+              </IconButton>
+            ) : (
+              view !== 'chat' && (
                 <IconButton
                   label={t('app.backConversation')}
                   onClick={() => dispatch({ type: 'view', view: 'chat' })}
                 >
                   <Monitor />
                 </IconButton>
-              )}
-            </>
-          )}
-        </header>
-        <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
-        {state.view === 'chat' ? (
-          bot ? (
-            <div className="conversation-layout">
-              {bot.members ? (
-                <GroupChat
-                  key={bot.id}
-                  state={state}
-                  bot={bot}
-                  dispatch={dispatch}
-                  notify={notify}
-                  preview={previewFile}
-                />
-              ) : (
-                <Conversation
-                  key={`${bot.id}:${chatVersion}`}
-                  state={state}
-                  bot={bot}
-                  dispatch={dispatch}
-                  notify={notify}
-                  preview={previewFile}
-                  onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
-                  onQueue={runtime.enabled ? () => queueTask(bot.id) : undefined}
-                  onQueueEdit={
-                    runtime.enabled
-                      ? (id) => {
-                          const item = messageQueue(state, bot.id).find((entry) => entry.id === id);
-                          if (!item || item.verify || item.sending) return;
-                          const draft = state.drafts[bot.id] ?? '';
-                          const prompt =
-                            draft && item.prompt
-                              ? `${draft}\n${item.prompt}`
-                              : item.prompt || draft;
-                          const folders = [
-                            ...new Set([...draftFolders(state, bot.id), ...(item.folders ?? [])]),
-                          ];
-                          if (
-                            prompt.length > draftTextLimit(folders) ||
-                            draftPrompt(prompt, folders).length > 12000
-                          ) {
-                            notify(t('chat.queuedMessageEditTooLong'));
-                            return;
-                          }
-                          const merged = mergeAttachments(
-                            state.attachments[bot.id] ?? [],
-                            state.files,
-                            item.files,
-                          );
-                          if (!merged) {
-                            notify(t('chat.queuedMessageEditAttachmentsFull'));
-                            return;
-                          }
-                          dispatch({ type: 'queue-edit', bot: bot.id, id });
-                        }
-                      : undefined
-                  }
-                  onQueueRemove={
-                    runtime.enabled
-                      ? (id) => dispatch({ type: 'queue-remove', bot: bot.id, id })
-                      : undefined
-                  }
-                  onQueuePromote={
-                    runtime.enabled
-                      ? (id) => dispatch({ type: 'queue-promote', bot: bot.id, id })
-                      : undefined
-                  }
-                  onQueueInsert={
-                    runtime.enabled &&
-                    runtime.snapshot.protocolVersion >= 42 &&
-                    task?.model !== localCodexModel
-                      ? (id) => insertQueued(bot.id, id)
-                      : undefined
-                  }
-                  onQueueRetry={
-                    runtime.enabled
-                      ? (id) => dispatch({ type: 'queue-retry', bot: bot.id, id })
-                      : undefined
-                  }
-                  onContinue={() => continueTask(bot.id)}
-                  onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
-                  onNewChat={newConversation}
-                  onExcerpt={createChat}
-                  onTrashRecovery={() => dispatch({ type: 'view', view: 'settings' })}
-                  pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
-                  onModel={() => {
-                    if (!bot.members && runtime.snapshot.protocolVersion >= 14)
-                      setModal({ type: 'model', bot: bot.id });
-                    else dispatch({ type: 'view', view: 'settings' });
-                  }}
-                />
-              )}
-              {state.panel && workspaceVisible && (
-                <Workspace
-                  state={state}
-                  bot={bot}
-                  readOnly={historyOnly}
-                  dispatch={dispatch}
-                  notify={notify}
-                  preview={previewFile}
-                  expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
-                  openMember={(id) => setModal({ type: 'computer', bot: id })}
-                  onRecovery={() => setModal({ type: 'recovery' })}
-                />
-              )}
-            </div>
-          ) : (
-            <Welcome
-              chat={() => createChat()}
-              create={() => setModal({ type: 'create', group: false })}
-              explore={() => dispatch({ type: 'view', view: 'gallery' })}
-            />
-          )
-        ) : state.view === 'gallery' ? (
-          <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
-        ) : state.view === 'tasks' ? (
-          <Tasks state={state} dispatch={dispatch} work={work} />
-        ) : state.view === 'inbox' ? (
-          <Inbox
-            state={state}
-            dispatch={dispatch}
-            preview={preview}
-            notify={notify}
-            focus={inboxFocus}
-            clearFocus={() => setInboxFocus(undefined)}
-          />
-        ) : null}
-      </main>
-      {settingsOpen && (
-        <Settings
+              )
+            )}
+          </>
+        )}
+      </header>
+      <div className="app-body">
+        <Sidebar
           state={state}
+          view={view}
+          settingsOpen={settingsOpen}
+          listCollapsed={!sidebarOverlay && listCollapsed}
           dispatch={dispatch}
-          onClose={closeSettings}
-          active={!modal && !trash.issue}
-          trash={trash}
+          query={query}
+          setQuery={setQuery}
+          searchRef={search}
+          onImport={() => setModal({ type: 'import' })}
+          onCopy={(bot) => setModal({ type: 'copy', bot })}
+          onCopyGroup={(group) => setModal({ type: 'group-copy', group })}
+          onCreate={(group) => {
+            setSidebarOpen(false);
+            setModal({ type: 'create', group: !!group });
+          }}
+          onNewChat={() => createChat()}
           onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
-          onRecovery={() => setModal({ type: 'recovery' })}
+          onTrash={trash.move}
+          onChats={openChats}
+          onSettings={() => setSettingsSurface('page')}
+          onToggleList={
+            sidebarOverlay ? undefined : () => setListCollapsed((collapsed) => !collapsed)
+          }
+          onWidthChange={alignTitlebar}
+          open={sidebarOpen}
+          inert={sidebarOverlay && !sidebarOpen}
+          close={() => setSidebarOpen(false)}
         />
-      )}
+        <main className="main" inert={sidebarOverlay && sidebarOpen}>
+          <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
+          {view === 'chat' ? (
+            bot ? (
+              <div className="conversation-layout">
+                {bot.members ? (
+                  <GroupChat
+                    key={bot.id}
+                    state={state}
+                    bot={bot}
+                    dispatch={dispatch}
+                    notify={notify}
+                    preview={previewFile}
+                  />
+                ) : (
+                  <Conversation
+                    key={`${bot.id}:${chatVersion}`}
+                    state={state}
+                    bot={bot}
+                    dispatch={dispatch}
+                    notify={notify}
+                    preview={previewFile}
+                    onSend={runtime.enabled ? () => runTask(bot.id) : undefined}
+                    onQueue={runtime.enabled ? () => queueTask(bot.id) : undefined}
+                    onQueueEdit={
+                      runtime.enabled
+                        ? (id) => {
+                            const item = messageQueue(state, bot.id).find(
+                              (entry) => entry.id === id,
+                            );
+                            if (!item || item.verify || item.sending) return;
+                            const draft = state.drafts[bot.id] ?? '';
+                            const prompt =
+                              draft && item.prompt
+                                ? `${draft}\n${item.prompt}`
+                                : item.prompt || draft;
+                            const folders = [
+                              ...new Set([...draftFolders(state, bot.id), ...(item.folders ?? [])]),
+                            ];
+                            if (
+                              prompt.length > draftTextLimit(folders) ||
+                              draftPrompt(prompt, folders).length > 12000
+                            ) {
+                              notify(t('chat.queuedMessageEditTooLong'));
+                              return;
+                            }
+                            const merged = mergeAttachments(
+                              state.attachments[bot.id] ?? [],
+                              state.files,
+                              item.files,
+                            );
+                            if (!merged) {
+                              notify(t('chat.queuedMessageEditAttachmentsFull'));
+                              return;
+                            }
+                            dispatch({ type: 'queue-edit', bot: bot.id, id });
+                          }
+                        : undefined
+                    }
+                    onQueueRemove={
+                      runtime.enabled
+                        ? (id) => dispatch({ type: 'queue-remove', bot: bot.id, id })
+                        : undefined
+                    }
+                    onQueuePromote={
+                      runtime.enabled
+                        ? (id) => dispatch({ type: 'queue-promote', bot: bot.id, id })
+                        : undefined
+                    }
+                    onQueueInsert={
+                      runtime.enabled &&
+                      runtime.snapshot.protocolVersion >= 42 &&
+                      task?.model !== localCodexModel
+                        ? (id) => insertQueued(bot.id, id)
+                        : undefined
+                    }
+                    onQueueRetry={
+                      runtime.enabled
+                        ? (id) => dispatch({ type: 'queue-retry', bot: bot.id, id })
+                        : undefined
+                    }
+                    onContinue={() => continueTask(bot.id)}
+                    onLifecycle={() => setModal({ type: 'archive', bot: bot.id })}
+                    onNewChat={newConversation}
+                    onExcerpt={createChat}
+                    onTrashRecovery={() => dispatch({ type: 'view', view: 'settings' })}
+                    pending={runtime.enabled && !!state.runtimeRequests[bot.id]}
+                    onModel={() => {
+                      if (!bot.members && runtime.snapshot.protocolVersion >= 14)
+                        setModal({ type: 'model', bot: bot.id });
+                      else dispatch({ type: 'view', view: 'settings' });
+                    }}
+                  />
+                )}
+                {state.panel && workspaceVisible && (
+                  <Workspace
+                    state={state}
+                    bot={bot}
+                    readOnly={historyOnly}
+                    dispatch={dispatch}
+                    notify={notify}
+                    preview={previewFile}
+                    expand={(surface) => setModal({ type: 'computer', bot: bot.id, surface })}
+                    openMember={(id) => setModal({ type: 'computer', bot: id })}
+                    onRecovery={() => setModal({ type: 'recovery' })}
+                  />
+                )}
+              </div>
+            ) : (
+              <Welcome
+                chat={() => createChat()}
+                create={() => setModal({ type: 'create', group: false })}
+                explore={() => dispatch({ type: 'view', view: 'gallery' })}
+              />
+            )
+          ) : view === 'gallery' ? (
+            <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
+          ) : view === 'tasks' ? (
+            <Tasks state={state} dispatch={dispatch} work={work} />
+          ) : view === 'inbox' ? (
+            <Inbox
+              state={state}
+              dispatch={dispatch}
+              preview={preview}
+              notify={notify}
+              focus={inboxFocus}
+              clearFocus={() => setInboxFocus(undefined)}
+            />
+          ) : settingsSurface === 'page' ? (
+            settingsContent
+          ) : null}
+        </main>
+      </div>
+      {settingsSurface === 'dialog' && settingsContent}
       {modal?.type === 'recovery' && (
         <Recovery
           bots={state.bots}

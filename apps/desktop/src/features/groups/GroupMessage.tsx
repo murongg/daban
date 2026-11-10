@@ -42,6 +42,14 @@ export const GroupMessage = memo(function GroupMessage({
     runtimePath: file.path,
     content: '',
   }));
+  const completed = value.phase === 'completed';
+  const execution = value.role === 'bot' && value.runId && value.author && (
+    <Execution
+      scope={{ bot: value.author, runId: value.runId, conversationId: group }}
+      phase={value.phase}
+      messageDetails={completed}
+    />
+  );
   return (
     <article className={`message ${value.role}`} key={value.id}>
       {value.role === 'bot' && (
@@ -50,12 +58,7 @@ export const GroupMessage = memo(function GroupMessage({
           {value.name || author?.name || 'Bot'}
         </div>
       )}
-      {value.role === 'bot' && value.runId && value.author && (
-        <Execution
-          scope={{ bot: value.author, runId: value.runId, conversationId: group }}
-          phase={value.phase}
-        />
-      )}
+      {!completed && execution}
       <div className="bubble">
         {value.role === 'bot' ? (
           <Markdown
@@ -77,7 +80,8 @@ export const GroupMessage = memo(function GroupMessage({
           />
         )}
       </div>
-      {value.phase && value.phase !== 'completed' && (
+      {completed && execution}
+      {value.phase && !completed && (
         <p className="inline-note">{t('groupchat.taskStatus', { 0: taskPhase(value.phase) })}</p>
       )}
       {files.map((file) => (

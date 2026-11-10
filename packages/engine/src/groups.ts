@@ -1144,6 +1144,11 @@ export class Groups {
         row.name = member.name;
         row.state = 'claimed';
         try {
+          const source = this.db
+            .select({ role: groupMessages.role })
+            .from(groupMessages)
+            .where(and(eq(groupMessages.grp, group.id), eq(groupMessages.id, turn.id)))
+            .get();
           await this.runner.start(
             String(row.bot),
             {
@@ -1151,7 +1156,7 @@ export class Groups {
               prompt: String(turn.prompt),
               files: this.inputs(group.id, String(turn.id)),
             },
-            { id: group.id, context },
+            { id: group.id, context, ...(source?.role === 'user' ? { userAuthored: true } : {}) },
           );
           this.reconcile(row, true);
         } catch (error) {

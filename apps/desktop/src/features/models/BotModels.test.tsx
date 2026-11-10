@@ -118,10 +118,10 @@ function connect(protocol = 14) {
       profiles.set(id, { ...current, ...patch, revision: current.revision + 1 });
       act(publish);
     },
-    running() {
+    running(phase: 'running' | 'waiting' | 'completed' = 'running') {
       snapshot.agents.a = {
-        running: true,
-        phase: 'running',
+        running: phase !== 'completed',
+        phase,
         model: 'deepseek-flash',
         runId: 'mock-active',
         requestId: 'mock-request',
@@ -250,7 +250,7 @@ it('creates a personal Bot with its selected model and keeps unsupported runtime
   const backend = connect();
   const view = render(<App />);
   await screen.findByRole('heading', { name: '合成甲' });
-  await userEvent.click(screen.getByRole('button', { name: '新建 Bot' }));
+  await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
   await userEvent.type(screen.getByRole('textbox', { name: '名称' }), '合成新搭档');
   await selectOption(userEvent, selectControl('此 Bot 的模型'), 'deepseek-v4-pro');
   await userEvent.click(screen.getByRole('button', { name: '创建 Bot' }));
@@ -270,4 +270,39 @@ it('creates a personal Bot with its selected model and keeps unsupported runtime
   await screen.findByRole('heading', { name: '合成甲' });
   await appAction(userEvent, '编辑 Bot 资料');
   expect(selectControl('此 Bot 的模型')).toBeDisabled();
+});
+
+it('keeps an edited avatar after runtime refresh and reopening the app', async () => {
+  const backend = connect();
+  const view = render(<App />);
+  await screen.findByRole('heading', { name: '合成甲' });
+  await appAction(userEvent, '编辑 Bot 资料');
+  await userEvent.click(screen.getByRole('button', { name: '蓝色' }));
+  await userEvent.click(screen.getByRole('button', { name: '眨眼' }));
+  await userEvent.click(screen.getByRole('button', { name: '保存资料' }));
+  expect(await screen.findByRole('heading', { name: '合成甲' })).toBeVisible();
+  expect(backend.profiles.get('a')?.color).toBe('blue');
+
+  backend.advance('a', { instructions: 'Updated synthetic role' });
+  view.unmount();
+  render(<App />);
+  await screen.findByRole('heading', { name: '合成甲' });
+  await appAction(userEvent, '编辑 Bot 资料');
+  expect(screen.getByRole('img', { name: '头像预览：蓝色，眨眼' })).toBeVisible();
+});
+
+it('animates a personal Bot only while its task is executing', async () => {
+  const backend = connect();
+  render(<App />);
+  const heading = await screen.findByRole('heading', { name: '合成甲' });
+  const avatar = heading.closest('.titlebar-context')?.querySelector('.bot-avatar');
+  expect(avatar).toBeInTheDocument();
+  expect(avatar).not.toHaveAttribute('data-working');
+  backend.running();
+  expect(avatar).toHaveAttribute('data-working');
+  backend.running('waiting');
+  expect(avatar).not.toHaveAttribute('data-working');
+  backend.running();
+  backend.running('completed');
+  expect(avatar).not.toHaveAttribute('data-working');
 });

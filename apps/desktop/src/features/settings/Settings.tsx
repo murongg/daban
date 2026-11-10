@@ -12,12 +12,13 @@ import {
   Trash2,
   Waypoints,
 } from 'lucide-react';
-import { type Dispatch, useState } from 'react';
+import { type Dispatch, type ReactNode, useState } from 'react';
 import { Tab, TabList, TabPanel, Tabs } from 'react-aria-components';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Action, State } from '../../app/state';
 import { serialize } from '../../app/storage';
 import { Dialog } from '../../components/controls/Dialog';
+import { Help } from '../../components/controls/Help';
 import { isMessageKey, t, useLocale } from '../../i18n/locale';
 import { ArchiveList } from '../bots/Archive';
 import { TrashList } from '../chat/ConversationTrash';
@@ -36,10 +37,20 @@ import { UpdatesPanel } from './Updates';
 import { VirtualMachine } from './VirtualMachine';
 import '../../styles/settings.css';
 
+function SettingLabel({ label, children }: { label: string; children?: ReactNode }) {
+  return (
+    <div className="setting-title">
+      <span className="setting-label">{label}</span>
+      {children && <Help topic={label}>{children}</Help>}
+    </div>
+  );
+}
+
 export function Settings({
   state,
   dispatch,
   onClose,
+  inline = false,
   active = true,
   onLifecycle,
   onRecovery,
@@ -48,6 +59,7 @@ export function Settings({
   state: State;
   dispatch: Dispatch<Action>;
   onClose: () => unknown;
+  inline?: boolean;
   active?: boolean;
   onLifecycle?: (bot: string) => unknown;
   onRecovery?: () => unknown;
@@ -63,6 +75,8 @@ export function Settings({
     !!preparation &&
     ['downloading', 'extracting', 'verifying', 'cancelling'].includes(preparation.phase);
   const nativeOnly = runtime.snapshot.agent?.execution === 'local-workspace';
+  const computerLabel = nativeOnly ? t('localComputer.computer') : t('settings.localLinuxRuntime');
+  const connectionError = runtime.snapshot.error;
   const [category, setCategory] = useState('general');
   const [error, setError] = useState('');
   const [connectionDialog, setConnectionDialog] = useState(false);
@@ -72,16 +86,12 @@ export function Settings({
       id: 'general',
       label: t('settings.general'),
       icon: Settings2,
-      description: t('settings.adjustAppearanceNotificationsSuitWorkflow'),
       content: (
         <>
           <div className="settings-section">
             <h2>{t('settings.appearance')}</h2>
             <div className="setting-row">
-              <div>
-                <div className="setting-label">{t('settings.theme')}</div>
-                <p className="setting-description">{t('settings.chooseAppearanceWorkspace')}</p>
-              </div>
+              <div className="setting-label">{t('settings.theme')}</div>
               <fieldset className="theme-options" aria-label={t('settings.theme')}>
                 <button
                   type="button"
@@ -105,12 +115,7 @@ export function Settings({
           <div className="settings-section">
             <h2>{t('settings.languageSection')}</h2>
             <div className="setting-row">
-              <div>
-                <div className="setting-label">{t('settings.language')}</div>
-                <p className="setting-description">
-                  {t('settings.appliesImmediatelySavedComputer')}
-                </p>
-              </div>
+              <div className="setting-label">{t('settings.language')}</div>
               <Language />
             </div>
           </div>
@@ -122,23 +127,18 @@ export function Settings({
       id: 'models',
       label: t('models.title'),
       icon: Waypoints,
-      description: t('settings.connectModelServicesChooseWorkspacePerBot'),
       content: <Models />,
     },
     {
       id: 'search',
       label: t('search.title'),
       icon: SearchIcon,
-      description: t('search.description'),
       content: <Search />,
     },
     {
       id: 'computer',
       label: t('settings.computerPermissions'),
       icon: Monitor,
-      description: nativeOnly
-        ? t('localComputer.description')
-        : t('settings.manageLocalLinuxConnectionStateActionPermissions'),
       content: (
         <>
           {(runtime.snapshot.agent?.execution === 'linux-vm' ||
@@ -146,20 +146,14 @@ export function Settings({
             <div className="settings-section">
               <h2>{t('settings.executionEnvironmentPermissions')}</h2>
               <div className="setting-row">
-                <div>
-                  <div className="setting-label">{t('settings.fullPermissionsInsideVm')}</div>
-                  <p className="setting-description">
-                    {t('settings.botsCanManageLinuxUseSudoNetwork')}
-                  </p>
-                </div>
+                <SettingLabel label={t('settings.fullPermissionsInsideVm')}>
+                  {t('settings.botsCanManageLinuxUseSudoNetwork')}
+                </SettingLabel>
               </div>
               <div className="setting-row">
-                <div>
-                  <div className="setting-label">{t('settings.hostAgentService')}</div>
-                  <p className="setting-description">
-                    {t('settings.modelsKeysApprovalsStayOutsideVmBackground')}
-                  </p>
-                </div>
+                <SettingLabel label={t('settings.hostAgentService')}>
+                  {t('settings.modelsKeysApprovalsStayOutsideVmBackground')}
+                </SettingLabel>
               </div>
             </div>
           )}
@@ -172,19 +166,23 @@ export function Settings({
             )}
             <div className="setting-row">
               <div>
-                <div className="setting-label">
-                  {nativeOnly ? t('localComputer.computer') : t('settings.localLinuxRuntime')}
-                </div>
-                <p className="setting-description">
-                  {runtime.enabled
-                    ? (isMessageKey(runtime.snapshot.error)
-                        ? t(runtime.snapshot.error)
-                        : runtime.snapshot.error) ||
-                      (nativeOnly
-                        ? t('localComputer.settingsDescription')
-                        : t('settings.botDesktopsTasksFilesRunLocalVirtual'))
-                    : t('settings.computerPanelExamplePreviewNoRealTerminal')}
-                </p>
+                <SettingLabel label={computerLabel}>
+                  {runtime.enabled &&
+                    (nativeOnly
+                      ? t('localComputer.settingsDescription')
+                      : t('settings.botDesktopsTasksFilesRunLocalVirtual'))}
+                </SettingLabel>
+                {runtime.enabled ? (
+                  connectionError && (
+                    <p className="setting-description">
+                      {isMessageKey(connectionError) ? t(connectionError) : connectionError}
+                    </p>
+                  )
+                ) : (
+                  <p className="setting-description">
+                    {t('settings.computerPanelExamplePreviewNoRealTerminal')}
+                  </p>
+                )}
               </div>
               {runtime.enabled ? (
                 <button
@@ -236,14 +234,12 @@ export function Settings({
       id: 'integrations',
       label: t('common.externalTools'),
       icon: Plug,
-      description: t('settings.connectMcpServicesManageExternalToolsBots'),
       content: <Integrations bots={state.bots} onDialogChange={setConnectionDialog} />,
     },
     {
       id: 'archive',
       label: t('settings.archives'),
       icon: Archive,
-      description: t('settings.viewArchivedBotsGroupsRestoreThemWhen'),
       content: <ArchiveList state={state} dispatch={dispatch} onAction={onLifecycle} />,
     },
     ...(trash
@@ -252,7 +248,6 @@ export function Settings({
             id: 'trash',
             label: t('trash.title'),
             icon: Trash2,
-            description: t('trash.description'),
             content: <TrashList state={state} trash={trash} onLifecycle={onLifecycle} />,
           },
         ]
@@ -261,26 +256,19 @@ export function Settings({
       id: 'data',
       label: t('settings.dataStorage'),
       icon: Database,
-      description: t('settings.seeWhatStoredLocallyExportWorkspaceCopy'),
       content: (
         <div className="settings-section">
           <h2>{t('settings.workspaceData')}</h2>
           <div className="setting-row">
-            <div>
-              <div className="setting-label">{t('settings.localWorkspaceData')}</div>
-              <p className="setting-description">
-                {t('settings.appStoresChatCachesDraftsPreferenceCopies')}
-              </p>
-            </div>
+            <SettingLabel label={t('settings.localWorkspaceData')}>
+              {t('settings.appStoresChatCachesDraftsPreferenceCopies')}
+            </SettingLabel>
             <span className="badge">{t('settings.localStorage')}</span>
           </div>
           <div className="setting-row">
-            <div>
-              <div className="setting-label">{t('settings.exportWorkspace')}</div>
-              <p className="setting-description">
-                {t('settings.exportJsonCopyPrivateChatCachesDrafts')}
-              </p>
-            </div>
+            <SettingLabel label={t('settings.exportWorkspace')}>
+              {t('settings.exportJsonCopyPrivateChatCachesDrafts')}
+            </SettingLabel>
             <button
               type="button"
               className="secondary"
@@ -306,28 +294,55 @@ export function Settings({
       id: 'about',
       label: t('settings.about'),
       icon: Info,
-      description: t('settings.versionInformationFuturePlans'),
       content: (
         <div className="settings-section">
           <h2>{t('common.aboutDaban')}</h2>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Daban</div>
-              <p className="setting-description">{t('settings.aiWorkCompanion')}</p>
-            </div>
-          </div>
-          <p className="inline-note">
-            {runtime.enabled
-              ? nativeOnly
-                ? t('localComputer.settingsDescription')
-                : t('settings.localLinuxDshConnectedMobileCrossDevice')
-              : t('settings.previewIncludesOnlyAppInterfaceMobileCross')}
-          </p>
           <UpdatesPanel onDialogChange={setUpdateDialog} />
         </div>
       ),
     },
   ];
+  const content = (
+    <Tabs
+      orientation="vertical"
+      selectedKey={category}
+      onSelectionChange={(key) => setCategory(String(key))}
+      className="settings-layout"
+    >
+      <TabList
+        aria-label={t('settings.settingsCategories')}
+        className="settings-nav"
+        items={sections}
+      >
+        {(section) => (
+          <Tab
+            id={section.id}
+            className="settings-tab"
+            data-autofocus={category === section.id || undefined}
+          >
+            <section.icon aria-hidden="true" />
+            <span>{section.label}</span>
+          </Tab>
+        )}
+      </TabList>
+      {/* Keep editors mounted across categories and clear private key drafts when leaving Settings. */}
+      {sections.map((section) => (
+        <TabPanel
+          key={section.id}
+          id={section.id}
+          shouldForceMount
+          hidden={category !== section.id}
+          className="settings-panel"
+        >
+          <header className="settings-heading">
+            <h3>{section.label}</h3>
+          </header>
+          {section.content}
+        </TabPanel>
+      ))}
+    </Tabs>
+  );
+  if (inline) return content;
   return (
     <Dialog
       title={t('settings.title')}
@@ -336,45 +351,7 @@ export function Settings({
       className="settings-dialog"
       motion
     >
-      <Tabs
-        orientation="vertical"
-        selectedKey={category}
-        onSelectionChange={(key) => setCategory(String(key))}
-        className="settings-layout"
-      >
-        <TabList
-          aria-label={t('settings.settingsCategories')}
-          className="settings-nav"
-          items={sections}
-        >
-          {(section) => (
-            <Tab
-              id={section.id}
-              className="settings-tab"
-              data-autofocus={category === section.id || undefined}
-            >
-              <section.icon aria-hidden="true" />
-              <span>{section.label}</span>
-            </Tab>
-          )}
-        </TabList>
-        {/* Keep editors mounted while switching categories; closing this dialog still clears private key drafts. */}
-        {sections.map((section) => (
-          <TabPanel
-            key={section.id}
-            id={section.id}
-            shouldForceMount
-            hidden={category !== section.id}
-            className="settings-panel"
-          >
-            <header className="settings-heading">
-              <h3>{section.label}</h3>
-              <p>{section.description}</p>
-            </header>
-            {section.content}
-          </TabPanel>
-        ))}
-      </Tabs>
+      {content}
     </Dialog>
   );
 }

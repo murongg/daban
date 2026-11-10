@@ -13,8 +13,8 @@
   --strong: #252523;
   --strong-hover: #42423d;
   --on-strong: #ffffff;
-  --bubble: #252523;
-  --on-bubble: #ffffff;
+  --bubble: #ecece8;
+  --on-bubble: #252523;
   --success: #4b7d68;
   --warning: #9d7326;
   --danger: #b23e3e;
@@ -43,7 +43,7 @@
   --strong: #e8e8e0;
   --strong-hover: #ffffff;
   --on-strong: #252523;
-  --bubble: #353531;
+  --bubble: #2d2d29;
   --on-bubble: #eeeeea;
   --success: #8ab49c;
   --warning: #d2af6a;

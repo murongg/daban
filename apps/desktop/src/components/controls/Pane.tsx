@@ -34,6 +34,7 @@ export function Pane({
   edge = 'left',
   resizable = true,
   inert = false,
+  onWidthChange,
   children,
 }: {
   id: string;
@@ -43,6 +44,7 @@ export function Pane({
   edge?: 'left' | 'right';
   resizable?: boolean;
   inert?: boolean;
+  onWidthChange?: (width: number) => unknown;
   children: ReactNode;
 }) {
   const key = `daban-pane-width:${id}`;
@@ -61,8 +63,12 @@ export function Pane({
 
   useLayoutEffect(() => {
     const element = pane.current;
-    if (!resizable || !element?.parentElement) return;
-    const update = () => setRange(measure(element));
+    if ((!resizable && !onWidthChange) || !element?.parentElement) return;
+    const update = () => {
+      const bounds = measure(element);
+      if (resizable) setRange(bounds);
+      if (bounds) onWidthChange?.(bounds.width);
+    };
     update();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);
@@ -70,7 +76,7 @@ export function Pane({
     // The available range also changes when the adjacent content is resized.
     observer.observe(element.parentElement);
     return () => observer.disconnect();
-  }, [resizable]);
+  }, [resizable, onWidthChange]);
 
   function save(value: number) {
     try {

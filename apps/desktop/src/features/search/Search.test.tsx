@@ -1,4 +1,4 @@
-import type { SearchCommand, SearchReceipt, SearchStatus, SearchUpdate } from '@daban/protocol';
+import type { RuntimeCommand, SearchReceipt, SearchStatus, SearchUpdate } from '@daban/protocol';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -8,8 +8,12 @@ import { Search } from './Search';
 const state = vi.hoisted(() => ({
   runtime: {
     enabled: true,
-    snapshot: { phase: 'ready', searchSettings: true },
-    command: vi.fn<(command: SearchCommand) => Promise<unknown>>(),
+    snapshot: {
+      phase: 'ready',
+      searchSettings: true,
+      jinaReader: undefined as boolean | undefined,
+    },
+    command: vi.fn<(command: RuntimeCommand) => Promise<unknown>>(),
   },
 }));
 vi.mock('../../app/Runtime', () => ({ useRuntime: () => state.runtime }));
@@ -42,7 +46,7 @@ function saved(input: SearchUpdate): SearchReceipt {
 beforeEach(() => {
   localStorage.clear();
   state.runtime.enabled = true;
-  state.runtime.snapshot = { phase: 'ready', searchSettings: true };
+  state.runtime.snapshot = { phase: 'ready', searchSettings: true, jinaReader: undefined };
   state.runtime.command.mockReset();
   state.runtime.command.mockImplementation(async (command) => {
     if (command.type === 'search.status') return initial();
@@ -51,6 +55,50 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.restoreAllMocks());
+
+test('saves the opt-in for Jina independently from the search provider', async () => {
+  state.runtime.snapshot.jinaReader = false;
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return initial();
+    if (command.type === 'web.jina') return true;
+    if (command.type === 'status') return { ...state.runtime.snapshot, jinaReader: true };
+    throw new Error('Unexpected synthetic command');
+  });
+  const user = userEvent.setup();
+  render(<Search />);
+  const option = screen.getByRole('checkbox', { name: '使用 Jina Reader 兜底' });
+  expect(option).not.toBeChecked();
+  expect(option).toHaveAccessibleDescription(/网址发给 Jina Reader/);
+  expect(state.runtime.command.mock.calls.map(([command]) => command.type)).toEqual([
+    'search.status',
+  ]);
+  await user.click(option);
+  expect(state.runtime.command).toHaveBeenCalledWith({ type: 'web.jina', enabled: true });
+});
+
+test('uses Host read-back to confirm a Jina setting when the save reply is lost', async () => {
+  state.runtime.snapshot.jinaReader = false;
+  state.runtime.command.mockImplementation(async (command) => {
+    if (command.type === 'search.status') return initial();
+    if (command.type === 'web.jina') throw new Error('Synthetic lost reply');
+    if (command.type === 'status') {
+      state.runtime.snapshot.jinaReader = true;
+      return state.runtime.snapshot;
+    }
+    throw new Error('Unexpected synthetic command');
+  });
+  const user = userEvent.setup();
+  render(<Search />);
+  const option = screen.getByRole('checkbox', { name: '使用 Jina Reader 兜底' });
+  await user.tab();
+  expect(option).toHaveFocus();
+  await user.keyboard('[Space]');
+  await waitFor(() => expect(option).toBeChecked());
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(
+    state.runtime.command.mock.calls.filter(([command]) => command.type === 'web.jina'),
+  ).toHaveLength(1);
+});
 
 test('an old Host gets a clear explanation and no search command', async () => {
   state.runtime.snapshot.searchSettings = false;

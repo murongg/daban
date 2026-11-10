@@ -84,7 +84,6 @@ export const english = {
     'Local folders are unavailable. Reconnect or update the local service and try again.',
   'trash.retry': 'Try again',
   'trash.title': 'Conversation trash',
-  'trash.description': 'Review conversations in trash and restore them at any time.',
   'trash.retention':
     'Conversations stay here until restored. Messages, drafts, and files are retained.',
   'trash.empty': 'There are no conversations in trash.',
@@ -127,12 +126,15 @@ export const english = {
   'search.legacyInUse':
     'Search still uses this DeepSeek connection. Add an independent search key or disable search before changing its destination or protocol.',
   'search.title': 'Search',
-  'search.description': 'Choose a search service separately from your chat model.',
   'search.legacyHost':
     'This service does not support independent search settings yet. Update the Host service. Legacy search still follows model connections.',
   'search.offline': 'Connect to the Host service to manage search.',
   'search.loading': 'Reading search settings…',
   'search.enabled': 'Enable search',
+  'search.jinaReader': 'Use Jina Reader as a fallback',
+  'search.jinaScope':
+    'If a public link you paste has no query parameters and the site returns HTTP 403 or no readable text, Daban sends its URL to Jina Reader once.',
+  'search.jinaSaveFailed': 'Could not confirm the Jina Reader setting. Check the Host connection.',
   'search.provider': 'Search provider',
   'search.key': 'Search API Key',
   'search.keyHint':
@@ -196,7 +198,6 @@ export const english = {
   'conversations.pinNamed': 'Pin {0}',
   'conversations.unpinNamed': 'Unpin {0}',
   'conversations.archiveNamed': 'Archive {0}',
-  'conversations.archived': 'Archived conversations',
   'conversations.placeholder': 'Send a message or describe a task…',
   'conversations.startTitle': 'What would you like to work on?',
   'conversations.startHint': 'Ask a question or give me a task. Tools are available when needed.',
@@ -905,6 +906,7 @@ export const english = {
   'common.groupChat': 'Group chat',
   'common.handBackBot': 'Hand back to Bot',
   'common.handled': 'Handled',
+  'common.helpFor': 'Help for {0}',
   'common.inbox': 'Inbox',
   'common.inboxFilter': 'Inbox filter',
   'common.includes': 'Includes',
@@ -1124,6 +1126,21 @@ export const english = {
   'copygroup.stateChanging': 'State changing',
   'copygroup.updateConnectLocalRuntimeCopyingGroup':
     'Update and connect the local runtime before copying a group.',
+  'avatar.calm': 'Calm',
+  'avatar.color': 'Color',
+  'avatar.cool': 'Cool',
+  'avatar.expression': 'Expression',
+  'avatar.grumpy': 'Grumpy',
+  'avatar.laugh': 'Laughing',
+  'avatar.love': 'Heart eyes',
+  'avatar.original': 'Original',
+  'avatar.preview': 'Avatar preview: {0}, {1}',
+  'avatar.puzzled': 'Puzzled',
+  'avatar.sleepy': 'Sleepy',
+  'avatar.smile': 'Smile',
+  'avatar.starry': 'Star eyes',
+  'avatar.surprised': 'Surprised',
+  'avatar.wink': 'Wink',
   'create.blue': 'Blue',
   'create.botColor': 'Bot color',
   'create.botCreatedCanStartChatting': 'Bot created. You can start chatting.',
@@ -2738,8 +2755,6 @@ export const english = {
   'notifications.dabanTaskComplete': 'Daban · Task complete',
   'notifications.dabanTaskNeedsAttention': 'Daban · Task needs attention',
   'notifications.dabanTestNotification': 'Daban · Test notification',
-  'notifications.deliveryDependsSystemNotificationSettingsDoNot':
-    'Delivery depends on system notification settings and Do Not Disturb. A test does not start tasks or submit approvals.',
   'notifications.desktopNotificationsTemporarilyUnavailableRetryLater':
     'Desktop notifications are temporarily unavailable. Retry later.',
   'notifications.desktopNotificationsUnsupportedSystemInboxRemainsAvailable':
@@ -2982,11 +2997,7 @@ export const english = {
     'Up to 32 sections are retained. Organize existing sections first.',
   'select.selectOption': 'Select an option',
   'settings.about': 'About',
-  'settings.adjustAppearanceNotificationsSuitWorkflow':
-    'Adjust appearance and notifications to suit your workflow.',
-  'settings.aiWorkCompanion': 'Your AI work companion.',
   'settings.appearance': 'Appearance',
-  'settings.appliesImmediatelySavedComputer': 'Applies immediately and is saved on this computer.',
   'settings.appStoresChatCachesDraftsPreferenceCopies':
     'The app stores chat caches, drafts, preference copies and settings. Clearing app data loses drafts. Manage runtime tasks, documents and preferences separately.',
   'settings.archives': 'Archives',
@@ -2994,14 +3005,9 @@ export const english = {
     'Bot desktops, tasks and files run in a local virtual machine. Closing the app does not stop Linux.',
   'settings.botsCanManageLinuxUseSudoNetwork':
     'Bots can manage Linux, use sudo and the network, and install software such as npm and Codex. Routine reads, queries and calculations run automatically. High-risk or uncertain actions, including installation, deletion and system changes, show the exact command for your approval.',
-  'settings.chooseAppearanceWorkspace': 'Choose an appearance for your workspace.',
   'settings.computerPanelExamplePreviewNoRealTerminal':
     'The computer panel is an example preview. No real terminal, browser or file manager is connected.',
   'settings.computerPermissions': 'Computer & permissions',
-  'settings.connectMcpServicesManageExternalToolsBots':
-    'Connect MCP services and manage the external tools Bots may use.',
-  'settings.connectModelServicesChooseWorkspacePerBot':
-    'Connect model services and choose workspace and per-Bot models.',
   'settings.dark': 'Dark',
   'settings.dataStorage': 'Data & storage',
   'settings.executionEnvironmentPermissions': 'Execution environment & permissions',
@@ -3017,29 +3023,18 @@ export const english = {
   'settings.languageSection': 'Language',
   'settings.light': 'Light',
   'settings.localLinux': 'Local Linux',
-  'settings.localLinuxDshConnectedMobileCrossDevice':
-    'Work with Bots locally and connect a Linux desktop or your computer when needed. Mobile and cross-device sync are planned.',
   'settings.localLinuxRuntime': 'Local Linux runtime',
   'settings.localStorage': 'Local storage',
   'settings.localWorkspaceData': 'Local workspace data',
-  'settings.manageLocalLinuxConnectionStateActionPermissions':
-    'Manage local Linux, connection state and action permissions.',
   'settings.modelsKeysApprovalsStayOutsideVmBackground':
     'Models, keys and approvals stay outside the VM. Background tasks continue after the app closes. Bots gain no host terminal or file permissions from this.',
   'settings.notConnected': 'Not connected',
-  'settings.previewIncludesOnlyAppInterfaceMobileCross':
-    'This preview includes only the app interface. Mobile, cross-device sync and public distribution packages are not implemented yet.',
   'settings.reconnect': 'Reconnect',
   'settings.retryConnection': 'Retry connection',
   'settings.runtime': 'Runtime',
-  'settings.seeWhatStoredLocallyExportWorkspaceCopy':
-    'See what is stored locally and export a workspace copy.',
   'settings.settingsCategories': 'Settings categories',
   'settings.theme': 'Theme',
   'settings.title': 'Settings',
-  'settings.versionInformationFuturePlans': 'Version information and future plans.',
-  'settings.viewArchivedBotsGroupsRestoreThemWhen':
-    'View archived Bots and groups and restore them when needed.',
   'settings.workspaceData': 'Workspace data',
   'setup.checkingInstallationFilesCompleteness':
     'Checking the installation files for completeness.',
@@ -3128,14 +3123,17 @@ export const english = {
   'sidebar.chatAvailableNoComputerConnected': 'Chat available · No computer connected',
   'sidebar.chats': 'Chats',
   'sidebar.closeSidebar': 'Close sidebar',
+  'sidebar.collapseList': 'Collapse conversation list',
   'sidebar.controllingBotSComputer': "You are controlling this Bot's computer",
   'sidebar.copyBotCheckProgress': 'Copy Bot · Check progress',
   'sidebar.copyGroupCheckProgress': 'Copy group · Check progress',
   'sidebar.createBotGroup': 'Create Bot group',
+  'sidebar.expandList': 'Expand conversation list',
   'sidebar.groupConnected': 'Group · Connected',
   'sidebar.groupDisconnected': 'Group · Disconnected',
   'sidebar.hasUnreadMessages': '{0} has unread messages',
   'sidebar.importBotViewProgress': 'Import Bot · View progress',
+  'sidebar.inboxPending': 'Inbox · {0} pending',
   'sidebar.linuxConnectedRunningLocally': 'Linux connected · Running locally',
   'sidebar.localLinuxIndependentDesktop': 'Local Linux · Independent desktop',
   'sidebar.localWorkspace': 'Local workspace',
@@ -3145,6 +3143,7 @@ export const english = {
   'sidebar.moveSection': 'Move to section',
   'sidebar.moveSectionDown': 'Move section down',
   'sidebar.moveSectionUp': 'Move section up',
+  'sidebar.navigation': 'Main navigation',
   'sidebar.newSection': 'New section…',
   'sidebar.noBotsYet': 'No Bots yet',
   'sidebar.noBotsYetUseOrganizeMenuBeside':

@@ -2,10 +2,12 @@ import { type BotProfile, isModelId } from '@daban/protocol';
 import { type Dispatch, useEffect, useRef, useState } from 'react';
 import { profileInput } from '../../app/profiles';
 import { runtimeError, useRuntime } from '../../app/Runtime';
-import type { Action, Bot } from '../../app/state';
+import type { Action, Bot, Color } from '../../app/state';
 import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 import { modelChoices, modelIcon, modelInputs, modelName } from '../models/model-options';
+import { AvatarPicker } from './AvatarPicker';
+import type { AvatarExpression } from './appearance';
 
 export function Profile({
   bot,
@@ -35,9 +37,19 @@ export function Profile({
     [error, setError] = useState(''),
     [conflict, setConflict] = useState<BotProfile>(),
     [saving, setSaving] = useState(false);
+  const [colorDraft, setColor] = useState<Color>();
+  const [expression, setExpression] = useState<AvatarExpression>(bot.expression ?? 'original');
+  const color = colorDraft ?? bot.color;
+  const colorChanged = color !== bot.color;
+  const expressionChanged = expression !== (bot.expression ?? 'original');
   const [revision, setRevision] = useState(version);
   const mounted = useRef(true);
-  const dirty = name !== bot.name || instructions !== bot.role || model !== (bot.model || '');
+  const dirty =
+    name !== bot.name ||
+    instructions !== bot.role ||
+    model !== (bot.model || '') ||
+    colorChanged ||
+    expressionChanged;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -61,6 +73,7 @@ export function Profile({
               revision === undefined &&
               (current.name !== bot.name ||
                 current.instructions !== bot.role ||
+                (colorChanged && current.color !== bot.color) ||
                 (modelsAvailable && current.model !== bot.model))
             )
               throw new Error('BOT_PROFILE_CONFLICT');
@@ -71,11 +84,20 @@ export function Profile({
               patch: {
                 name: name.trim(),
                 instructions,
+                ...(colorChanged ? { color } : {}),
                 ...(modelsAvailable ? { model: isModelId(model) ? model : null } : {}),
               },
             });
             dispatch({ type: 'profiles', profiles: [updated] });
-          } else dispatch({ type: 'profile-local', bot: bot.id, name: name.trim(), instructions });
+          } else
+            dispatch({
+              type: 'profile-local',
+              bot: bot.id,
+              name: name.trim(),
+              instructions,
+              color,
+            });
+          if (expressionChanged) dispatch({ type: 'avatar-expression', bot: bot.id, expression });
           if (mounted.current) {
             notify(t('profile.botProfileSavedChangesApplyNextConversation'));
             close();
@@ -101,6 +123,13 @@ export function Profile({
     >
       <p className="dialog-description">{t('profile.nameRoleModelApplyNextTaskCurrent')}</p>
       <div className="form-stack">
+        <AvatarPicker
+          color={color}
+          expression={expression}
+          disabled={saving}
+          onColorChange={setColor}
+          onExpressionChange={setExpression}
+        />
         <label className="field-label">
           {t('common.name')}
           <input
