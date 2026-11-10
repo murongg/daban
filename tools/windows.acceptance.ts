@@ -9,13 +9,17 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { privateClientOptions } from '@daban/engine/local-computer';
 import { isLocalComputerStatus } from '@daban/protocol';
-import { withComponentStage } from './components.ts';
-import { hashAsset } from './environment.ts';
+import { componentPaths } from '../apps/desktop/electron/component-install.ts';
+import { withVerifiedComponent } from './component-validation.ts';
+import { componentSourceId } from './components.ts';
 
 assert.equal(process.platform, 'win32');
 assert.equal(process.env.CI, 'true', 'Fresh Windows CI runner required');
 const target = process.argv[2];
 assert.ok(target && process.env.APPDATA);
+const [archiveFile, referenceFile] = process.argv.slice(3);
+assert.ok(archiveFile && referenceFile, 'RUNTIME_ARCHIVE_AND_REFERENCE_REQUIRED');
+const archive = path.resolve(archiveFile);
 const root = path.join(process.env.APPDATA, 'daban-preview');
 // Never inspect or launch against an existing person's workspace. This acceptance owns a fresh CI profile only.
 const exists = await access(root).then(
@@ -44,51 +48,61 @@ const abi = await run(
   },
 );
 process.stdout.write(abi.stdout);
-const archive = process.argv[3];
-assert.ok(archive, 'RUNTIME_ARCHIVE_REQUIRED');
-const reference = JSON.parse(
-  await readFile(path.resolve(target, 'resources/runtime.json'), 'utf8'),
+const reference: unknown = JSON.parse(await readFile(referenceFile, 'utf8'));
+assert.deepEqual(
+  JSON.parse(await readFile(path.resolve(target, 'resources/runtime.json'), 'utf8')),
+  reference,
+  'CLIENT_RUNTIME_BINDING',
 );
-assert.equal((await hashAsset(archive, 'sha256')).digest, reference.assets[0].sha256);
 await assert.rejects(access(path.resolve(target, 'resources/agent')), { code: 'ENOENT' });
-await withComponentStage(async (inspect) => {
-  console.time('acceptance:inspect-extract');
-  await run('tar.exe', ['-xf', path.resolve(archive), '-C', inspect]);
-  console.timeEnd('acceptance:inspect-extract');
-  const cache = path.join(root, 'components/downloads');
-  await mkdir(cache, { recursive: true });
-  await copyFile(archive, path.join(cache, `${reference.assets[0].sha256}.zip`));
-  const agent = path.join(inspect, 'DabanRuntime/agent'),
-    smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
-  for (const smoke of smokes)
-    await copyFile(
-      fileURLToPath(new URL(`../dist-agent/${path.basename(smoke)}`, import.meta.url)),
-      smoke,
-      constants.COPYFILE_EXCL,
+await withVerifiedComponent(
+  {
+    archive,
+    reference,
+    id: await componentSourceId(fileURLToPath(new URL('..', import.meta.url))),
+    platform: 'win32',
+    arch: 'x64',
+    publisher: executable,
+  },
+  async (directory, sha256) => {
+    const runtime = componentPaths(directory, 'win32');
+    const agent = path.dirname(runtime.entry),
+      smokes = ['native-loop.test.js', 'calendar.test.js'].map((name) => path.join(agent, name));
+    for (const smoke of smokes)
+      await copyFile(
+        fileURLToPath(new URL(`../dist-agent/${path.basename(smoke)}`, import.meta.url)),
+        smoke,
+        constants.COPYFILE_EXCL,
+      );
+    console.time('acceptance:sdk-smoke');
+    const sdk = await run(
+      runtime.executable,
+      [
+        '--experimental-sqlite',
+        fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)),
+        'run',
+        '--config',
+        fileURLToPath(new URL('./testing/packaged.config.ts', import.meta.url)),
+        '--root',
+        agent,
+        '--reporter=verbose',
+        '--maxWorkers=1',
+        ...smokes,
+      ],
+      // The serial 60s native-loop and 30s calendar checks also need runner startup time.
+      { cwd: agent, timeout: 120000, maxBuffer: 2 * 1024 * 1024 },
     );
-  console.time('acceptance:sdk-smoke');
-  const sdk = await run(
-    path.join(agent, 'node/node.exe'),
-    [
-      '--experimental-sqlite',
-      fileURLToPath(new URL('../node_modules/vitest/vitest.mjs', import.meta.url)),
-      'run',
-      '--config',
-      fileURLToPath(new URL('./testing/packaged.config.ts', import.meta.url)),
-      '--root',
-      agent,
-      '--reporter=verbose',
-      '--maxWorkers=1',
-      ...smokes,
-    ],
-    // The serial 60s native-loop and 30s calendar checks also need runner startup time.
-    { cwd: agent, timeout: 120000, maxBuffer: 2 * 1024 * 1024 },
-  );
-  assert.match(sdk.stdout, /real DSH dispatches/);
-  assert.match(sdk.stdout, /real host calendar recovers/);
-  process.stdout.write(sdk.stdout);
-  console.timeEnd('acceptance:sdk-smoke');
-});
+    assert.match(sdk.stdout, /real DSH dispatches/);
+    assert.match(sdk.stdout, /real host calendar recovers/);
+    process.stdout.write(sdk.stdout);
+    console.timeEnd('acceptance:sdk-smoke');
+
+    // The actual first-use check must still install the original ZIP into an empty profile.
+    const cache = path.join(root, 'components/downloads');
+    await mkdir(cache, { recursive: true });
+    await copyFile(archive, path.join(cache, `${sha256}.zip`));
+  },
+);
 const child = spawn(path.resolve(target, 'Daban.exe'), [], {
   cwd: path.resolve(target),
   stdio: ['ignore', 'pipe', 'pipe'],

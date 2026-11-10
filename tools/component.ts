@@ -22,20 +22,15 @@ import {
   linuxFilename,
   linuxIndex,
 } from '@daban/engine/component';
-import { secureDirectory } from '@daban/engine/local-computer';
-import {
-  componentPaths,
-  extractComponent,
-  verifyComponent,
-} from '../apps/desktop/electron/component-install.ts';
+import { componentPaths } from '../apps/desktop/electron/component-install.ts';
 import { fetchComponent, publishComponent } from './component-release.ts';
+import { withVerifiedComponent } from './component-validation.ts';
 import {
   assembleComponent,
   assembleLinux,
   componentSourceId,
   referenceComponent,
   verifyLinux,
-  withComponentStage,
 } from './components.ts';
 import { hashAsset } from './environment.ts';
 import { materializeHost, sealHostPackage, verifyExecutorBuild } from './roles.ts';
@@ -167,50 +162,29 @@ else if (action === 'fetch') {
   }
 } else if (action === 'validate') {
   assert.ok(input && nodeDirectory && environmentDirectory, 'COMPONENT_ARGUMENTS');
-  const reference = componentIndex(JSON.parse(await readFile(environmentDirectory, 'utf8')), id);
-  const expected = reference.assets.find(
-    (item) => item.platform === platform && item.arch === arch,
-  );
-  assert.ok(expected, 'COMPONENT_PLATFORM');
   const archive = path.resolve(nodeDirectory);
-  console.time('runtime:archive-integrity');
-  assert.equal((await stat(archive)).size, expected.bytes);
-  assert.equal((await hashAsset(archive, 'sha256')).digest, expected.sha256);
-  console.timeEnd('runtime:archive-integrity');
-  await withComponentStage(async (temporary) => {
-    console.time('runtime:extract');
-    // Extraction must inherit private ACLs rather than the Windows shared temp permissions.
-    const stage = await secureDirectory(path.join(temporary, 'private'));
-    await extractComponent(archive, stage, platform);
-    console.timeEnd('runtime:extract');
-    console.time('runtime:verify');
-    await verifyComponent({
-      directory: stage,
+  await withVerifiedComponent(
+    {
       id,
       platform,
       arch,
       archive,
       publisher: path.resolve(input),
-    });
-    console.timeEnd('runtime:verify');
-    if (platform === 'darwin') {
-      const directory = path.dirname(archive);
-      const entry = componentPaths(stage, platform).entry;
-      const linux = linuxIndex(
-        JSON.parse(await readFile(path.join(path.dirname(entry), 'linux.json'), 'utf8')),
-        id,
-      );
-      assert.deepEqual(linux, await verifyLinux(directory, id));
-      await verifyExecutorBuild(path.join(directory, linuxFilename('executor')));
-    }
-    assert.equal(
-      execFileSync(componentPaths(stage, platform).executable, ['--version'], {
-        encoding: 'utf8',
-      }).trim(),
-      'v24.22.1',
-    );
-  });
-  console.log('Verified downloaded runtime integrity, publisher trust and standalone Node.');
+      reference: JSON.parse(await readFile(environmentDirectory, 'utf8')),
+    },
+    async (stage) => {
+      if (platform === 'darwin') {
+        const directory = path.dirname(archive);
+        const entry = componentPaths(stage, platform).entry;
+        const linux = linuxIndex(
+          JSON.parse(await readFile(path.join(path.dirname(entry), 'linux.json'), 'utf8')),
+          id,
+        );
+        assert.deepEqual(linux, await verifyLinux(directory, id));
+        await verifyExecutorBuild(path.join(directory, linuxFilename('executor')));
+      }
+    },
+  );
 } else if (action === 'reference') {
   assert.ok(input && nodeDirectory, 'COMPONENT_ARGUMENTS');
   const archive = path.resolve(input);
