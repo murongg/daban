@@ -35,21 +35,23 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - run: npm run build
-      - run: npm run typecheck
+      # The build already ran lint and generated the declarations needed here.
+      - run: npm run check:types
       - name: Verify native API fallback with the installed SDK
         env:
           DABAN_TEST_SDK: ${{ github.workspace }}/node_modules/@deepseek-ai/dsh-sdk-client/lib/index.js
         run: |
           test -f "$DABAN_TEST_SDK"
           node --experimental-sqlite --test --test-concurrency=2 packages/engine/dist/model-fallback.integration.js
-      # Runtime unit tests need these tools during the single full Vitest pass.
-      - name: Install Linux desktop runtime dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
       - name: Install browser integration runtime
         run: npx playwright install --with-deps --only-shell chromium
+      # Playwright already refreshed the apt indexes on Linux.
+      - name: Install Linux desktop runtime dependencies
+        if: runner.os == 'Linux'
+        run: &install-desktop-deps >-
+          sudo apt-get install -y --no-install-recommends
+          bubblewrap xvfb xauth x11-utils dbus-x11 x11-xserver-utils
+          tint2 openbox wmctrl python3 xdotool xclip xterm thunar mousepad
       - name: Allow the test browser to create its sandbox on Ubuntu
         if: runner.os == 'Linux'
         run: |
@@ -70,8 +72,7 @@ jobs:
       - name: Verify embedded browser input, verification and file workflows
         # Desktop clients ship on macOS and Windows; Ubuntu verifies the Linux execution service below.
         if: runner.os == 'macOS'
-        run: npm run test:browser:embedded
-      - run: npx vitest run --maxWorkers=2
+        run: node --experimental-strip-types tools/embedded-browser.ts
       - run: node --experimental-strip-types --test tools/roles.integration.ts
       - name: Verify idle-only host update handoff
         if: runner.os == 'macOS'
@@ -96,3 +97,25 @@ jobs:
         if: runner.os == 'macOS'
         timeout-minutes: 8
         run: node --experimental-strip-types tools/updates.acceptance.ts
+
+  regressions:
+    name: Regressions (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Refresh apt indexes
+        if: runner.os == 'Linux'
+        run: sudo apt-get update
+      - name: Install Linux desktop runtime dependencies
+        if: runner.os == 'Linux'
+        run: *install-desktop-deps
+      - run: npm test -- --maxWorkers=2
