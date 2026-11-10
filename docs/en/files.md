@@ -37,7 +37,7 @@ Example: “Generate a CSV from the attachment, save it, and check its headers a
 
 ## Sharing and paths
 
-Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there. On macOS and Linux, a Bot can run a script from the current task directory without connecting a folder or starting a VM. In Request approval mode, each task command requires approval. In Approve for me mode, task commands run automatically inside the sandbox. Selecting [Full access](approvals.md) lets task commands run directly with the current system account's permissions.
+Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there. On macOS and Linux, Request approval asks before running each task command in the sandbox, and Approve for me runs those commands automatically. Selecting [Full access](approvals.md) lets task commands run directly with the current system account's permissions, using PowerShell on Windows and Bash on macOS and Linux.
 
 Linux keeps separate task and shared directories. A Bot starts installed Linux for commands when you explicitly request execution in the VM. It explicitly transfers additional inputs and brings outputs back. The whole native workspace is never synchronized automatically. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path. Retained Linux files remain in Linux and can be found with the Linux file tools.
 
@@ -45,7 +45,7 @@ Independent screens do not isolate files. Overwriting, moving, or deleting share
 
 ## Limits
 
-- Local task commands and connected-folder commands are available on macOS/Linux. Commands in connected folders require approval each time. Native applications still require separately authorized desktop control.
+- Windows task commands require Full access. Connected-folder commands are available on macOS and Linux and require approval each time. Desktop control requires separate authorization.
 - Previews do not replace specialized applications. Large, binary, or complex formats may need downloading.
 - Historical links refer to retained current files rather than an immutable complete backup.
 - Workspace export excludes native and Linux work files and VM disks. Download important outputs separately. See [Workspace export](workspace-export.md).

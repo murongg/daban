@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { LocalCommandRunner, type LocalSandboxAdapter } from './local-command.js';
 
 async function fixture() {
@@ -133,6 +133,34 @@ test.skipIf(!['darwin', 'linux'].includes(process.platform))(
   },
 );
 
+test.skipIf(process.platform !== 'win32')(
+  'runs PowerShell with UTF-8 output and a filtered environment after full access',
+  async (t) => {
+    const { root, cwd } = await fixture();
+    t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, 'outside.txt'), '合成样例');
+    vi.stubEnv('MOCK_PRIVATE_TOKEN', 'synthetic-secret');
+    t.onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const runner = new LocalCommandRunner();
+    const result = await runner.run(
+      {
+        root: cwd,
+        cwd,
+        command:
+          'if ($env:MOCK_PRIVATE_TOKEN) { exit 99 }; Get-Content -Raw -Encoding UTF8 -LiteralPath ../outside.txt; exit 7',
+        unrestricted: true,
+      },
+      new AbortController().signal,
+    );
+    expect(result.isError, result.content[0].text).not.toBe(true);
+    const execution = JSON.parse(result.content[0].text);
+    expect(execution.exitCode).toBe(7);
+    expect(execution.stdout.trim()).toBe('合成样例');
+  },
+);
+
 test('refuses unsupported platforms and unapproved working directories before sandbox startup', async (t) => {
   const { root, cwd } = await fixture();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
@@ -143,12 +171,8 @@ test('refuses unsupported platforms and unapproved working directories before sa
   };
   const unsupported = new LocalCommandRunner({ manager, platform: 'win32' });
   expect(
-    (
-      await unsupported.run(
-        { root, cwd, command: 'echo synthetic', unrestricted: true },
-        new AbortController().signal,
-      )
-    ).content[0].text,
+    (await unsupported.run({ root, cwd, command: 'echo synthetic' }, new AbortController().signal))
+      .content[0].text,
   ).toBe('LOCAL_COMMAND_SANDBOX_UNAVAILABLE');
   const outside = new LocalCommandRunner({ manager, platform: 'linux' });
   expect(

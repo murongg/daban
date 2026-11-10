@@ -28,7 +28,7 @@ const workspaceShell = {
     'Run Bash on this computer in the current task directory. Use write_file to create a script there, then use this tool to run it with an installed interpreter and check its output. Use relative paths. The sandbox permits only this task directory, temporary files, and standard system tools, without network or sudo. Use web_fetch separately for public URLs.',
   inputSchema: {
     type: 'object',
-    properties: { command: { type: 'string', description: 'Bash command to run in this task.' } },
+    properties: { command: { type: 'string', description: 'Command to run in this task.' } },
     required: ['command'],
     additionalProperties: false,
   },
@@ -46,19 +46,19 @@ export class LocalCommandTools {
     private readonly folders: Folders,
     private readonly commands: Commands,
     private readonly execute: HostCommandExecutor,
+    private readonly platform: NodeJS.Platform = process.platform,
   ) {}
 
   listFor(run?: AgentToolRun) {
-    return this.unrestricted(run)
-      ? [
-          {
-            ...workspaceShell,
-            description:
-              'Run Bash directly on this computer, starting in the current task directory. The user granted full host command access for this task. Commands have the current OS account’s file and network access. Use this for authorized host work and verify the result.',
-          },
-          commandTool,
-        ]
-      : this.list;
+    const windows = this.platform === 'win32';
+    if (!this.unrestricted(run)) return windows ? [] : this.list;
+    return [
+      {
+        ...workspaceShell,
+        description: `Run ${windows ? 'PowerShell' : 'Bash'} directly on this computer, starting in the current task directory. The user granted full host command access for this task. Commands have the current OS account’s file and network access. Use this for authorized host work and verify the result.`,
+      },
+      ...(windows ? [] : [commandTool]),
+    ];
   }
 
   private unrestricted(run?: AgentToolRun) {
@@ -66,6 +66,10 @@ export class LocalCommandTools {
   }
 
   async invoke(run: AgentToolRun, name: string, args: Record<string, unknown>, wireId?: string) {
+    const unrestricted = name === 'workspace_shell' && this.unrestricted(run);
+    // Windows offers no sandboxed host shell. Enforce the grant even for an unlisted tool call.
+    if (this.platform === 'win32' && !unrestricted)
+      throw new Fault('NATIVE_WORKSPACE_TOOL_UNAVAILABLE', 403);
     const { command, folder, cwd } = args;
     if (
       !Object.hasOwn(this.fields, name) ||
@@ -86,8 +90,7 @@ export class LocalCommandTools {
     const directory = taskDirectory
       ? { root: taskDirectory.canonical, cwd: taskDirectory.canonical }
       : await this.folders.commandDirectory(run.bot, folder, cwd);
-    const scope =
-      name === 'workspace_shell' && this.unrestricted(run) ? { unrestricted: true as const } : {};
+    const scope = unrestricted ? { unrestricted: true as const } : {};
     return this.commands.invoke(
       {
         id: run.id,

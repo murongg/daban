@@ -18,7 +18,7 @@ The choice survives a local reload. A new conversation returns to the default. C
 
 Existing choices appear as **Full access (previous scope)** when new permissions are available. Select **Full access** again to grant the permissions shown for future tasks in that conversation. A browser connection opened under this policy disconnects at the end of the task. For ongoing access, enable the per-Bot permission in Browser settings.
 
-Full access applies the host command permission to `workspace_shell` on macOS and Linux. Commands start in the task directory and use the current OS account. Operating system permission prompts and administrator requirements still apply. Connected-folder commands through `local_shell` retain their separate approval and sandbox.
+Full access lets `workspace_shell` run PowerShell on Windows and Bash on macOS and Linux. Commands start in the task directory and use the current OS account. Operating system permission prompts and administrator requirements still apply. Windows offers host commands only with explicit Full access. On macOS and Linux, connected-folder commands through `local_shell` retain their separate approval and sandbox.
 
 ## Request types
 

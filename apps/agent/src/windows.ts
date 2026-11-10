@@ -12,8 +12,16 @@ interface RunOptions {
 }
 type Run = (program: string, args: string[], options: RunOptions) => Promise<{ stdout: string }>;
 const execute = promisify(execFile);
-function powershellEnvironment() {
-  const system = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+export function windowsSystemPath(...parts: string[]) {
+  return path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', ...parts);
+}
+
+export function powershellPath() {
+  return windowsSystemPath('WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
+export function powershellEnvironment() {
+  const system = windowsSystemPath();
   const names = [
     'APPDATA',
     'LOCALAPPDATA',
@@ -71,10 +79,7 @@ export class WindowsHost {
   async owns(pid: number, image: string): Promise<boolean | undefined> {
     if (!Number.isSafeInteger(pid) || pid < 1 || pid > 0xffffffff || !path.isAbsolute(image))
       throw Error('QEMU_CONFIG_INVALID');
-    const program = path.join(
-      process.env.SystemRoot || 'C:\\Windows',
-      'System32/WindowsPowerShell/v1.0/powershell.exe',
-    );
+    const program = powershellPath();
     const script = `$ErrorActionPreference='Stop'\n$p=Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'\n[ordered]@{exists=[bool]$p;image=if($p.ExecutablePath){[string]$p.ExecutablePath}else{$null}} | ConvertTo-Json -Compress`;
     try {
       const result = await (
@@ -108,10 +113,7 @@ export class WindowsHost {
     }
   }
   async enable() {
-    const program = path.join(
-      process.env.SystemRoot || 'C:\\Windows',
-      'System32/WindowsPowerShell/v1.0/powershell.exe',
-    );
+    const program = powershellPath();
     const child = Buffer.from(
       "$ErrorActionPreference='Stop'; try { Enable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -All -NoRestart | Out-Null; exit 0 } catch { exit 1 }",
       'utf16le',
@@ -168,10 +170,7 @@ if ($p.ExitCode -ne 0) { throw 'FeatureEnableFailed' }
     return this.probing;
   }
   private async observe(): Promise<WindowsAcceleration> {
-    const program = path.join(
-      process.env.SystemRoot || 'C:\\Windows',
-      'System32/WindowsPowerShell/v1.0/powershell.exe',
-    );
+    const program = powershellPath();
     try {
       const result = await (
         this.dependencies.run ??
