@@ -225,6 +225,14 @@ test('native sessions direct code execution to the task workspace even when Linu
   expect(prompt).toMatch(/software installation in the VM/i);
 });
 
+test('known text attachments can be read directly and saved outputs are checked by reading them back', () => {
+  const instructions = agentInstructionsFor(true, true);
+  expect(instructions).toMatch(/read_file.*exact name.*list_files/i);
+  expect(instructions).toMatch(/omit offset and limit/i);
+  expect(instructions).toMatch(/read the saved output back/i);
+  expect(instructions).toMatch(/routine file tasks.*without a plan/i);
+});
+
 test('restart retains a durable clean fence for explicit recovery while interrupting every running attempt', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'synthetic-clean-restart-'));
   try {

@@ -269,6 +269,7 @@ export const chinese = {
   'errors.goalRoundLimit': '目标已达到自动续行上限。请查看状态，或清除后重新设定。',
   'errors.goalIncomplete': '目标尚未标记完成，请检查状态和执行记录。',
   'errors.taskIncomplete': '执行计划仍有未完成项，请查看回复中的剩余工作和阻碍。',
+  'errors.taskFileVerificationFailed': '输出文件未通过核对，请查看执行记录。',
   'errors.goalBlocked': '目标已报告阻塞，请检查已保存的原因。',
   'execution.planningMode': '计划模式',
   'execution.delegateTask': '委派子任务',

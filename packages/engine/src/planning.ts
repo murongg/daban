@@ -3,6 +3,9 @@ export const inject = ['agents', 'tools', 'planMode'];
 interface Agent {
   id: string;
 }
+interface PromptAssembly {
+  tools: { name: string; description?: string }[];
+}
 interface Context {
   agents: { roots(): Agent[] };
   planMode: {
@@ -10,6 +13,14 @@ interface Context {
     get(agent: Agent): { active: boolean; pending?: boolean };
   };
   on(event: 'agent/created', listener: (payload: { agent: Agent }) => unknown): unknown;
+  on(
+    event: 'system-prompt/assemble',
+    listener: (
+      assembly: PromptAssembly,
+      context: unknown,
+      next: () => Promise<PromptAssembly>,
+    ) => Promise<PromptAssembly>,
+  ): unknown;
   tools: {
     guard(
       check: (exec: { agent?: Agent; name: string; arguments?: unknown }) => string | undefined,
@@ -66,6 +77,22 @@ const reads = new Set([
   ].map((name) => `mcp__computer__${name}`),
 ]);
 export function apply(ctx: Context, config: { active: boolean }) {
+  ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
+    const assembly = await next();
+    return {
+      ...assembly,
+      // The SDK's default asks for a plan on every multi-step task, including routine file I/O.
+      tools: assembly.tools.map((tool) =>
+        tool.name === 'todo_write'
+          ? {
+              ...tool,
+              description:
+                'Track complex work with multiple deliverables, dependencies, or checkpoints. Skip routine file tasks such as reading known inputs, writing a single straightforward output, and reading it back, even when those take several tool calls. When a plan helps, record a concise list before starting, keep one active item, and mark each item complete after verifying it.',
+            }
+          : tool,
+      ),
+    };
+  });
   ctx.on('agent/created', ({ agent }) => {
     if (ctx.agents.roots()[0] === agent) ctx.planMode.set(agent, config.active);
   });

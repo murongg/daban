@@ -214,6 +214,13 @@ test('real DSH keeps conversation cache identity across tasks/restarts and prese
       memory: '',
     });
     const first = await run(bot);
+    const request = JSON.stringify(first.body);
+    expect(request, `${api} must send Daban's file routing policy`).toContain(
+      'Omit offset and limit on the first read',
+    );
+    expect(request, `${api} must send the matching todo tool description`).toContain(
+      'Skip routine file tasks such as reading known inputs',
+    );
     const second = await run(bot);
     const sessionRoot = path.join(agent.models.dir, 'dsh', bot);
     const sessions = (await readdir(sessionRoot, { recursive: true })).filter((file) =>
