@@ -11,6 +11,7 @@ import {
   type Group,
   imageMime,
   isModelId,
+  localCodexModel,
   modelCatalog,
   modelHasVision,
   type RuntimeDownload,
@@ -651,6 +652,8 @@ function Workbench() {
           'ATTACHMENT_TRASHED',
           'ATTACHMENT_CORRUPT',
           'INVALID_ATTACHMENT',
+          'CODEX_TEXT_ONLY',
+          'CODEX_UNAVAILABLE',
           'MODEL_IMAGE_UNSUPPORTED',
           'RUNTIME_TOO_OLD',
         ].includes(error.message)
@@ -1298,7 +1301,9 @@ function Workbench() {
                       : undefined
                   }
                   onQueueInsert={
-                    runtime.enabled && runtime.snapshot.protocolVersion >= 42
+                    runtime.enabled &&
+                    runtime.snapshot.protocolVersion >= 42 &&
+                    task?.model !== localCodexModel
                       ? (id) => insertQueued(bot.id, id)
                       : undefined
                   }

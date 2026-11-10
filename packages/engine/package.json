@@ -7,7 +7,6 @@
     "node": "^22.16.0 || >=24.0.0"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "1.4.0",
     "@daban/protocol": "0.7.0",
     "@mixmark-io/domino": "2.2.0",
     "@modelcontextprotocol/client": "2.2.0",

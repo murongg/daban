@@ -2364,6 +2364,7 @@ export const modelOptions = [
   { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
 ] as const;
 export type ModelId = string;
+export const localCodexModel = 'local-codex';
 export type DeepSeekModel = (typeof modelOptions)[number]['id'];
 export type ModelApi =
   | 'openai-completions'
@@ -2424,7 +2425,8 @@ const upstreamModelId = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,159}$/.test(value);
 export const isModelId = (value: unknown): value is ModelId =>
   typeof value === 'string' &&
-  (modelOptions.some((option) => option.id === value) ||
+  (value === localCodexModel ||
+    modelOptions.some((option) => option.id === value) ||
     /^provider:[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}:[a-zA-Z0-9][a-zA-Z0-9._:/@+-]{0,159}$/.test(value));
 // Legacy official-only callers must not accept a foreign route and reuse its key as a DeepSeek key.
 export const isDeepSeekModel = (value: unknown): value is DeepSeekModel =>

@@ -79,7 +79,7 @@ import { redact, redactStream } from './redaction.js';
 import { RemoteWorkspace, type WorkspaceExecutor } from './remote-workspace.js';
 import { RunSearch } from './search-run.js';
 import { type SearchCapture, SearchSettings } from './search-settings.js';
-import type { ModelSettings, ResolvedModel } from './settings.js';
+import type { LocalCodexRoute, ModelSettings, ResolvedModel } from './settings.js';
 import { SkillDiscovery } from './skill-discovery.js';
 import { invokedSkills } from './skill-provider.js';
 import { SkillTools } from './skill-tools.js';
@@ -1712,7 +1712,6 @@ export class ModelRuns {
     const chatRevision = task?.contextRevision ?? boundary;
     if (!scope) this.chats.assertVisible(bot, chatRevision ?? 0);
     if (this.running(bot)) throw new Fault('MODEL_ALREADY_RUNNING');
-    if (!this.Harness && !existsSync(this.sdkFile)) throw new Fault('DSH_NOT_INSTALLED', 503);
     const id = `${Date.now()}-${randomBytes(4).toString('hex')}`;
     const attemptId = randomBytes(16).toString('hex');
     let prepared!: () => unknown;
@@ -1800,24 +1799,39 @@ export class ModelRuns {
         },
       ];
       job.beforeTool = () => this.fenceAttempt(job, 'tool');
-      job.route = config;
-      job.searchCapture = await this.search.capture();
-      job.hostSearch = true;
-      job.searchRun = new RunSearch(
-        this.search,
-        job.searchCapture,
-        job,
-        (claimId, query, dispatch) => this.searchEffect(job, claimId, query, dispatch),
-      );
+      if ('driver' in config) {
+        job.insertable = false;
+        if (
+          !task ||
+          cachedInputs?.length ||
+          task.files?.length ||
+          job.inserts.length ||
+          goalCommand(task.prompt) ||
+          planningCommand(task.prompt)
+        )
+          throw new Fault('CODEX_TEXT_ONLY', 400);
+      } else {
+        if (!this.Harness && !existsSync(this.sdkFile)) throw new Fault('DSH_NOT_INSTALLED', 503);
+        job.route = config;
+        job.searchCapture = await this.search.capture();
+        job.hostSearch = true;
+        job.searchRun = new RunSearch(
+          this.search,
+          job.searchCapture,
+          job,
+          (claimId, query, dispatch) => this.searchEffect(job, claimId, query, dispatch),
+        );
+      }
       job.model = config.model;
       job.vision = config.vision;
       // Native-only and Linux sessions expose different tools and workspace paths. Keep visible turns, never resume across modes.
       job.binding = this.tools.options.nativeOnly
         ? createHash('sha256').update(`${config.binding}:native-workspace-v2`).digest('hex')
         : config.binding;
-      job.binding = createHash('sha256')
-        .update(`${job.binding}:search:${job.searchCapture.binding}`)
-        .digest('hex');
+      if (job.searchCapture)
+        job.binding = createHash('sha256')
+          .update(`${job.binding}:search:${job.searchCapture.binding}`)
+          .digest('hex');
       // A resumed SDK context must not retain the instructions of a different approval policy.
       if (task?.approvalMode && task.approvalMode !== 'auto')
         job.binding = createHash('sha256')
@@ -1887,39 +1901,45 @@ export class ModelRuns {
       }
       job.abort.signal.throwIfAborted();
       await inputDirectory.verify();
-      await this.tools.open(job);
-      if (this.tools.hostSelected(job.bot, job))
-        // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
-        job.binding = createHash('sha256')
-          .update(
-            `${job.binding}:host-browser-v3:${this.tools
-              .list(job.bot, job.model, job.conversationId, job)
-              .map((tool) => tool.name)
-              .join(',')}`,
-          )
-          .digest('hex');
-      // A Mac grant and a VM connection must never resume each other's native SDK tool context.
-      // Transport binding must retain the search and approval identities captured above.
-      if (this.tools.localSelected(job.bot, job))
-        job.binding = createHash('sha256')
-          .update(`${job.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`)
-          .digest('hex');
-      // Keep the mode across SDK catalog/persona replacements; old context must never silently re-enable writes.
-      if (task)
-        job.binding = createHash('sha256').update(`${job.binding}:planning-v1`).digest('hex');
-      if (task) job.binding = createHash('sha256').update(`${job.binding}:goals-v1`).digest('hex');
-      // Delegation changes native tool schemas; do not resume a cached pre-delegation catalog.
-      if (task)
-        job.binding = createHash('sha256').update(`${job.binding}:delegation-v1`).digest('hex');
-      const office =
-        !!(this.execution || this.runtime || this.tools.linux?.enabled) &&
-        this.tools
-          .list(job.bot, job.model, job.conversationId, job)
-          .some((tool) => tool.name === 'shell');
-      // Native sessions retain skill catalogs. A newly available Office provider needs a fresh SDK context.
-      if (office)
-        job.binding = createHash('sha256').update(`${job.binding}:office-v1`).digest('hex');
-      const patch = await this.writePatch(job, config, office);
+      let patch = '';
+      if (!('driver' in config)) {
+        await this.tools.open(job);
+        if (this.tools.hostSelected(job.bot, job))
+          // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
+          job.binding = createHash('sha256')
+            .update(
+              `${job.binding}:host-browser-v3:${this.tools
+                .list(job.bot, job.model, job.conversationId, job)
+                .map((tool) => tool.name)
+                .join(',')}`,
+            )
+            .digest('hex');
+        // A Mac grant and a VM connection must never resume each other's native SDK tool context.
+        // Transport binding must retain the search and approval identities captured above.
+        if (this.tools.localSelected(job.bot, job))
+          job.binding = createHash('sha256')
+            .update(
+              `${job.binding}:local-desktop:${this.tools.options.nativeOnly ? 'native' : 'vm'}`,
+            )
+            .digest('hex');
+        // Keep the mode across SDK catalog/persona replacements; old context must never silently re-enable writes.
+        if (task)
+          job.binding = createHash('sha256').update(`${job.binding}:planning-v1`).digest('hex');
+        if (task)
+          job.binding = createHash('sha256').update(`${job.binding}:goals-v1`).digest('hex');
+        // Delegation changes native tool schemas; do not resume a cached pre-delegation catalog.
+        if (task)
+          job.binding = createHash('sha256').update(`${job.binding}:delegation-v1`).digest('hex');
+        const office =
+          !!(this.execution || this.runtime || this.tools.linux?.enabled) &&
+          this.tools
+            .list(job.bot, job.model, job.conversationId, job)
+            .some((tool) => tool.name === 'shell');
+        // Native sessions retain skill catalogs. A newly available Office provider needs a fresh SDK context.
+        if (office)
+          job.binding = createHash('sha256').update(`${job.binding}:office-v1`).digest('hex');
+        patch = await this.writePatch(job, config, office);
+      }
       job.onLimit = () => {
         this.stop(bot, 'tool-limit').catch(() => {
           job.error = 'MODEL_STOP_FAILED';
@@ -2613,7 +2633,66 @@ export class ModelRuns {
       throw error;
     }
   }
-  private async execute(job: ModelJob, config: ResolvedModel, patchFile: string) {
+  private async runLocalCodex(job: ModelJob, config: LocalCodexRoute) {
+    const turn = job.turns![0];
+    const context = recoveryContext(
+      await this.journal.all(job.bot),
+      {
+        bot: job.bot,
+        runId: job.id,
+        conversationId: job.conversationId,
+        chatRevision: job.chatRevision,
+        persona: job.persona,
+        redact: job.redact!,
+      },
+      24_000,
+    );
+    const prompt = [context, job.conversationContext, turn.prompt].filter(Boolean).join('\n\n');
+    job.sessionId = job.id;
+    job.phase = 'running';
+    job.attemptSummary!.at(-1)!.phase = 'running';
+    await this.persist(job);
+    let prefix = '';
+    let revision = 0;
+    let lastWrite = -Infinity;
+    const result = await config.driver.run({
+      prompt,
+      ...(job.profile?.instructions
+        ? {
+            instructions: `You are ${JSON.stringify(job.profile.name)}. User preferences: ${job.profile.instructions}`,
+          }
+        : {}),
+      run: job,
+      tools: this.tools,
+      onDelta: (delta) => {
+        if (!delta || job.abort.signal.aborted) return;
+        this.markFence(job, 'output');
+        prefix = (prefix + delta).slice(0, replyLimit);
+        const now = performance.now();
+        if (now - lastWrite < 150) return;
+        lastWrite = now;
+        this.persist(job, {
+          turnId: turn.id,
+          revision: ++revision,
+          text: job.redactResponse!(prefix),
+          state: 'streaming',
+        }).catch(() => {
+          this.stop(job.bot, 'progress-save-failed').catch(() => {
+            job.error = 'MODEL_PROGRESS_SAVE_FAILED';
+          });
+        });
+      },
+    });
+    job.abort.signal.throwIfAborted();
+    const text = job.redact!(result);
+    if (text.length > replyLimit) throw new Fault('RESPONSE_TOO_LARGE', 413);
+    if (text) this.markFence(job, 'output');
+    job.result = turn.result = text;
+    job.phase = text ? 'completed' : 'failed';
+    if (!text) job.error = 'MODEL_EMPTY_RESULT';
+  }
+
+  private async execute(job: ModelJob, config: ResolvedModel | LocalCodexRoute, patchFile: string) {
     const clean = (value: unknown) => job.redact!(String(value || '')).slice(0, 12000);
     const elapsed = () => performance.now();
     const activeStart = elapsed();
@@ -2669,7 +2748,8 @@ export class ModelRuns {
         startup.initialized = false;
         startup.stage = 'sdk-loading';
         try {
-          await this.runAttempt(job, config, patchFile, startup);
+          if ('driver' in config) await this.runLocalCodex(job, config);
+          else await this.runAttempt(job, config, patchFile, startup);
           attempt.phase = job.phase === 'completed' ? 'completed' : 'failed';
           attempt.finishedAt = new Date().toISOString();
           break;

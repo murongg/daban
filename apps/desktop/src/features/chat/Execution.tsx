@@ -4,6 +4,7 @@ import {
   isRunStatistics,
   isTranscriptContent,
   isTranscriptPage,
+  localCodexModel,
   type ModelAttempt,
   modelCatalog,
   type ReplyStream,
@@ -555,7 +556,10 @@ export function Execution(props: {
   const previous = validAttempts?.at(-2);
   const models = latest && modelCatalog(runtime.snapshot.model?.connections);
   const describe = (attempt: ModelAttempt, key: 'models.actualModel' | 'models.previousModel') => {
-    const name = models?.find((model) => model.id === attempt.model)?.name || attempt.model;
+    const name =
+      attempt.model === localCodexModel
+        ? t('models.localCodex')
+        : models?.find((model) => model.id === attempt.model)?.name || attempt.model;
     const label = t(key, { 0: name });
     return attempt.failure ? `${label} · ${t(failureLabels[attempt.failure])}` : label;
   };

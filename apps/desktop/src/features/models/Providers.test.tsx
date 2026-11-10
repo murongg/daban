@@ -1151,27 +1151,21 @@ it('recovers a lost paid inference test through its exact diagnostic receipt', a
   expect(await screen.findByText(/7 ms/)).toBeInTheDocument();
 });
 
-it('changes the workspace supplier and saves only a model from that supplier', async () => {
+it('saves the native Codex workspace default without entering an API key', async () => {
   const backend = connect();
-  backend.snapshot.model.connections!.push({
-    id: 'mock-second',
-    name: '第二供应商',
-    baseURL: 'https://second.example.test/v1',
-    models: [
-      { id: 'mock-one', name: '第二模型一', vision: false, contextWindow: 64000, maxTokens: 4096 },
-      { id: 'mock-two', name: '第二模型二', vision: false, contextWindow: 64000, maxTokens: 4096 },
-    ],
-  });
+  backend.snapshot.model.modelAccess = {
+    scope: 'mock-codex-scope',
+    fallback: true,
+    diagnostics: true,
+    cli: true,
+  };
   mount();
-  await selectOption(userEvent, await findSelectControl('工作区默认供应商'), 'mock-second');
-  expect(selectControl('工作区默认模型')).toHaveTextContent('第二模型一');
-  expect(backend.writes).toHaveLength(0);
-  await selectOption(userEvent, selectControl('工作区默认模型'), 'provider:mock-second:mock-two');
+  await selectOption(userEvent, await findSelectControl('工作区默认模型'), 'local-codex');
   await userEvent.click(screen.getByRole('button', { name: '保存默认模型' }));
   expect(backend.writes).toEqual([
     {
       type: 'model.configure',
-      input: { model: 'provider:mock-second:mock-two', revision: 3, requestId: expect.any(String) },
+      input: { model: 'local-codex', revision: 3, requestId: expect.any(String) },
     },
   ]);
 });

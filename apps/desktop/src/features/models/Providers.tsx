@@ -4,6 +4,7 @@ import {
   isModelConnection,
   isModelKey,
   isModelSaved,
+  localCodexModel,
   type ModelCheck,
   type ModelConnection,
   type ModelDefinition,
@@ -61,6 +62,7 @@ export function Providers({
   const model = runtime.snapshot.model;
   const connections = model.connections || [];
   const catalog = modelCatalog(connections);
+  const cli = model.modelAccess?.cli === true;
   const available =
     runtime.enabled &&
     runtime.snapshot.phase === 'ready' &&
@@ -141,20 +143,6 @@ export function Providers({
     original.baseURL === draft.connection.baseURL &&
     modelApi(original) === modelApi(draft.connection);
   const current = selected ?? model.model;
-  const chooseProvider = mode === 'settings' && connections.length > 1;
-  const currentProvider = catalog.find((entry) => entry.id === current)?.provider;
-  const defaultConnections =
-    chooseProvider && currentProvider
-      ? connections.filter((connection) => connection.id === currentProvider)
-      : connections;
-  const defaultDisabled = !available || busy || !!pending || !!draft;
-  function selectDefault(value: string) {
-    setSelected(value);
-    // Choosing a model after choosing its provider is part of the same revision-bound edit.
-    setDefaultRevision((revision) => revision ?? model.revision);
-    setCode('');
-    setError('');
-  }
   const query = draft
     ? {
         connection: {
@@ -272,11 +260,17 @@ export function Providers({
     setCode('');
     setNotice('');
   }
-  async function save() {
+  async function save(useLocal = false) {
     if (!available || busy || code === 'MODEL_SETTINGS_CONFLICT') return;
     let input = pending;
     if (!input) {
-      if (draft) {
+      if (useLocal) {
+        input = {
+          model: localCodexModel,
+          revision: model.revision!,
+          requestId: crypto.randomUUID(),
+        };
+      } else if (draft) {
         const connection = {
           ...draft.connection,
           name: draft.connection.name.trim(),
@@ -310,7 +304,10 @@ export function Providers({
           connection,
         ]);
         // Editing or removing a model must not silently choose a replacement based on its row position.
-        if (!nextCatalog.some((entry) => entry.id === selectedModel)) {
+        if (
+          selectedModel !== localCodexModel &&
+          !nextCatalog.some((entry) => entry.id === selectedModel)
+        ) {
           setError(t('models.currentDefaultModelWasRemovedRenamedExplicitly'));
           return;
         }
@@ -322,7 +319,8 @@ export function Providers({
           ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
         };
       } else {
-        if (!catalog.some((entry) => entry.id === current)) return;
+        if (!(cli && current === localCodexModel) && !catalog.some((entry) => entry.id === current))
+          return;
         input = {
           model: current,
           revision: defaultRevision ?? model.revision!,
@@ -338,11 +336,13 @@ export function Providers({
         : connections;
       // The Host receipt follows the selected model, which can belong to a different provider than the edit.
       const connection =
-        prospective.find((connection) =>
-          connection.models.some(
-            (entry) => modelReference(connection.id, entry.id) === input.model,
-          ),
-        )?.id || 'deepseek-official';
+        input.model === localCodexModel
+          ? localCodexModel
+          : prospective.find((connection) =>
+              connection.models.some(
+                (entry) => modelReference(connection.id, entry.id) === input.model,
+              ),
+            )?.id || 'deepseek-official';
       pendingQuery.current = {
         scope: model.modelAccess.scope,
         requestId: input.requestId,
@@ -510,43 +510,45 @@ export function Providers({
         !connections.length && (
           <p className="inline-note">{t('models.addProviderChoosingWorkspacePerBotModels')}</p>
         )}
-      {!editorOpen && catalog.length > 0 && (
+      {mode === 'onboarding' && editorOpen && cli && (
+        <div className="setting-row">
+          <p className="setting-description">{t('models.localCodexHint')}</p>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!available || busy || (!!pending && pending.model !== localCodexModel)}
+            onClick={() => save(true)}
+          >
+            {pending?.model === localCodexModel
+              ? t('models.queryReceipt')
+              : t('models.useLocalCodex')}
+          </button>
+        </div>
+      )}
+      {!editorOpen && (catalog.length > 0 || cli || current === localCodexModel) && (
         <div className="provider-default">
-          <div className={chooseProvider ? 'provider-pair' : undefined}>
-            {chooseProvider && (
-              <div className="field-label">
-                {t('models.workspaceDefaultProvider')}
-                <Select
-                  label={t('models.workspaceDefaultProvider')}
-                  value={currentProvider ?? ''}
-                  disabled={defaultDisabled}
-                  onValueChange={(provider) => {
-                    const target =
-                      catalog.find(
-                        (entry) => entry.provider === provider && entry.id === model.model,
-                      ) ?? catalog.find((entry) => entry.provider === provider);
-                    if (target) selectDefault(target.id);
-                  }}
-                  options={connections.map((connection) => ({
-                    value: connection.id,
-                    label: connection.name,
-                    icon: <ProviderIcon platform={providerIdentity(connection)} />,
-                  }))}
-                />
-              </div>
-            )}
-            <div className="field-label">
-              {t('models.workspaceDefault')}
-              <Select
-                label={t('models.workspaceDefault')}
-                value={current}
-                disabled={defaultDisabled}
-                onValueChange={selectDefault}
-                options={modelChoices(defaultConnections, current)}
-              />
-            </div>
+          <div className="field-label">
+            {t('models.workspaceDefault')}
+            <Select
+              label={t('models.workspaceDefault')}
+              value={current}
+              disabled={!available || busy || !!pending || !!draft}
+              onValueChange={(value) => {
+                setSelected(value);
+                setDefaultRevision(model.revision);
+                setCode('');
+                setError('');
+              }}
+              options={modelChoices(connections, current, cli)}
+            />
           </div>
-          <p className="field-help">{t('models.onlyAffectsBotsFollowWorkspaceDefaultRunning')}</p>
+          <p className="field-help">
+            {t(
+              current === localCodexModel
+                ? 'models.localCodexHint'
+                : 'models.onlyAffectsBotsFollowWorkspaceDefaultRunning',
+            )}
+          </p>
           <div className="model-actions">
             <button
               className="secondary"
@@ -558,7 +560,7 @@ export function Providers({
                 code === 'MODEL_SETTINGS_CONFLICT' ||
                 (!pending && current === model.model)
               }
-              onClick={save}
+              onClick={() => save()}
             >
               {pending
                 ? t(model.modelAccess ? 'models.queryReceipt' : 'common.verifyRetrySave')
@@ -1044,7 +1046,12 @@ export function Providers({
             <button
               className="primary"
               type="submit"
-              disabled={!available || busy || code === 'MODEL_SETTINGS_CONFLICT'}
+              disabled={
+                !available ||
+                busy ||
+                code === 'MODEL_SETTINGS_CONFLICT' ||
+                (mode === 'onboarding' && pending?.model === localCodexModel)
+              }
             >
               {busy
                 ? t('models.verifyingSaving')

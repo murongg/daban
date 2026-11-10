@@ -6,17 +6,16 @@ import type { ToolResult } from './computer-tools.js';
 interface CodexTurn {
   input: Readable;
   output: Writable;
-  model: string;
   prompt: string;
+  instructions?: string;
   run: AgentToolRun;
   tools: AgentTools;
   onDelta?: (delta: string) => unknown;
 }
 
 const frameLimit = 1024 * 1024;
-const allowedTools = new Set(['work_list', 'local_shell']);
-const clientName = 'daban_poc';
-const appServerVersion = '0.167.0';
+const clientName = 'daban';
+export const codexVersion = '0.167.0';
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const wireId = (value: unknown): value is number | string =>
@@ -57,7 +56,7 @@ const toolFailure = (text: string) => ({
 });
 
 function toolResponse(result: ToolResult) {
-  // Both proof-of-concept tools return text. Other payload types require their own mapping.
+  // The exposed Daban tools return text. Other payload types require their own mapping.
   if (result.content.some((item) => item.type !== 'text'))
     return toolFailure('CODEX_UNSUPPORTED_TOOL_RESULT');
   return {
@@ -72,26 +71,30 @@ function toolResponse(result: ToolResult) {
 export async function runCodexTurn({
   input,
   output,
-  model,
   prompt,
+  instructions,
   run,
   tools,
   onDelta,
 }: CodexTurn) {
-  const signal = run.abort.signal;
-  signal.throwIfAborted();
+  run.abort.signal.throwIfAborted();
+  const abort = new AbortController();
+  const signal = abort.signal;
   const catalog = tools
     .list(run.bot, run.model, run.conversationId, run)
-    .filter((tool) => allowedTools.has(tool.name));
-  const stop = () => run.abort.abort();
-  const deadline = setTimeout(stop, 120_000).unref();
+    .filter((tool) => tool.name === 'work_list');
+  let dispatching = false;
+  const stop = (reason: unknown) => abort.abort(reason);
+  const cancel = addAbortListener(run.abort.signal, () => abort.abort(run.abort.signal.reason));
+  const deadline = setTimeout(() => stop(new Error('CODEX_TIMEOUT')), 120_000).unref();
   const interrupt = addAbortListener(signal, () => input.destroy());
-  output.on('error', stop);
+  const outputError = () => stop(new Error('CODEX_WRITE_FAILED'));
+  output.on('error', outputError);
   const messages = frames(input);
   const names = new Set(catalog.map((tool) => tool.name));
   const calls = new Set<string>();
+  const commentary = new Set<string>();
   let pending: Promise<unknown> | undefined;
-  let dispatching = false;
   let result = '';
   let resultBytes = 0;
 
@@ -147,16 +150,19 @@ export async function runCodexTurn({
 
   try {
     const initialized = await request(1, 'initialize', {
-      clientInfo: { name: clientName, title: 'Daban CLI prototype', version: '0.1.0' },
+      clientInfo: { name: clientName, title: 'Daban', version: '0.1.0' },
       capabilities: { experimentalApi: true },
     });
     if (typeof initialized.userAgent !== 'string') throw new Error('CODEX_INVALID_INITIALIZE');
     // The experimental tool protocol is verified against this exact App Server version.
-    if (initialized.userAgent.split(' ', 1)[0] !== `${clientName}/${appServerVersion}`)
+    if (initialized.userAgent.split(' ', 1)[0] !== `${clientName}/${codexVersion}`)
       throw new Error('CODEX_UNVERIFIED_VERSION');
     await send({ method: 'initialized' });
+    const account = await request(4, 'account/read', { refreshToken: false });
+    if (!record(account.account) || account.account.type !== 'chatgpt')
+      throw new Error('CODEX_LOGIN_REQUIRED');
     const started = await request(2, 'thread/start', {
-      model,
+      ...(instructions ? { developerInstructions: instructions } : {}),
       ephemeral: true,
       // An empty environment list opts out of Codex's native execution environment.
       environments: [],
@@ -204,7 +210,7 @@ export async function runCodexTurn({
         }
         calls.add(params.callId);
         dispatching = true;
-        // Keep reading while approval waits. A premature turn end must revoke the pending grant.
+        // Keep checking turn ownership while Daban reads the work list.
         pending = tools
           .invoke(
             run,
@@ -221,7 +227,20 @@ export async function runCodexTurn({
         continue;
       }
       if (!record(params) || params.threadId !== threadId) continue;
-      if (method === 'item/agentMessage/delta' && params.turnId === turnId) {
+      if (params.turnId !== turnId && method !== 'turn/completed') continue;
+      if (
+        method === 'item/started' &&
+        record(params.item) &&
+        params.item.type === 'agentMessage' &&
+        params.item.phase === 'commentary' &&
+        scopedId(params.item.id)
+      ) {
+        // Codex sends interim narration as agent messages too. Keep it out of the final chat reply.
+        if (commentary.size >= 256) throw new Error('CODEX_OUTPUT_TOO_LARGE');
+        commentary.add(params.item.id);
+      }
+      if (method === 'item/agentMessage/delta') {
+        if (typeof params.itemId === 'string' && commentary.has(params.itemId)) continue;
         if (typeof params.delta !== 'string') throw new Error('CODEX_INVALID_DELTA');
         resultBytes += Buffer.byteLength(params.delta);
         if (resultBytes > frameLimit) throw new Error('CODEX_OUTPUT_TOO_LARGE');
@@ -237,13 +256,15 @@ export async function runCodexTurn({
       }
     }
   } catch (error) {
-    stop();
+    const failure = signal.aborted ? signal.reason : error;
+    stop(failure);
     await pending;
-    throw error;
+    throw failure;
   } finally {
     clearTimeout(deadline);
     interrupt[Symbol.dispose]();
-    output.off('error', stop);
+    cancel[Symbol.dispose]();
+    output.off('error', outputError);
     await messages.return(undefined);
   }
 }

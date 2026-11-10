@@ -13,6 +13,7 @@ import {
   isModelRemoveRequest,
   isModelSavedRequest,
   isModelUpdate,
+  localCodexModel,
   type ModelApi,
   type ModelCapabilities,
   type ModelCheck,
@@ -33,6 +34,7 @@ import { errorCode, Fault } from './control.js';
 import { ModelDiscovery, ModelRequestUnknown, responseJSON } from './discovery.js';
 import { syncDirectory } from './durability.js';
 import { inferenceRequest, inferenceText } from './inference.js';
+import type { LocalCodexDriver } from './local-codex.js';
 
 interface PrivateConnection extends ModelConnection {
   apiKey: string;
@@ -52,6 +54,7 @@ interface ModelOperation {
   probeRevision?: number;
 }
 interface PrivateState {
+  localCodex?: true;
   revision: number;
   scope?: string;
   operations?: ModelOperation[];
@@ -88,6 +91,13 @@ export interface ResolvedModel {
   vision: boolean;
   contextWindow: number;
   maxTokens: number;
+  binding: string;
+  secrets: string[];
+}
+export interface LocalCodexRoute {
+  driver: LocalCodexDriver;
+  model: typeof localCodexModel;
+  vision: false;
   binding: string;
   secrets: string[];
 }
@@ -213,6 +223,7 @@ export class ModelSettings {
   constructor(
     readonly file: string,
     private readonly fetcher: typeof fetch = fetch,
+    private readonly localCodex?: LocalCodexDriver,
   ) {
     this.discovery = new ModelDiscovery(fetcher);
   }
@@ -243,7 +254,10 @@ export class ModelSettings {
           new Set(value.operations.map((item) => item.id)).size !== value.operations.length)
       )
         throw new Error('Invalid model operations');
+      if (value.localCodex !== undefined && value.localCodex !== true)
+        throw new Error('Invalid local Codex preference');
       const state: PrivateState = {
+        ...(value.localCodex ? { localCodex: true } : {}),
         revision: Number(value.revision || 0),
         ...(value.scope ? { scope: value.scope as string } : {}),
         ...(value.operations ? { operations: value.operations as ModelOperation[] } : {}),
@@ -345,9 +359,9 @@ export class ModelSettings {
   }
   private publicConfig(config: PrivateConfig | null, includeConnections = false): ModelStatus {
     return {
-      provider: config?.provider || 'deepseek-official',
-      model: config?.model || 'deepseek-flash',
-      configured: !!config && config.configured !== false,
+      provider: config?.localCodex ? localCodexModel : config?.provider || 'deepseek-official',
+      model: config?.localCodex ? localCodexModel : config?.model || 'deepseek-flash',
+      configured: !!config && (config.localCodex === true || config.configured !== false),
       revision: config?.revision || 0,
       ...(includeConnections && config?.fallbackModel
         ? { fallbackModel: config.fallbackModel }
@@ -360,7 +374,7 @@ export class ModelSettings {
               scope: config?.scope || this.scope,
               fallback: true,
               diagnostics: true,
-              cli: false,
+              cli: !!this.localCodex,
             },
             probeRevision: config?.probeRevision || 0,
           }
@@ -389,8 +403,25 @@ export class ModelSettings {
     const config = await this.serial(() => this.recover());
     return this.resolveConfig(config, reference);
   }
-  async capture(reference?: ModelId) {
+  async capture(reference?: ModelId): Promise<{
+    revision: number;
+    primary: ResolvedModel | LocalCodexRoute;
+    fallback?: ResolvedModel;
+  }> {
     const config = await this.serial(() => this.recover());
+    if (reference === localCodexModel || (!reference && config?.localCodex)) {
+      if (!this.localCodex) throw new Fault('CODEX_UNAVAILABLE', 503);
+      return {
+        revision: config?.revision || 0,
+        primary: {
+          driver: this.localCodex,
+          model: localCodexModel,
+          vision: false,
+          binding: localCodexModel,
+          secrets: [],
+        },
+      };
+    }
     const primary = this.resolveConfig(config, reference);
     const fallback =
       config?.fallbackModel && config.fallbackModel !== primary.model
@@ -880,6 +911,7 @@ export class ModelSettings {
           : disconnect
             ? {
                 configured: false,
+                ...(config.localCodex ? { localCodex: true } : {}),
                 connections: [],
                 revision: input.revision + 1,
                 scope: config.scope,
@@ -1023,10 +1055,44 @@ export class ModelSettings {
       return this.operationView(next, settled);
     });
   }
+  private async configureLocal(value: ModelUpdate, before: PrivateConfig | null) {
+    if (value.apiKey || value.connection) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    const fingerprint = digest([localCodexModel, value.revision]);
+    const replay = this.mutationReplay(before, value.requestId, fingerprint);
+    if (replay) return this.publicConfig(before);
+    if ((before?.revision || 0) !== value.revision) throw new Fault('MODEL_SETTINGS_CONFLICT', 409);
+    if (!this.localCodex) throw new Fault('CODEX_UNAVAILABLE', 503);
+    await this.localCodex.check();
+    const revision = value.revision + 1;
+    return this.persist({
+      ...(before || { configured: false, connections: [] }),
+      localCodex: true,
+      revision,
+      operations: [
+        {
+          id: value.requestId,
+          fingerprint,
+          revision: value.revision,
+          connection: localCodexModel,
+          model: localCodexModel,
+          phase: 'committed',
+          committedRevision: revision,
+        },
+      ],
+      receipt: { id: value.requestId, fingerprint },
+    });
+  }
   private async claimConfigure(
     value: ModelUpdate,
   ): Promise<{ result: ModelStatus | Promise<ModelStatus> }> {
     const before = await this.recover();
+    const keepLocal = value.model === localCodexModel;
+    if (keepLocal && !value.connection) return { result: await this.configureLocal(value, before) };
+    if (keepLocal && !before?.localCodex) throw new Fault('INVALID_MODEL_SETTINGS', 400);
+    // API catalog edits preserve the local default and the existing API route for API-only features.
+    const model = keepLocal
+      ? (before?.model ?? modelReference(value.connection!.id, value.connection!.models[0].id))
+      : value.model;
     if (before?.probe?.id === value.requestId) throw new Fault('MODEL_SETTINGS_ID_REUSED');
     const connections = before ? [...allConnections(before)] : [];
     const existing = value.connection
@@ -1082,11 +1148,11 @@ export class ModelSettings {
       else connections[index] = edited;
     }
     if (connections.length > 20) throw new Fault('MODEL_SETTINGS_LIMIT', 400);
-    const selected = findModel(connections, value.model);
+    const selected = findModel(connections, model);
     if (!selected) throw new Fault('MODEL_UNAVAILABLE', 400);
     if (
       before?.fallbackModel &&
-      (!findModel(connections, before.fallbackModel) || before.fallbackModel === value.model)
+      (!findModel(connections, before.fallbackModel) || before.fallbackModel === model)
     )
       throw new Fault('MODEL_FALLBACK_INVALID', 400);
     const checked = edited || selected.connection;
@@ -1097,7 +1163,7 @@ export class ModelSettings {
       id: value.requestId,
       fingerprint,
       revision: value.revision,
-      connection: selected.connection.id,
+      connection: keepLocal ? localCodexModel : selected.connection.id,
       model: value.model,
       phase: 'claimed',
     };
@@ -1106,9 +1172,10 @@ export class ModelSettings {
       operations: [...(before?.operations || []), claim],
     });
     const candidate: PrivateConfig = {
+      ...(keepLocal ? { localCodex: true } : {}),
       ...(before?.fallbackModel ? { fallbackModel: before.fallbackModel } : {}),
       apiKey: selected.connection.apiKey,
-      model: value.model,
+      model,
       provider: selected.connection.id,
       connections,
       revision: value.revision + 1,
