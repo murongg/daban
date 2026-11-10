@@ -110,27 +110,28 @@ test('terminates commands on timeout and cancellation and caps combined output',
   ).toBe('LOCAL_COMMAND_OUTPUT_LIMIT');
 });
 
-test('an explicitly unrestricted command can access files outside its task directory', async (t) => {
-  const { root, cwd } = await fixture();
-  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
-  await writeFile(path.join(root, 'outside.txt'), 'synthetic outside data');
-  const manager = sandbox('', {});
-  manager.initialize = async () => {
-    throw new Error('unrestricted commands must use the real shell');
-  };
-  const request = {
-    root: cwd,
-    cwd,
-    command: 'cat ../outside.txt',
-    unrestricted: true as const,
-  };
-  const runner = new LocalCommandRunner({ manager, platform: 'linux' });
-  const result = await runner.run(request, new AbortController().signal);
-  expect(JSON.parse(result.content[0].text)).toMatchObject({
-    exitCode: 0,
-    stdout: 'synthetic outside data',
-  });
-});
+test.skipIf(!['darwin', 'linux'].includes(process.platform))(
+  'an explicitly unrestricted command can access files outside its task directory',
+  async (t) => {
+    const { root, cwd } = await fixture();
+    t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, 'outside.txt'), 'synthetic outside data');
+    const manager = sandbox('', {});
+    manager.initialize = async () => {
+      throw new Error('unrestricted commands must use the real shell');
+    };
+    const runner = new LocalCommandRunner({ manager });
+    const result = await runner.run(
+      { root: cwd, cwd, command: 'cat ../outside.txt', unrestricted: true },
+      new AbortController().signal,
+    );
+    expect(result.isError, result.content[0].text).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      exitCode: 0,
+      stdout: 'synthetic outside data',
+    });
+  },
+);
 
 test('refuses unsupported platforms and unapproved working directories before sandbox startup', async (t) => {
   const { root, cwd } = await fixture();
@@ -142,8 +143,12 @@ test('refuses unsupported platforms and unapproved working directories before sa
   };
   const unsupported = new LocalCommandRunner({ manager, platform: 'win32' });
   expect(
-    (await unsupported.run({ root, cwd, command: 'echo synthetic' }, new AbortController().signal))
-      .content[0].text,
+    (
+      await unsupported.run(
+        { root, cwd, command: 'echo synthetic', unrestricted: true },
+        new AbortController().signal,
+      )
+    ).content[0].text,
   ).toBe('LOCAL_COMMAND_SANDBOX_UNAVAILABLE');
   const outside = new LocalCommandRunner({ manager, platform: 'linux' });
   expect(
