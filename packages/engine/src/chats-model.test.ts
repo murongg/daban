@@ -12,6 +12,7 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
   const bot = 'mock-writer';
   const chat = 'mock-independent-chat';
   const profile = { name: 'Synthetic writer', instructions: '', memory: '', color: 'mint' };
+  let checkAssignedTools: (() => Promise<unknown>) | undefined;
   class Harness {
     async start() {}
     async close() {}
@@ -20,6 +21,7 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
         id,
         run: async (prompt: string | object[]) => {
           prompts.push(JSON.stringify(prompt));
+          await checkAssignedTools?.();
           return { sessionId: id, finalResponse: 'SYNTHETIC ANSWER' };
         },
       };
@@ -56,26 +58,31 @@ test('uses the assigned Bot profile and knowledge in a separate chat context', a
     });
     await models.start(bot, { requestId: 'mock-private', prompt: 'SYNTHETIC PRIVATE CHAT' });
     await models.jobs.get(bot)!.done;
+    // The mock must keep the turn open until the tool calls have finished.
+    checkAssignedTools = async () => {
+      const run = models.jobs.get(chat)!;
+      expect(run.model).toBe('deepseek-v4-pro');
+      expect(
+        JSON.stringify(await models.tools.invoke(run, 'bot_knowledge_read', { id: document.id })),
+      ).toContain('SYNTHETIC WRITING GUIDE');
+      expect(
+        await models.tools.invoke(run, 'bot_knowledge_write', {
+          path: 'mock-guide.md',
+          revision: 1,
+          content: 'SYNTHETIC REPLACEMENT',
+        }),
+      ).toMatchObject({ isError: true });
+      expect(
+        await models.tools.invoke(run, 'bot_memory_write', {
+          revision: 1,
+          content: 'SYNTHETIC REPLACEMENT',
+        }),
+      ).toMatchObject({ isError: true });
+    };
     await models.start(chat, { requestId: 'mock-assigned', prompt: 'SYNTHETIC INDEPENDENT CHAT' });
     const run = models.jobs.get(chat)!;
-    expect(run.model).toBe('deepseek-v4-pro');
-    expect(
-      JSON.stringify(await models.tools.invoke(run, 'bot_knowledge_read', { id: document.id })),
-    ).toContain('SYNTHETIC WRITING GUIDE');
-    expect(
-      await models.tools.invoke(run, 'bot_knowledge_write', {
-        path: 'mock-guide.md',
-        revision: 1,
-        content: 'SYNTHETIC REPLACEMENT',
-      }),
-    ).toMatchObject({ isError: true });
-    expect(
-      await models.tools.invoke(run, 'bot_memory_write', {
-        revision: 1,
-        content: 'SYNTHETIC REPLACEMENT',
-      }),
-    ).toMatchObject({ isError: true });
     await run.done;
+    expect(run.phase, run.error).toBe('completed');
     expect(prompts.at(-1)).toContain('SYNTHETIC WRITING PERSONA');
     expect(prompts.at(-1)).toContain('SYNTHETIC PREFERENCES');
     expect(prompts.at(-1)).not.toContain('SYNTHETIC PRIVATE CHAT');
