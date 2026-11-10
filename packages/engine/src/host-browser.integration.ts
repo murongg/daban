@@ -14,6 +14,7 @@ import {
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { HostBrowser } from './host-browser.js';
 import { NativeWorkspace } from './native-workspace.js';
+import { browserEngine } from './playwright-input.js';
 import { type Browser, type BrowserOptions, createBrowser } from './runtime.js';
 
 test('standalone browser preserves login, transfers task reports and supports fenced canvas input without Linux', {
@@ -109,28 +110,41 @@ test('standalone browser preserves login, transfers task reports and supports fe
     assert.equal(owner.owner, 'human');
     assert.ok(actual);
     const unavailable = new URL('/synthetic-network-failure', url).href;
-    await actual.page('mock-a').route(unavailable, (route) => route.abort('connectionclosed'));
-    const errorDocument = actual.page('mock-a').waitForEvent('framenavigated', {
-      predicate: (frame) =>
-        frame === actual!.page('mock-a').mainFrame() &&
-        frame.url() === 'chrome-error://chromewebdata/',
-    });
-    const failed = (await host.request({
-      action: 'command',
-      bot: owner.bot,
-      request: {
-        id: 'mock-failed-navigation',
-        instance: owner.state.instance,
-        epoch: owner.epoch,
-        action: 'navigate',
-        tab: owner.state.active,
-        url: unavailable,
-      },
-    })) as BrowserAck;
+    const failedPage = actual.page('mock-a');
+    const { errors } = await browserEngine();
+    await failedPage.route(unavailable, (route) => route.abort('connectionclosed'));
+    // A late error page can interrupt the next navigation, but Chromium may never commit one.
+    const settled = failedPage
+      .waitForEvent('framenavigated', {
+        predicate: (frame) => frame === failedPage.mainFrame(),
+        timeout: 5000,
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof errors.TimeoutError)) throw error;
+      });
+    const [failed] = await Promise.all([
+      host.request({
+        action: 'command',
+        bot: owner.bot,
+        request: {
+          id: 'mock-failed-navigation',
+          instance: owner.state.instance,
+          epoch: owner.epoch,
+          action: 'navigate',
+          tab: owner.state.active,
+          url: unavailable,
+        },
+      }) as Promise<BrowserAck>,
+      settled,
+    ]);
     assert.equal(failed.error, 'BROWSER_NAVIGATION_FAILED');
     assert.equal(failed.uncertain, true);
-    await errorDocument;
-    assert.equal(isHostBrowserStatus(await host.status()), true);
+    const failedStatus = await host.status();
+    assert.ok(isHostBrowserStatus(failedStatus));
+    assert.equal(
+      failedStatus.connections.find(({ bot }) => bot === owner.bot)?.state.tabs[0].url,
+      unavailable,
+    );
     assert.equal(failed.state.tabs[0].url, unavailable);
     const navigation = (await host.request({
       action: 'command',

@@ -277,7 +277,10 @@ test('retired search authority cannot publish a cached result and run history st
   }
 });
 
-test('a guessed claim hash cannot use a failed contribution barrier to dispatch', async () => {
+// The Windows runner can stall on the real journal writes and fixture cleanup.
+test('a guessed claim hash cannot use a failed contribution barrier to dispatch', {
+  timeout: 60000,
+}, async () => {
   const f = await fixture();
   try {
     let failed = false;
