@@ -18,7 +18,7 @@ import { Dialog } from '../../components/controls/Dialog';
 import { Select } from '../../components/controls/Select';
 import { t } from '../../i18n/locale';
 import { modelName } from '../models/model-options';
-import { Permissions } from './Permissions';
+import { hasComputerPermissions, Permissions } from './Permissions';
 
 type Consent = {
   command: Extract<LocalComputerCommand, { type: 'local.connect' }>;
@@ -42,28 +42,13 @@ export function LocalComputer({ bot }: { bot: Bot }) {
   const vision = modelHasVision(selected, modelCatalog(runtime.snapshot.model.connections));
   const task = agentTask(runtime.snapshot, bot.id);
   const shortcut = status?.platform === 'win32' ? 'Ctrl + Alt + Esc' : 'Ctrl + Option + Esc';
-  const permissions = status?.permissions.screen && status.permissions.accessibility;
+  const permissions = hasComputerPermissions(status);
   const other = status?.session && !session;
   const sessionId = session?.id,
     sessionRevision = session?.revision;
   const canChooseWindow = status?.platform === 'darwin' || status?.platform === 'win32';
   const shortcutHint = (background?: string) =>
     t(background ? 'localComputer.windowShortcut' : 'localComputer.shortcut', { 0: shortcut });
-  useEffect(() => {
-    if (status?.platform !== 'darwin' || permissions) return;
-    let active = true;
-    const check = () => {
-      // Returning from System Settings only observes permissions; it never opens settings or grants a session.
-      runtime.command({ type: 'local.status' }).catch((error) => {
-        if (active) setError(runtimeError(error));
-      });
-    };
-    window.addEventListener('focus', check);
-    return () => {
-      active = false;
-      window.removeEventListener('focus', check);
-    };
-  }, [status?.platform, permissions, runtime.command]);
   useEffect(() => {
     const ticket = ++epoch.current;
     setFrame(undefined);
@@ -148,14 +133,7 @@ export function LocalComputer({ bot }: { bot: Bot }) {
         <Monitor size={18} />
       </div>
       <p className="panel-description">{t('localComputer.description')}</p>
-      {status.platform === 'darwin' && (
-        <Permissions
-          status={status}
-          busy={busy}
-          request={() => perform({ type: 'local.permissions' })}
-          check={() => perform({ type: 'local.status' })}
-        />
-      )}
+      {status.platform === 'darwin' && <Permissions status={status} busy={busy} />}
       {error && (
         <p className="form-error" role="alert">
           {error}

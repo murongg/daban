@@ -6,7 +6,7 @@ import {
   type RuntimeReply,
   type RuntimeSnapshot,
 } from '@daban/protocol';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -40,6 +40,10 @@ function connect(
   const writes: RuntimeCommand[] = [];
   const invoke = vi.fn(async (command: RuntimeCommand): Promise<RuntimeReply> => {
     if (command.type === 'status' && hold) return new Promise(() => {});
+    if (command.type === 'local.status' || command.type === 'local.permissions') {
+      for (const listener of listeners) listener(structuredClone(current));
+      return { ok: true, value: current.localComputer };
+    }
     if (command.type === 'model.configure') {
       writes.push(structuredClone(command));
       try {
@@ -72,11 +76,17 @@ function connect(
   };
   Object.defineProperty(window, 'daban', {
     configurable: true,
-    value: { platform: 'darwin', runtime: bridge },
+    value: { platform: initial.localComputer?.platform ?? 'darwin', runtime: bridge },
   });
   return {
     invoke,
     writes,
+    permissions(screen: boolean, accessibility: boolean) {
+      current = {
+        ...current,
+        localComputer: { ...current.localComputer!, permissions: { screen, accessibility } },
+      };
+    },
     publish(value: RuntimeSnapshot) {
       current = value;
       act(() => {
@@ -96,6 +106,65 @@ it('waits for authoritative startup status instead of flashing an unusable works
   expect(screen.getByRole('heading', { name: '正在连接本机工作区' })).toBeVisible();
   expect(screen.queryByRole('button', { name: '自定义 Bot' })).not.toBeInTheDocument();
 });
+function permissionSnapshot(platform: 'darwin' | 'win32' = 'darwin', granted = false) {
+  return {
+    ...snapshot(),
+    localComputer: {
+      platform,
+      available: true,
+      permissions: { screen: granted, accessibility: granted },
+      shortcut: true,
+    },
+  };
+}
+
+it('guides new Mac users through both system permissions before model setup', async () => {
+  const backend = connect(permissionSnapshot());
+  render(<App />);
+  const accessibility = await screen.findByRole('button', { name: '开启辅助功能' });
+  expect(screen.queryByLabelText('API Key')).not.toBeInTheDocument();
+  expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'local.permissions' });
+  await userEvent.click(accessibility);
+  expect(backend.invoke).toHaveBeenCalledWith({ type: 'local.permissions' });
+
+  backend.permissions(false, true);
+  fireEvent.focus(window);
+  const recording = await screen.findByRole('button', { name: '开启屏幕录制' });
+  expect(backend.invoke).toHaveBeenCalledWith({ type: 'local.status' });
+  await userEvent.click(recording);
+  backend.permissions(true, true);
+  fireEvent.focus(window);
+  const next = await screen.findByRole('button', { name: '继续' });
+  expect(next).toHaveFocus();
+  await userEvent.keyboard('{Enter}');
+  expect(await screen.findByRole('heading', { name: '连接你的第一个模型' })).toBeVisible();
+  expect(backend.invoke).not.toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'local.connect' }),
+  );
+});
+
+it('remembers skipping permissions even when the app is reopened before model setup finishes', async () => {
+  const backend = connect(permissionSnapshot());
+  const first = render(<App />);
+  await userEvent.click(await screen.findByRole('button', { name: '稍后设置' }));
+  expect(await screen.findByRole('heading', { name: '连接你的第一个模型' })).toBeVisible();
+  first.unmount();
+  connect(permissionSnapshot());
+  render(<App />);
+  expect(await screen.findByRole('heading', { name: '连接你的第一个模型' })).toBeVisible();
+  expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'local.permissions' });
+});
+
+it.each([permissionSnapshot('darwin', true), permissionSnapshot('win32')])(
+  'goes straight to model setup when the macOS permission guide is unnecessary',
+  async (value) => {
+    const backend = connect(value);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: '连接你的第一个模型' })).toBeVisible();
+    expect(backend.invoke).not.toHaveBeenCalledWith({ type: 'local.permissions' });
+  },
+);
+
 it('opens a previously configured empty workspace immediately on the next launch', async () => {
   connect(snapshot(true));
   const first = render(<App />);
@@ -105,6 +174,8 @@ it('opens a previously configured empty workspace immediately on the next launch
   render(<App />);
   expect(screen.getByRole('button', { name: '自定义 Bot' })).toBeVisible();
   expect(screen.queryByRole('heading', { name: '正在连接本机工作区' })).not.toBeInTheDocument();
+  backend.publish({ ...permissionSnapshot(), model: snapshot(true).model });
+  expect(screen.queryByRole('button', { name: '开启辅助功能' })).not.toBeInTheDocument();
   expect(backend.writes).toHaveLength(0);
 });
 

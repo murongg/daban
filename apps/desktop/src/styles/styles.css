@@ -5182,6 +5182,20 @@ textarea.skill-source {
   font-weight: 600;
   line-height: 1.5;
 }
+.permission-setup {
+  width: min(500px, calc(100% - 48px));
+  margin: 28px auto 48px;
+}
+.permission-setup h1 {
+  margin-bottom: 8px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+/* Programmatic focus announces this page before the first keyboard control. */
+.permission-setup h1:focus {
+  outline: none;
+}
 .onboarding-status p,
 .model-setup-success p,
 .model-setup-reconnect p {

@@ -5,11 +5,13 @@ import { clientCache } from '../../app/cache';
 import { runtimeError, runtimeMessage, useRuntime } from '../../app/Runtime';
 import { restore, storageKey } from '../../app/storage';
 import { isMessageKey, type MessageKey, t, useLocale } from '../../i18n/locale';
+import { hasComputerPermissions, Permissions } from '../computer/Permissions';
 import { Models } from '../models/Models';
 import { Setup, SetupHeader } from './Setup';
 
-type Stage = 'checking' | 'environment' | 'models' | 'workspace';
+type Stage = 'checking' | 'environment' | 'permissions' | 'models' | 'workspace';
 export const onboardingKey = 'daban.onboarding.v1';
+const permissionsKey = 'daban.onboarding.permissions.v1';
 function hasWorkspace() {
   try {
     const cache = clientCache();
@@ -34,9 +36,19 @@ export function Onboarding({ children }: { children: ReactNode }) {
   useLocale();
   const runtime = useRuntime();
   const snapshot = runtime.snapshot;
+  const local = snapshot.localComputer;
+  const needsPermissions =
+    local?.platform === 'darwin' && local.available && !hasComputerPermissions(local);
   const [stage, setStage] = useState<Stage>(() =>
     runtime.enabled && !hasWorkspace() ? 'checking' : 'workspace',
   );
+  const [reviewedPermissions, setReviewedPermissions] = useState(() => {
+    try {
+      return clientCache().getItem(permissionsKey) === 'complete';
+    } catch {
+      return false;
+    }
+  });
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -50,7 +62,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
   }, [stage, runtime.enabled, snapshot.phase]);
   useEffect(() => {
     // Polling and temporary disconnects must never remount a secret draft or an entered workspace.
-    if (stage === 'models' || stage === 'workspace') return;
+    if (stage === 'permissions' || stage === 'models' || stage === 'workspace') return;
     if (snapshot.setup?.required && snapshot.setup.target !== 'linux') {
       setStage('environment');
       return;
@@ -60,6 +72,10 @@ export function Onboarding({ children }: { children: ReactNode }) {
       return;
     }
     if (snapshot.phase === 'ready') {
+      if (needsPermissions && !reviewedPermissions) {
+        setStage('permissions');
+        return;
+      }
       // Legacy runtimes without model configuration metadata keep their existing settings flow.
       setStage(
         snapshot.model.configured ||
@@ -71,6 +87,8 @@ export function Onboarding({ children }: { children: ReactNode }) {
     } else if (stage === 'environment') setStage('checking');
   }, [
     stage,
+    needsPermissions,
+    reviewedPermissions,
     snapshot.phase,
     snapshot.setup?.required,
     snapshot.setup?.target,
@@ -78,6 +96,16 @@ export function Onboarding({ children }: { children: ReactNode }) {
     snapshot.model.revision,
     snapshot.protocolVersion,
   ]);
+  function finishPermissions() {
+    setReviewedPermissions(true);
+    try {
+      // The guide may finish before model setup or a macOS-required restart.
+      clientCache().setItem(permissionsKey, 'complete');
+    } catch {
+      console.error('Permission guide completion could not be saved');
+    }
+    setStage('checking');
+  }
   async function reconnect() {
     if (retrying) return;
     setRetrying(true);
@@ -91,6 +119,7 @@ export function Onboarding({ children }: { children: ReactNode }) {
     }
   }
   if (stage === 'workspace') return children;
+  if (stage === 'permissions') return <PermissionSetup onComplete={finishPermissions} />;
   if (stage === 'models')
     return (
       <ModelSetup
@@ -167,6 +196,47 @@ export function Onboarding({ children }: { children: ReactNode }) {
             </button>
           </div>
         )}
+      </section>
+    </main>
+  );
+}
+function PermissionSetup({ onComplete }: { onComplete: () => unknown }) {
+  const status = useRuntime().snapshot.localComputer;
+  const available = status?.platform === 'darwin' && status.available;
+  const ready = available && hasComputerPermissions(status);
+  const title = useRef<HTMLHeadingElement>(null);
+  const next = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    title.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (ready) next.current?.focus();
+  }, [ready]);
+  return (
+    <main className="setup-page">
+      <SetupHeader />
+      <section className="permission-setup" aria-labelledby="permission-setup-title">
+        <h1 id="permission-setup-title" tabIndex={-1} ref={title}>
+          {t('onboarding.permissionsTitle')}
+        </h1>
+        <p className="setup-description">{t('onboarding.permissionsDescription')}</p>
+        {available ? (
+          <Permissions status={status} showTitle={false} />
+        ) : (
+          <p className="inline-note" role="status">
+            {t('localComputer.unavailable')}
+          </p>
+        )}
+        <div className="local-permission-actions">
+          <button
+            ref={next}
+            className={ready ? 'primary' : 'text-button'}
+            type="button"
+            onClick={onComplete}
+          >
+            {t(ready ? 'onboarding.continue' : 'onboarding.skipPermissions')}
+          </button>
+        </div>
       </section>
     </main>
   );

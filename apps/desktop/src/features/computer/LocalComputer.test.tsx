@@ -143,7 +143,7 @@ it('guides each missing permission from live status without granting host contro
   expect(await screen.findByRole('button', { name: '连接本机' })).toBeDisabled();
   const guide = screen.getByRole('region', { name: '设置本机权限' });
   expect(within(guide).getByText(/允许 Daban 点击和输入/)).toBeVisible();
-  expect(within(guide).getByText(/允许 Daban 观察主显示器/)).toBeVisible();
+  expect(within(guide).getByText(/允许 Daban 查看屏幕画面/)).toBeVisible();
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.permissions')).toBe(
     false,
   );
