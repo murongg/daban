@@ -93,6 +93,7 @@ import { syncLocale, t, useLocale } from '../i18n/locale';
 import { Actions } from './Actions';
 import { useAttention } from './attention';
 import { clientCache } from './cache';
+import { type Destination, useNavigation } from './navigation';
 import { profileInput, useProfiles } from './profiles';
 import { RuntimeProvider, runtimeError, useRuntime } from './Runtime';
 import { Sidebar } from './Sidebar';
@@ -111,6 +112,7 @@ import {
   type WorkspaceFile,
 } from './state';
 import { restore, serialize, storageKey } from './storage';
+import { TitlebarControls } from './TitlebarControls';
 import { Welcome } from './Welcome';
 import { Workspace } from './Workspace';
 
@@ -233,6 +235,20 @@ function Workbench() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [listCollapsed, setListCollapsed] = useState(false);
   const sidebarOverlay = useMediaQuery('(max-width: 700px)');
+  const desktopNavigation =
+    window.daban?.platform === 'win32' || window.daban?.platform === 'darwin';
+  const navigation = useNavigation(navigationView, state.selected, state.bots);
+  function navigate(destination: Destination | undefined) {
+    if (!destination) return;
+    if (destination.view === 'settings') {
+      setCreation(undefined);
+      setSettingsSurface('page');
+    } else if (destination.view === 'chat' && destination.bot) {
+      dispatch({ type: 'select', bot: destination.bot });
+    } else {
+      dispatch({ type: 'view', view: destination.view });
+    }
+  }
   const titlebar = useRef<HTMLElement>(null);
   const creationOpener = useRef<HTMLElement>(null);
   const alignTitlebar = useCallback((width: number) => {
@@ -1111,11 +1127,21 @@ function Workbench() {
         >
           <Menu />
         </IconButton>
-        {navigationView === 'chat' && !sidebarOverlay && (
+        {desktopNavigation && !sidebarOverlay ? (
+          <TitlebarControls
+            canBack={navigation.canBack}
+            canForward={navigation.canForward}
+            back={() => navigate(navigation.back())}
+            forward={() => navigate(navigation.forward())}
+            collapsed={listCollapsed}
+            canToggle={navigationView === 'chat'}
+            toggle={() => setListCollapsed((collapsed) => !collapsed)}
+          />
+        ) : navigationView === 'chat' && !sidebarOverlay ? (
           <div className="titlebar-leading" aria-hidden="true">
             <span className="header-divider titlebar-divider" />
           </div>
-        )}
+        ) : null}
         {view === 'chat' && bot ? (
           <>
             <div className="titlebar-context">
@@ -1350,7 +1376,9 @@ function Workbench() {
             setSettingsSurface('page');
           }}
           onToggleList={
-            sidebarOverlay ? undefined : () => setListCollapsed((collapsed) => !collapsed)
+            sidebarOverlay || desktopNavigation
+              ? undefined
+              : () => setListCollapsed((collapsed) => !collapsed)
           }
           onWidthChange={alignTitlebar}
           open={sidebarOpen}

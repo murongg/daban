@@ -1,4 +1,7 @@
 export const english = {
+  'app.navigation': 'App navigation',
+  'app.back': 'Back',
+  'app.forward': 'Forward',
   'hostBrowser.title': 'Browser',
   'hostBrowser.nativeLoading': 'Opening webpage…',
   'hostBrowser.nativeUnavailable':

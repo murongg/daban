@@ -77,6 +77,96 @@ it('collapses the conversation list and reopens it from the search shortcut', as
   expect(collapse).toHaveAttribute('aria-expanded', 'true');
 });
 
+it.each(['win32', 'darwin'])(
+  'toggles the %s conversation list from the titlebar without losing drafts or focus',
+  async (platform) => {
+    Object.defineProperty(window, 'daban', {
+      configurable: true,
+      value: { platform },
+    });
+    try {
+      render(<App />);
+      const header = within(screen.getByRole('banner'));
+      const rail = within(screen.getByRole('navigation', { name: '主导航' }));
+      expect(header.getByRole('button', { name: '后退' })).toBeDisabled();
+      expect(header.getByRole('button', { name: '前进' })).toBeDisabled();
+      expect(rail.queryByRole('button', { name: '收起会话列表' })).not.toBeInTheDocument();
+      const toggle = header.getByRole('button', { name: '收起会话列表' });
+      expect(toggle).toHaveAttribute('aria-controls', 'sidebar-list');
+      await userEvent.type(
+        screen.getByRole('textbox', { name: '发送消息' }),
+        'synthetic-titlebar-draft',
+      );
+      toggle.focus();
+      await userEvent.keyboard('{Enter}');
+      expect(toggle).toHaveFocus();
+      expect(toggle).toHaveAccessibleName('展开会话列表');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByRole('searchbox', { name: '搜索 Bot 和对话' })).not.toBeInTheDocument();
+      await userEvent.keyboard(' ');
+      expect(toggle).toHaveFocus();
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
+        'synthetic-titlebar-draft',
+      );
+      await userEvent.click(toggle);
+      await userEvent.keyboard('{Control>}k{/Control}');
+      await waitFor(() =>
+        expect(screen.getByRole('searchbox', { name: '搜索 Bot 和对话' })).toHaveFocus(),
+      );
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    } finally {
+      Reflect.deleteProperty(window, 'daban');
+    }
+  },
+);
+
+it.each(['win32', 'darwin'])(
+  'navigates %s pages and Bots without replaying edits and clears forward history after a new visit',
+  async (platform) => {
+    Object.defineProperty(window, 'daban', {
+      configurable: true,
+      value: { platform },
+    });
+    try {
+      render(<App />);
+      const header = within(screen.getByRole('banner'));
+      const back = header.getByRole('button', { name: '后退' });
+      const forward = header.getByRole('button', { name: '前进' });
+      await userEvent.type(
+        screen.getByRole('textbox', { name: '发送消息' }),
+        'synthetic-history-draft',
+      );
+      await userEvent.click(
+        within(screen.getByRole('navigation', { name: 'Bot 列表' })).getByRole('button', {
+          name: '写作搭档',
+        }),
+      );
+      await userEvent.click(screen.getByRole('button', { name: '任务' }));
+      expect(header.getByRole('button', { name: '收起会话列表' })).toBeDisabled();
+      await userEvent.click(back);
+      expect(header.getByRole('heading', { name: '写作搭档' })).toBeVisible();
+      await userEvent.click(back);
+      expect(header.getByRole('heading', { name: '研究员' })).toBeVisible();
+      expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue(
+        'synthetic-history-draft',
+      );
+      expect(back).toBeDisabled();
+      await userEvent.click(forward);
+      expect(header.getByRole('heading', { name: '写作搭档' })).toBeVisible();
+      await userEvent.click(screen.getByRole('button', { name: '设置' }));
+      expect(header.getByRole('heading', { name: '设置' })).toBeVisible();
+      expect(forward).toBeDisabled();
+      await userEvent.click(back);
+      expect(header.getByRole('heading', { name: '写作搭档' })).toBeVisible();
+      await userEvent.click(forward);
+      expect(header.getByRole('heading', { name: '设置' })).toBeVisible();
+    } finally {
+      Reflect.deleteProperty(window, 'daban');
+    }
+  },
+);
+
 it('keeps workspace destinations in one tab strip and low-frequency actions in a menu', async () => {
   render(<App />);
   const header = screen.getByRole('heading', { name: '研究员' }).closest('header')!;

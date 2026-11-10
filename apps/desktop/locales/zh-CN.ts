@@ -1,6 +1,9 @@
 import type { MessageKey } from './en';
 
 export const chinese = {
+  'app.navigation': '应用导航',
+  'app.back': '后退',
+  'app.forward': '前进',
   'hostBrowser.title': '浏览器',
   'hostBrowser.nativeLoading': '正在打开网页…',
   'hostBrowser.nativeUnavailable': '网页暂时无法显示，请重试或重新打开浏览器。',

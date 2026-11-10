@@ -877,6 +877,24 @@ textarea.field {
   flex-shrink: 0;
   overflow: clip;
 }
+.titlebar-navigation {
+  min-inline-size: 108px;
+}
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+}
+.titlebar-controls .icon-button {
+  width: 32px;
+  height: 32px;
+}
+.titlebar-controls .icon-button:disabled {
+  opacity: 0.35;
+  background: transparent;
+  color: var(--muted);
+}
 @media (width > 700px) {
   .app-titlebar[data-view="chat"] .titlebar-leading {
     inline-size: max(0px, calc(var(--titlebar-sidebar-width, 0px) - var(--titlebar-inset)));
@@ -3897,6 +3915,7 @@ textarea.skill-source {
   );
 }
 .app[data-desktop="win32"] .app-titlebar {
+  --titlebar-inset: 8px;
   height: 56px;
   padding-right: calc(16px + var(--window-controls-width));
 }
