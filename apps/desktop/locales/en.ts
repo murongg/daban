@@ -313,6 +313,8 @@ export const english = {
     'The goal reached its continuation limit. Inspect its status or clear it before creating another.',
   'errors.taskIncomplete':
     'The execution plan still has unfinished items. Check the reply for remaining work and blockers.',
+  'errors.taskFileVerificationFailed':
+    'The output file failed verification. Check the execution details.',
   'errors.goalIncomplete':
     'The goal was not marked complete. Check its state and execution details.',
   'errors.goalBlocked': 'The goal reported a blocker. Check its saved reason.',

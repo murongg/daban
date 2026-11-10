@@ -437,20 +437,45 @@ test('workspace tools work without a screen, enforce paths and preserve unrelate
         (name) => agentToolList.some((tool) => tool.name === name),
       ),
     );
-    payload(
+    const saved = payload(
       await tools.invoke(run, 'write_file', { path: 'summary.md', content: '# 合成结果\n数量=3' }),
     );
-    const read = payload(await tools.invoke(run, 'read_file', { path: 'summary.md', limit: 5 }));
+    expect(saved.reference).toBe('/workspace/summary.md');
+    expect(saved.bytes).toBe(Buffer.byteLength('# 合成结果\n数量=3'));
+    const collision = await tools.invoke(run, 'write_file', {
+      path: 'summary.md',
+      content: '合成新内容',
+      createOnly: true,
+    });
+    expect(collision.isError).toBe(true);
+    expect(JSON.stringify(collision.content)).toContain('FILE_EXISTS');
+    expect(await readFile(path.join(workdir, 'summary.md'), 'utf8')).toBe('# 合成结果\n数量=3');
+    const read = payload(
+      await tools.invoke(run, 'read_file', { path: String(saved.reference), limit: 5 }),
+    );
+    expect(read.reference).toBe(saved.reference);
     expect(read.content).toBe('# 合成结');
     expect(read.nextOffset).toBe(5);
-    expect.assert(
-      JSON.stringify(payload(await tools.invoke(run, 'list_files', {}))).includes('summary.md'),
+    const remainder = payload(
+      await tools.invoke(run, 'read_file', {
+        path: String(read.reference),
+        offset: read.nextOffset,
+      }),
     );
+    expect(remainder.content).toBe('果\n数量=3');
+    expect(remainder.nextOffset).toBeUndefined();
+    expect(payload(await tools.invoke(run, 'list_files', {}))).toMatchObject({
+      reference: '/workspace',
+      files: [{ path: 'summary.md', reference: saved.reference }],
+    });
     expect((await tools.invoke(run, 'list_files', { path: false })).isError).toBe(true);
     await writeFile(path.join(shared, 'previous.md'), 'synthetic previous report');
     expect(
-      payload(await tools.invoke(run, 'read_file', { path: '/shared/previous.md' })).content,
-    ).toBe('synthetic previous report');
+      payload(await tools.invoke(run, 'read_file', { path: '/shared/previous.md' })),
+    ).toMatchObject({
+      reference: '/shared/previous.md',
+      content: 'synthetic previous report',
+    });
     expect.assert(
       JSON.stringify(payload(await tools.invoke(run, 'list_files', { path: '/shared' }))).includes(
         'previous.md',

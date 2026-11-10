@@ -28,6 +28,7 @@ import {
   type ToolTrace,
 } from './computer-tools.js';
 import { errorCode, errorMessage, Fault } from './control.js';
+import { type CsvCheck, checkCsv, csvCheck } from './csv.js';
 import type { GroupTools } from './group-tools.js';
 import type { HistoryTools } from './history.js';
 import { imageInput } from './images.js';
@@ -87,23 +88,43 @@ const workspaceToolList = [
   {
     name: 'list_files',
     description:
-      'List actual files without a screen. Relative paths and /workspace refer to this task. Use /shared to find prior or other Bot files; returned paths are relative to the listed directory.',
+      'Discover file names when you do not already know them. File paths are relative to the listed directory. Use a returned reference directly for a later read.',
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string' } },
+      properties: {
+        path: {
+          type: 'string',
+          description:
+            'Directory to list. Omit for /workspace (this task). Use /shared for prior work.',
+        },
+      },
       additionalProperties: false,
     },
   },
   {
     name: 'read_file',
     description:
-      'Read text without opening an application. Relative paths and /workspace refer to this task; /shared reads the shared workspace. offset/limit are character counts; follow nextOffset for a long file.',
+      'Read UTF-8 text such as CSV, Markdown or JSON, including a saved output you need to verify. Pass only path for an ordinary read. Returns the actual content and a reusable reference. If nextOffset is present, continue from it.',
     inputSchema: {
       type: 'object',
       properties: {
-        path: { type: 'string' },
-        offset: { type: 'integer', minimum: 0 },
-        limit: { type: 'integer', minimum: 1, maximum: 64000 },
+        path: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Exact input path relative to this task, or the reference from a file result.',
+        },
+        offset: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Omit for the first read. For another page, use the returned nextOffset.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 64000,
+          description: 'Optional custom page size in UTF-16 code units. The default is 12000.',
+        },
       },
       required: ['path'],
       additionalProperties: false,
@@ -112,10 +133,21 @@ const workspaceToolList = [
   {
     name: 'write_file',
     description:
-      'Write UTF-8 text directly inside the current task directory. Existing parent directories are required. Use this for documents/code; do not open an editor unless the user asks.',
+      'Save a complete UTF-8 text file such as CSV, Markdown or JSON. Returns the byte count and a reference for reading it back. Use a new filename for a new deliverable; writing an existing path replaces its contents.',
     inputSchema: {
       type: 'object',
-      properties: { path: { type: 'string' }, content: { type: 'string' } },
+      properties: {
+        path: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Output filename or path relative to this task. Parent directories must exist.',
+        },
+        content: {
+          type: 'string',
+          description: 'Complete file contents as text. For CSV, include the header and rows.',
+        },
+      },
       required: ['path', 'content'],
       additionalProperties: false,
     },
@@ -137,8 +169,39 @@ const fields: Record<string, string[]> = {
   list_files: ['path'],
   read_image: ['path'],
   read_file: ['path', 'offset', 'limit'],
-  write_file: ['path', 'content'],
+  write_file: ['path', 'content', 'createOnly'],
+  verify_csv: ['path', 'rows', 'sum'],
   shell: ['command'],
+};
+const csvTool = {
+  name: 'verify_csv',
+  description:
+    'Read a saved CSV in this task and check it against independently computed expectations. Use when asked to check row count or amounts. The result includes the actual values. The runtime retains these checks and re-runs them before the task can complete.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      path: { type: 'string', description: 'Output filename or workspace reference.' },
+      rows: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Expected data rows, excluding the header.',
+      },
+      sum: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          column: { type: 'string', description: 'Exact amount column header.' },
+          total: {
+            type: 'string',
+            description: 'Expected decimal total, with at most two decimal places.',
+          },
+        },
+        required: ['column', 'total'],
+      },
+    },
+    required: ['path', 'rows'],
+  },
 };
 const text = (value: unknown): ToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(value) }],
@@ -147,6 +210,12 @@ const inside = (root: string, file: string) => file === root || file.startsWith(
 // Workspace paths are protocol values, including when the host filesystem uses backslashes.
 const workspacePath = (root: string, file: string) =>
   path.relative(root, file).split(path.sep).join('/');
+function fileReference(run: AgentToolRun, root: string, file: string) {
+  const current = inside(run.canonicalRoot, file);
+  const relative = workspacePath(current ? run.canonicalRoot : root, file);
+  const prefix = current ? '/workspace' : '/shared';
+  return relative ? `${prefix}/${relative}` : prefix;
+}
 const windowsName = (name: string) =>
   !/[<>:"|?*]/.test(name) &&
   !/[. ]$/.test(name) &&
@@ -167,6 +236,7 @@ export class AgentTools {
   localCommands?: LocalCommandTools;
   private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
+  private readonly csvChecks = new WeakMap<AgentToolRun, Map<string, CsvCheck>>();
   groups?: GroupTools;
   bots?: BotTools;
   memory?: MemoryTools;
@@ -294,9 +364,30 @@ export class AgentTools {
     const local = this.localSelected(bot, run);
     const hosted = this.hostSelected(bot, run);
     const offered = this.options.nativeOnly ? tools.filter((tool) => tool.name !== 'shell') : tools;
-    const visible = offered.filter(
-      (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
-    );
+    const visible = offered
+      .filter(
+        (tool) => tool.name !== 'read_image' || (run?.vision ?? (!model || modelHasVision(model))),
+      )
+      .map((tool) =>
+        this.options.nativeOnly && !this.options.execution && tool.name === 'write_file'
+          ? {
+              ...tool,
+              inputSchema: {
+                ...tool.inputSchema,
+                properties: {
+                  ...(typeof tool.inputSchema.properties === 'object'
+                    ? tool.inputSchema.properties
+                    : {}),
+                  createOnly: {
+                    type: 'boolean',
+                    description:
+                      'Set true when creating a new deliverable. An existing file is preserved and reported as FILE_EXISTS.',
+                  },
+                },
+              },
+            }
+          : tool,
+      );
     return [
       ...(local || hosted
         ? visible.filter(
@@ -305,6 +396,7 @@ export class AgentTools {
               !tool.name.startsWith('browser_'),
           )
         : visible),
+      ...(this.options.nativeOnly && !this.options.execution ? [csvTool] : []),
       ...(local && (run?.vision ?? (!model || modelHasVision(model)))
         ? this.localComputer?.list || []
         : []),
@@ -754,9 +846,20 @@ export class AgentTools {
     if (process.platform === 'win32' && !windowsName(name))
       throw new Fault('INVALID_BROWSER_FILE', 400);
     const { file } = await this.target(run, name, true);
-    const directory = await this.directory(run.canonicalRoot);
+    return this.publishFile(run, file, bytes, 'BROWSER_FILE_EXISTS');
+  }
+  private async publishFile(
+    run: AgentToolRun,
+    file: string,
+    bytes: Buffer,
+    collision: 'BROWSER_FILE_EXISTS' | 'FILE_EXISTS',
+  ) {
+    const parent = await realpath(path.dirname(file));
+    if (!inside(run.canonicalRoot, parent)) throw new Fault('INVALID_FILE', 400);
+    const directory = await this.directory(parent);
     const base = directory.path;
-    const temporary = path.join(base, `.browser-download-${randomUUID()}`);
+    const prefix = collision === 'BROWSER_FILE_EXISTS' ? '.browser-download-' : '.file-publish-';
+    const temporary = path.join(base, `${prefix}${randomUUID()}`);
     let handle: FileHandle | undefined;
     try {
       await directory.verify();
@@ -787,10 +890,10 @@ export class AgentTools {
       await directory.verify();
       run.abort.signal.throwIfAborted();
       // Publish complete bytes with a create-only link; cancellation and filename collisions cannot overwrite an input.
-      await link(temporary, path.join(base, name));
+      await link(temporary, path.join(base, path.basename(file)));
       return { path: file, bytes: bytes.length };
     } catch (error) {
-      if (errorCode(error) === 'EEXIST') throw new Fault('BROWSER_FILE_EXISTS');
+      if (errorCode(error) === 'EEXIST') throw new Fault(collision);
       throw error;
     } finally {
       try {
@@ -805,6 +908,45 @@ export class AgentTools {
         await directory.close();
       }
     }
+  }
+  private async checkCsvFile(run: AgentToolRun, reference: string, expected: CsvCheck) {
+    try {
+      const relative = reference.slice('/workspace/'.length);
+      const file = await this.workspace.scope(run.workdir, run.canonicalRoot).read(relative);
+      return { reference, expected, ...checkCsv(file.content, expected) };
+    } catch (error) {
+      return { reference, expected, passed: false, code: errorCode(error) || 'CSV_READ_FAILED' };
+    }
+  }
+  async csvFailures(run: AgentToolRun) {
+    const failures = [];
+    for (const [reference, expected] of this.csvChecks.get(run) ?? []) {
+      const result = await this.checkCsvFile(run, reference, expected);
+      if (result.code) failures.push(result);
+    }
+    return failures;
+  }
+  hasCsvChecks(run: AgentToolRun) {
+    return this.csvChecks.has(run);
+  }
+  private async verifyCsv(run: AgentToolRun, reference: string, expected: CsvCheck) {
+    if (
+      !this.options.nativeOnly ||
+      this.options.execution ||
+      !reference.toLowerCase().endsWith('.csv')
+    )
+      throw new Fault('INVALID_FILE', 400);
+    let checks = this.csvChecks.get(run);
+    if (!checks) {
+      checks = new Map();
+      this.csvChecks.set(run, checks);
+    }
+    const previous = checks.get(reference);
+    // A repair can change the output. It cannot lower the expectation to match a failed output.
+    if (previous && JSON.stringify(previous) !== JSON.stringify(expected))
+      throw new Fault('CSV_CHECK_ALREADY_SET');
+    checks.set(reference, expected);
+    return this.checkCsvFile(run, reference, expected);
   }
   async writeText(run: AgentToolRun, value: unknown, content: unknown, createOnly = false) {
     if (
@@ -1157,15 +1299,31 @@ export class AgentTools {
       } else {
         if (name !== 'list_files' && (typeof args.path !== 'string' || !args.path))
           throw new Fault('INVALID_TOOL_ARGS', 400);
-        const { file, root } = await this.target(run, args.path ?? '', name === 'write_file');
+        const { file, root } = await this.target(
+          run,
+          args.path ?? '',
+          name === 'write_file' || name === 'verify_csv',
+        );
+        // Keep legacy path fields while giving the model a reusable path in this tool's workspace.
+        const reference = fileReference(run, root, file);
+        if (name === 'verify_csv') {
+          const checked = await this.verifyCsv(run, reference, csvCheck(args.rows, args.sum));
+          trace.phase = checked.code ? 'rejected' : 'settled';
+          trace.code = checked.code;
+          return { ...text(checked), ...(checked.code ? { isError: true } : {}) };
+        }
         if (name === 'write_file') {
           if (
             typeof args.content !== 'string' ||
             Buffer.byteLength(args.content) > 200 * 1024 ||
-            args.content.includes('\0')
+            args.content.includes('\0') ||
+            (args.createOnly !== undefined && typeof args.createOnly !== 'boolean')
           )
             throw new Fault('INVALID_TOOL_ARGS', 400);
-          result = await this.write(run, file, args.content);
+          const saved = args.createOnly
+            ? await this.publishFile(run, file, Buffer.from(args.content), 'FILE_EXISTS')
+            : await this.write(run, file, args.content);
+          result = { ...saved, reference };
         } else {
           const info = await lstat(file);
           const canonical = await realpath(file);
@@ -1184,7 +1342,15 @@ export class AgentTools {
           }
           if (name === 'list_files') {
             if (!info.isDirectory()) throw new Fault('INVALID_FILE', 400);
-            result = { directory: file, files: await new WorkspaceFiles(canonical).list() };
+            const files = await new WorkspaceFiles(canonical).list();
+            result = {
+              directory: file,
+              reference,
+              files: files.map((entry) => ({
+                ...entry,
+                reference: fileReference(run, root, path.join(canonical, entry.path)),
+              })),
+            };
           } else {
             const offset = args.offset ?? 0,
               limit = args.limit ?? 12000;
@@ -1201,6 +1367,7 @@ export class AgentTools {
             const end = Number(offset) + Number(limit);
             result = {
               path: file,
+              reference,
               content: content.slice(Number(offset), end),
               ...(end < content.length ? { nextOffset: end } : {}),
             };
@@ -1235,7 +1402,17 @@ export class AgentTools {
         });
       return {
         isError: true,
-        content: [{ type: 'text', text: dataTool ? code : `${code}: ${errorMessage(error)}` }],
+        content: [
+          {
+            type: 'text',
+            text:
+              code === 'FILE_EXISTS'
+                ? 'FILE_EXISTS: The existing file was preserved. Use another path if the user allows it, or ask before replacing this file.'
+                : dataTool
+                  ? code
+                  : `${code}: ${errorMessage(error)}`,
+          },
+        ],
       };
     }
   }

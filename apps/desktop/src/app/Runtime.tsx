@@ -488,6 +488,7 @@ export function runtimeMessage(code: string, fallback = code) {
     GOAL_ROUND_LIMIT: t('errors.goalRoundLimit'),
     GOAL_INCOMPLETE: t('errors.goalIncomplete'),
     TASK_INCOMPLETE: t('errors.taskIncomplete'),
+    TASK_FILE_VERIFICATION_FAILED: t('errors.taskFileVerificationFailed'),
     GOAL_BLOCKED: t('errors.goalBlocked'),
     MODEL_INSERT_FULL: t('errors.taskInsertFullMessageKeptQueue'),
     MODEL_INSERT_UNCERTAIN: t('errors.taskInsertUncertainMessageNotReplayed'),

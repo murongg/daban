@@ -477,6 +477,95 @@ async function insertFixture(root: string, state: InsertState) {
   return models;
 }
 
+test.each(['repair', 'mismatch', 'changed-after-check'])(
+  'registered CSV checks decide completion after a bounded repair (%s)',
+  async (scenario) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'synthetic-csv-completion-'));
+    const bot = 'mock-csv-check';
+    const settings = new ModelSettings(path.join(root, 'credentials.json'));
+    const prompts: string[] = [];
+    const wrong = 'id,amount\r\n"MOCK,1",1.10\r\n"MOCK\n2",2.19\r\n';
+    const correct = wrong.replace('2.19', '2.20');
+    class Harness {
+      async start() {}
+      async close() {}
+      session(id = 'mock-csv-session') {
+        return {
+          id,
+          run: async (input: unknown) => {
+            prompts.push(String(input));
+            const job = models.jobs.get(bot)!;
+            if (prompts.length === 1) {
+              const saved = await models.tools.invoke(job, 'write_file', {
+                path: 'orders.csv',
+                content: scenario === 'changed-after-check' ? correct : wrong,
+                createOnly: true,
+              });
+              expect(saved.isError).toBeUndefined();
+              const checked = await models.tools.invoke(job, 'verify_csv', {
+                path: '/workspace/orders.csv',
+                rows: 2,
+                sum: { column: 'amount', total: '3.30' },
+              });
+              if (scenario === 'changed-after-check') {
+                expect(checked.isError).toBeUndefined();
+                const changed = await models.tools.invoke(job, 'write_file', {
+                  path: 'orders.csv',
+                  content: wrong,
+                });
+                expect(changed.isError).toBeUndefined();
+              } else {
+                expect(checked.isError).toBe(true);
+                expect(JSON.stringify(checked.content)).toContain('3.29');
+              }
+              const weakerCheck = await models.tools.invoke(job, 'verify_csv', {
+                path: 'orders.csv',
+                rows: 2,
+                sum: { column: 'amount', total: '3.29' },
+              });
+              expect(weakerCheck.isError).toBe(true);
+              expect(JSON.stringify(weakerCheck.content)).toContain('CSV_CHECK_ALREADY_SET');
+            } else if (scenario === 'repair') {
+              const repaired = await models.tools.invoke(job, 'write_file', {
+                path: 'orders.csv',
+                content: correct,
+              });
+              expect(repaired.isError).toBeUndefined();
+            }
+            return { sessionId: id, finalResponse: '合成订单表已完成。' };
+          },
+        };
+      }
+      async resumeSession(id: string) {
+        return this.session(id);
+      }
+    }
+    const models = new ModelRuns({
+      settings,
+      nativeOnly: true,
+      workspace: path.join(root, 'workspace'),
+      dir: path.join(root, 'model'),
+      origin: 'http://127.0.0.1:12345',
+      Harness,
+    });
+    try {
+      await settings.save({ apiKey: 'synthetic-csv-check-key' });
+      await models.start(bot, { requestId: 'mock-csv-task', prompt: '导出合成订单并核对总额。' });
+      const job = models.jobs.get(bot)!;
+      await job.done;
+      const repairs = scenario === 'repair';
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]).toContain('3.29');
+      expect(job.phase).toBe(repairs ? 'completed' : 'failed');
+      expect(job.error).toBe(repairs ? '' : 'TASK_FILE_VERIFICATION_FAILED');
+      expect(job.verification.passed).toBe(repairs);
+    } finally {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each([true, false])(
   'unfinished plans receive bounded continuation (finishes=%s)',
   async (finishes) => {
