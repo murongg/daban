@@ -234,7 +234,6 @@ export class AgentTools {
   private readonly computerRequests = new WeakMap<AgentToolRun, Set<string>>();
   localFiles?: LocalTools;
   localCommands?: LocalCommandTools;
-  private readonly localRequests = new WeakMap<AgentToolRun, Set<string>>();
   private readonly localRuns = new WeakMap<AgentToolRun, boolean>();
   private readonly csvChecks = new WeakMap<AgentToolRun, Map<string, CsvCheck>>();
   groups?: GroupTools;
