@@ -287,8 +287,12 @@ export function Search() {
     }
   }
 
-  if (!supported) return <p className="inline-note">{t('search.legacyHost')}</p>;
-  if (!available) return <p className="inline-note">{t('search.offline')}</p>;
+  if (!available)
+    return (
+      <div className="settings-group">
+        <p className="inline-note">{t(supported ? 'search.offline' : 'search.legacyHost')}</p>
+      </div>
+    );
   const dirty =
     !!draft &&
     !!status &&
@@ -308,8 +312,8 @@ export function Search() {
   return (
     <div className="search-settings">
       {runtime.snapshot.jinaReader !== undefined && (
-        <div>
-          <div className="search-enable">
+        <div className="settings-group">
+          <div className="setting-row search-enable">
             <div>
               <label className="setting-label" htmlFor={`${id}-jina`}>
                 {t('search.jinaReader')}
@@ -327,12 +331,16 @@ export function Search() {
               onChange={(event) => saveJina(event.target.checked)}
             />
           </div>
-          {jinaError && <p role="alert">{t('search.jinaSaveFailed')}</p>}
+          {jinaError && (
+            <p className="form-error" role="alert">
+              {t('search.jinaSaveFailed')}
+            </p>
+          )}
         </div>
       )}
       {draft && status && (
         <form
-          className="search-form"
+          className="settings-group search-form"
           onSubmit={async (event) => {
             event.preventDefault();
             await save();
@@ -454,7 +462,7 @@ export function Search() {
           </div>
         </form>
       )}
-      <section className="search-status" aria-labelledby={`${id}-status`}>
+      <section className="settings-group search-status" aria-labelledby={`${id}-status`}>
         <div className="search-status-header">
           <div className="search-status-title">
             <h4 id={`${id}-status`}>{t('search.statusTitle')}</h4>

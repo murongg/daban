@@ -3010,7 +3010,6 @@ export const english = {
     'Up to 32 sections are retained. Organize existing sections first.',
   'select.selectOption': 'Select an option',
   'settings.about': 'About',
-  'settings.appearance': 'Appearance',
   'settings.appStoresChatCachesDraftsPreferenceCopies':
     'The app stores chat caches, drafts, preference copies and settings. Clearing app data loses drafts. Manage runtime tasks, documents and preferences separately.',
   'settings.archives': 'Archives',
@@ -3031,9 +3030,9 @@ export const english = {
   'settings.fullPermissionsInsideVm': 'Full permissions inside the VM',
   'settings.general': 'General',
   'settings.hostAgentService': 'Host Agent service',
+  'settings.interfacePreferences': 'Interface preferences',
   'settings.language': 'Interface language',
   'settings.languageChinese': 'Simplified Chinese',
-  'settings.languageSection': 'Language',
   'settings.light': 'Light',
   'settings.localLinux': 'Local Linux',
   'settings.localLinuxRuntime': 'Local Linux runtime',
