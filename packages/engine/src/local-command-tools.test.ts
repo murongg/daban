@@ -102,8 +102,8 @@ test.each(['direct', 'agent'] as const)(
   },
 );
 
-test.each(['auto', 'ask', 'replace directory'] as const)(
-  'workspace shell runs only inside the owned task directory (%s)',
+test.each(['auto', 'ask', 'replace directory', 'legacy full', 'full host access'] as const)(
+  'workspace shell uses the owned task directory and captured command scope (%s)',
   async (action) => {
     const root = await mkdtemp(path.join(tmpdir(), 'mock-task-command-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
@@ -126,6 +126,7 @@ test.each(['auto', 'ask', 'replace directory'] as const)(
         root: directory.canonical,
         cwd: directory.canonical,
         command: 'python3 sample.py',
+        ...(action === 'full host access' ? { unrestricted: true } : {}),
       });
       expect(await readFile(path.join(request.cwd, 'sample.py'), 'utf8')).toBe('print(42)');
       return { content: [{ type: 'text', text: '42' }] };
@@ -137,7 +138,13 @@ test.each(['auto', 'ask', 'replace directory'] as const)(
       task: {
         requestId: 'mock-request',
         prompt: 'Run a synthetic script.',
-        approvalMode: action === 'auto' ? ('auto' as const) : ('ask' as const),
+        approvalMode:
+          action === 'legacy full' || action === 'full host access'
+            ? ('full' as const)
+            : action === 'auto'
+              ? ('auto' as const)
+              : ('ask' as const),
+        ...(action === 'full host access' ? { hostCommandFullAccess: true as const } : {}),
       },
       workdir: directory.path,
       canonicalRoot: directory.canonical,
@@ -159,10 +166,25 @@ test.each(['auto', 'ask', 'replace directory'] as const)(
       { command: 'python3 sample.py' },
       'mock-command',
     );
-    if (action === 'auto') {
+    if (action === 'auto' || action === 'legacy full' || action === 'full host access') {
       expect(await pending).toMatchObject({ content: [{ type: 'text', text: '42' }] });
       expect(executions).toBe(1);
       expect(await interactions.list()).toEqual([]);
+      if (action === 'full host access') {
+        const legacy = { ...run, task: { ...run.task, hostCommandFullAccess: undefined } };
+        expect(
+          await agent.invoke(
+            legacy,
+            'workspace_shell',
+            { command: 'python3 sample.py' },
+            'mock-command',
+          ),
+        ).toMatchObject({
+          isError: true,
+          content: [{ type: 'text', text: 'COMMAND_CALL_ID_REUSED' }],
+        });
+        expect(executions).toBe(1);
+      }
       return;
     }
     let approval: Interaction | undefined;

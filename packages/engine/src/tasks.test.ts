@@ -29,6 +29,19 @@ test('task approval mode accepts only the three explicit user policies', () => {
     expect(() => validateTask({ ...task, approvalMode })).toThrowError();
 });
 
+test('full host command access requires an explicit full-access task', () => {
+  const task = { requestId: 'mock-host-scope', prompt: 'Synthetic task' };
+  expect(validateTask({ ...task, approvalMode: 'full', hostCommandFullAccess: true })).toEqual({
+    ...task,
+    approvalMode: 'full',
+    hostCommandFullAccess: true,
+  });
+  for (const approvalMode of [undefined, 'auto', 'ask'])
+    expect(() =>
+      validateTask({ ...task, approvalMode, hostCommandFullAccess: true }),
+    ).toThrowError();
+});
+
 test('a continuation turn requires a bounded retry reference', () => {
   const input = {
     requestId: 'mock-retry-request',

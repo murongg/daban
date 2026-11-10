@@ -1569,6 +1569,7 @@ export interface RuntimeSnapshot {
   appConnections?: AppConnectionsCapability;
   appWorkspace?: true;
   localFolders?: true;
+  hostCommandFullAccess?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
   searchSettings?: true;
@@ -3238,6 +3239,8 @@ export function isApprovalMode(value: unknown): value is ApprovalMode {
 }
 export interface TaskRequest {
   approvalMode?: ApprovalMode;
+  // Full access saved before this capability did not authorize unrestricted host commands.
+  hostCommandFullAccess?: true;
   // Older full-access choices did not authorize opening a signed-in browser.
   browserAutoStart?: true;
   // The latest boundary fences the send; contextRevision explicitly selects a retained conversation.

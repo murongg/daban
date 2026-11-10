@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from 'vitest';
@@ -110,6 +110,29 @@ test('terminates commands on timeout and cancellation and caps combined output',
   ).toBe('LOCAL_COMMAND_OUTPUT_LIMIT');
 });
 
+test.skipIf(!['darwin', 'linux'].includes(process.platform))(
+  'an explicitly unrestricted command can access files outside its task directory',
+  async (t) => {
+    const { root, cwd } = await fixture();
+    t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, 'outside.txt'), 'synthetic outside data');
+    const manager = sandbox('', {});
+    manager.initialize = async () => {
+      throw new Error('unrestricted commands must use the real shell');
+    };
+    const runner = new LocalCommandRunner({ manager });
+    const result = await runner.run(
+      { root: cwd, cwd, command: 'cat ../outside.txt', unrestricted: true },
+      new AbortController().signal,
+    );
+    expect(result.isError, result.content[0].text).not.toBe(true);
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      exitCode: 0,
+      stdout: 'synthetic outside data',
+    });
+  },
+);
+
 test('refuses unsupported platforms and unapproved working directories before sandbox startup', async (t) => {
   const { root, cwd } = await fixture();
   t.onTestFinished(() => rm(root, { recursive: true, force: true }));
@@ -120,8 +143,12 @@ test('refuses unsupported platforms and unapproved working directories before sa
   };
   const unsupported = new LocalCommandRunner({ manager, platform: 'win32' });
   expect(
-    (await unsupported.run({ root, cwd, command: 'echo synthetic' }, new AbortController().signal))
-      .content[0].text,
+    (
+      await unsupported.run(
+        { root, cwd, command: 'echo synthetic', unrestricted: true },
+        new AbortController().signal,
+      )
+    ).content[0].text,
   ).toBe('LOCAL_COMMAND_SANDBOX_UNAVAILABLE');
   const outside = new LocalCommandRunner({ manager, platform: 'linux' });
   expect(

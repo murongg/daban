@@ -426,7 +426,7 @@ export class AgentTools {
       ...(this.work?.list || []),
       ...(this.notes?.list || []),
       ...(this.localFiles?.list || []),
-      ...(this.localCommands?.list || []),
+      ...(this.localCommands?.listFor(run) || []),
       ...(this.software?.list || []),
       ...(run?.skills?.skills.length ? this.skills?.list || [] : []),
       ...(this.catalog?.list || []),

@@ -167,7 +167,14 @@ export function Conversation({
   );
   const lifecycleReadOnly = !!bot.archived || !!operation;
   const revision = chatRevision(state, bot.id, runtime.snapshot.chats);
-  const approval = chatApproval(state, bot.id, revision, runtime.snapshot.protocolVersion);
+  const hostCommands = runtime.snapshot.hostCommandFullAccess === true;
+  const approval = chatApproval(
+    state,
+    bot.id,
+    revision,
+    runtime.snapshot.protocolVersion,
+    hostCommands,
+  );
   const browserApproval =
     runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
     runtime.snapshot.hostBrowser?.available === true;
@@ -912,6 +919,8 @@ export function Conversation({
                 value={approval.approvalMode ?? 'auto'}
                 browserApproval={browserApproval}
                 browserGranted={approval.browserAutoStart}
+                hostCommands={hostCommands}
+                hostGranted={approval.hostCommandFullAccess}
                 disabled={readOnly || pending || recovering}
                 onChange={(mode) =>
                   dispatch({
@@ -920,6 +929,7 @@ export function Conversation({
                     revision,
                     mode,
                     browserAutoStart: browserApproval,
+                    hostCommandFullAccess: hostCommands,
                   })
                 }
               />

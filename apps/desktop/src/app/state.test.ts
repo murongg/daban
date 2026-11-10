@@ -62,6 +62,26 @@ it('captures saved-browser authorization only for a conversation that opted in',
   expect(chatApproval(state, 'writer', 0, protocol)).toEqual({ approvalMode: 'auto' });
 });
 
+it('requires a new full-access selection to grant unrestricted host commands', () => {
+  const protocol = browserApprovalProtocol;
+  const choice = { type: 'approval-mode', bot: 'research', revision: 0, mode: 'full' } as const;
+  const legacy = reduce(initialState(), { ...choice, browserAutoStart: true });
+  expect(chatApproval(legacy, 'research', 0, protocol, true)).toEqual({
+    approvalMode: 'full',
+    browserAutoStart: true,
+  });
+  const selected = { ...choice, hostCommandFullAccess: true } as const;
+  const updated = restore(serialize(reduce(legacy, selected)));
+  expect(chatApproval(updated, 'research', 0, protocol, true)).toEqual({
+    approvalMode: 'full',
+    hostCommandFullAccess: true,
+  });
+  expect(chatApproval(updated, 'research', 0, protocol)).toEqual({ approvalMode: 'full' });
+  expect(chatApproval(updated, 'research', 1, protocol, true)).toEqual({ approvalMode: 'auto' });
+  const changed = reduce(updated, { ...choice, mode: 'ask' });
+  expect(chatApproval(changed, 'research', 0, protocol, true)).toEqual({ approvalMode: 'ask' });
+});
+
 it('retains Bot history and drafts through authoritative lifecycle revisions and exact pending-operation recovery', () => {
   let state = initialState();
   const bot = state.bots.find((entry) => entry.id === 'research')!;

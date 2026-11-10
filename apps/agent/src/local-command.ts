@@ -60,13 +60,17 @@ function systemPaths(platform: NodeJS.Platform) {
     ? ['/System', '/usr', '/bin', '/sbin', '/opt/homebrew']
     : ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc'];
 }
-function environment(platform: NodeJS.Platform, temporary: string): NodeJS.ProcessEnv {
+function environment(
+  platform: NodeJS.Platform,
+  temporary: string,
+  home = temporary,
+): NodeJS.ProcessEnv {
   return {
     PATH:
       platform === 'darwin'
         ? '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
         : '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-    HOME: temporary,
+    HOME: home,
     TMPDIR: temporary,
     TMP: temporary,
     TEMP: temporary,
@@ -141,6 +145,16 @@ export class LocalCommandRunner {
       throw new LocalCommandFailure('COMMAND_INVALID_REQUEST');
     signal.throwIfAborted();
     const { root, cwd } = await validatePaths(request);
+    if (request.unrestricted === true) {
+      signal.throwIfAborted();
+      // This path has the user's OS permissions but must never inherit the agent's credentials.
+      return this.process(
+        ['/bin/bash', '--noprofile', '--norc', '-c', request.command],
+        cwd,
+        environment(platform, tmpdir(), homedir()),
+        signal,
+      );
+    }
     const temporary = await mkdtemp(path.join(tmpdir(), 'daban-command-'));
     let manager: LocalSandboxAdapter | undefined;
     let initializationAttempted = false;

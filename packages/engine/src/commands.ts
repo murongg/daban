@@ -20,6 +20,7 @@ export interface CommandRun {
   conversationId?: string;
   workdir: string;
   root?: string;
+  unrestricted?: true;
   abort: AbortController;
   task?: { prompt: string; approvalMode?: ApprovalMode };
   waitingForComputer?: boolean;
@@ -35,6 +36,7 @@ export interface CommandReview {
   command: string;
   cwd: string;
   root?: string;
+  unrestricted?: true;
   purpose: string;
   target: 'host-local' | 'linux-vm';
 }
@@ -42,6 +44,7 @@ export interface HostCommandRequest {
   command: string;
   cwd: string;
   root: string;
+  unrestricted?: true;
 }
 export type HostCommandExecutor = (
   request: HostCommandRequest,
@@ -223,6 +226,10 @@ export class Commands {
         command,
         cwd: run.workdir,
         ...(target === 'host-local' ? { root: run.root } : {}),
+        // A receipt for a sandboxed command cannot authorize the same call outside the sandbox.
+        ...(target === 'host-local' && tool === 'workspace_shell' && run.unrestricted === true
+          ? { unrestricted: true }
+          : {}),
         purpose:
           run.task?.prompt.trim().slice(0, 500) ||
           (tool === 'workspace_shell'

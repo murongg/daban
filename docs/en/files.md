@@ -37,7 +37,7 @@ Example: “Generate a CSV from the attachment, save it, and check its headers a
 
 ## Sharing and paths
 
-Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there. On macOS and Linux with the required sandbox, a Bot can write and run a script in the current task directory without connecting a folder or starting a VM. Request approval mode asks for each task command. Other modes let task commands run within the sandbox, with access to the task directory, temporary files, and standard tools. The sandbox blocks network and sudo.
+Ordinary tasks use the application-managed native workspace. Bots can list, read, write, and export knowledge text there. On macOS and Linux, a Bot can run a script from the current task directory without connecting a folder or starting a VM. In Request approval mode, each task command requires approval. In Approve for me mode, task commands run automatically inside the sandbox. Selecting [Full access](approvals.md) lets task commands run directly with the current system account's permissions.
 
 Linux keeps separate task and shared directories. A Bot starts installed Linux for commands when you explicitly request execution in the VM. It explicitly transfers additional inputs and brings outputs back. The whole native workspace is never synchronized automatically. Task directories can differ. Ask the Bot to locate an earlier output or shared file instead of guessing an old path. Retained Linux files remain in Linux and can be found with the Linux file tools.
 

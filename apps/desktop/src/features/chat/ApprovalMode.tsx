@@ -10,15 +10,26 @@ export function ApprovalMode({
   disabled = false,
   browserApproval = false,
   browserGranted = false,
+  hostCommands = false,
+  hostGranted = false,
 }: {
   value: Mode;
   onChange: (mode: Mode) => unknown;
   disabled?: boolean;
   browserApproval?: boolean;
   browserGranted?: boolean;
+  hostCommands?: boolean;
+  hostGranted?: boolean;
 }) {
   useLocale();
-  const previousFull = value === 'full' && browserApproval && !browserGranted;
+  const previousFull =
+    value === 'full' && ((browserApproval && !browserGranted) || (hostCommands && !hostGranted));
+  const fullDetail = (browser: boolean, host: boolean) => (
+    <span className="approval-mode-detail">
+      {t(browser ? 'approval.fullBrowserDescription' : 'approval.fullDescription')}{' '}
+      {t(host ? 'approval.fullHostDescription' : 'approval.fullScopeDescription')}
+    </span>
+  );
   return (
     <Select
       label={t('approval.mode')}
@@ -45,11 +56,7 @@ export function ApprovalMode({
           value: 'full',
           label: t('approval.full'),
           icon: <ShieldAlert className="approval-icon" />,
-          detail: (
-            <span className="approval-mode-detail">
-              {t(browserApproval ? 'approval.fullBrowserDescription' : 'approval.fullDescription')}
-            </span>
-          ),
+          detail: fullDetail(browserApproval, hostCommands),
         },
         ...(previousFull
           ? [
@@ -57,9 +64,7 @@ export function ApprovalMode({
                 value: 'previous-full',
                 label: t('approval.previousFull'),
                 icon: <ShieldAlert className="approval-icon" />,
-                detail: (
-                  <span className="approval-mode-detail">{t('approval.fullDescription')}</span>
-                ),
+                detail: fullDetail(browserApproval && browserGranted, hostCommands && hostGranted),
               },
             ]
           : []),

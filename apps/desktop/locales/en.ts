@@ -280,10 +280,13 @@ export const english = {
   'approval.autoDescription':
     'Run commands in the local task sandbox automatically. Ask for risky operations and external tools.',
   'approval.fullDescription':
-    'Automatically approve enabled tools for future tasks in this conversation; keep environment and file access limits.',
+    'Automatically approve enabled tools for future tasks in this conversation.',
   'approval.previousFull': 'Full access (previous scope)',
   'approval.fullBrowserDescription':
-    'Automatically approve enabled tools for future tasks in this conversation and allow them to open the built-in browser with saved sign-ins. Environment and file access limits still apply.',
+    'Automatically approve enabled tools for future tasks in this conversation and allow them to open the built-in browser with saved sign-ins.',
+  'approval.fullHostDescription':
+    'Run commands directly on this computer outside the app sandbox, with the current system account’s file and network access.',
+  'approval.fullScopeDescription': 'Environment and file access limits still apply.',
   'approval.automaticallyApproved': 'Automatically approved by conversation policy',
   'errors.taskTimeLimit': 'Task reached its time limit and stopped. Saved files are retained.',
   'errors.taskToolLimit':

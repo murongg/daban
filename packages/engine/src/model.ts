@@ -1615,7 +1615,8 @@ export class ModelRuns {
       (task?.chatRevision !== undefined ||
         task?.contextRevision !== undefined ||
         task?.model !== undefined ||
-        task?.browserAutoStart)
+        task?.browserAutoStart ||
+        task?.hostCommandFullAccess)
     )
       throw new Fault('INVALID_CONVERSATION', 400);
     const data = task
@@ -1629,6 +1630,7 @@ export class ModelRuns {
           ...(task.chatRevision === undefined ? {} : { chatRevision: task.chatRevision }),
           ...(task.approvalMode === undefined ? {} : { approvalMode: task.approvalMode }),
           ...(task.browserAutoStart ? { browserAutoStart: true } : {}),
+          ...(task.hostCommandFullAccess ? { hostCommandFullAccess: true } : {}),
           ...(task.contextRevision === undefined ? {} : { contextRevision: task.contextRevision }),
           ...(task.model === undefined ? {} : { model: task.model }),
         }
@@ -1875,6 +1877,8 @@ export class ModelRuns {
         job.binding = createHash('sha256')
           .update(`${job.binding}:approval:${task.approvalMode}`)
           .digest('hex');
+      if (task?.hostCommandFullAccess)
+        job.binding = createHash('sha256').update(`${job.binding}:full-host-command`).digest('hex');
       if (!task && !config.vision) throw new Fault('MODEL_COMPUTER_UNSUPPORTED', 400);
       const secrets = [
         ...config.secrets,

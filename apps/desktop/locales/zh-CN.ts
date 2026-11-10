@@ -242,10 +242,13 @@ export const chinese = {
   'approval.full': '完全访问权限',
   'approval.askDescription': '执行命令、读取网页和调用外部工具前请求批准。',
   'approval.autoDescription': '自动在本机任务沙箱内运行命令；风险操作和外部工具请求批准。',
-  'approval.fullDescription': '当前会话的后续任务自动批准已启用工具；保留执行环境与文件访问限制。',
+  'approval.fullDescription': '当前会话的后续任务自动批准已启用工具。',
   'approval.previousFull': '完全访问权限（旧范围）',
   'approval.fullBrowserDescription':
-    '当前会话的后续任务自动批准已启用工具，也可打开内置浏览器并使用已保存的登录。保留执行环境与文件访问限制。',
+    '当前会话的后续任务自动批准已启用工具，也可打开内置浏览器并使用已保存的登录。',
+  'approval.fullHostDescription':
+    '在本机直接运行命令，不经过应用沙箱，使用当前系统账号的文件和网络权限。',
+  'approval.fullScopeDescription': '保留执行环境与文件访问限制。',
   'approval.automaticallyApproved': '已按会话策略自动批准',
   'errors.taskTimeLimit': '任务达到实际运行时长上限，已停止；已保存文件仍保留。',
   'errors.taskToolLimit': '任务达到操作次数上限，已停止；请核对已有文件后继续。',

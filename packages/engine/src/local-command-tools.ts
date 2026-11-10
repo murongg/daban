@@ -48,6 +48,23 @@ export class LocalCommandTools {
     private readonly execute: HostCommandExecutor,
   ) {}
 
+  listFor(run?: AgentToolRun) {
+    return this.unrestricted(run)
+      ? [
+          {
+            ...workspaceShell,
+            description:
+              'Run Bash directly on this computer, starting in the current task directory. The user granted full host command access for this task. Commands have the current OS account’s file and network access. Use this for authorized host work and verify the result.',
+          },
+          commandTool,
+        ]
+      : this.list;
+  }
+
+  private unrestricted(run?: AgentToolRun) {
+    return run?.task?.approvalMode === 'full' && run.task.hostCommandFullAccess === true;
+  }
+
   async invoke(run: AgentToolRun, name: string, args: Record<string, unknown>, wireId?: string) {
     const { command, folder, cwd } = args;
     if (
@@ -69,6 +86,8 @@ export class LocalCommandTools {
     const directory = taskDirectory
       ? { root: taskDirectory.canonical, cwd: taskDirectory.canonical }
       : await this.folders.commandDirectory(run.bot, folder, cwd);
+    const scope =
+      name === 'workspace_shell' && this.unrestricted(run) ? { unrestricted: true as const } : {};
     return this.commands.invoke(
       {
         id: run.id,
@@ -77,6 +96,7 @@ export class LocalCommandTools {
         conversationId: run.conversationId,
         workdir: directory.cwd,
         root: directory.root,
+        ...scope,
         abort: run.abort,
         task: run.task,
         waitingForComputer: run.waitingForComputer,
@@ -99,7 +119,7 @@ export class LocalCommandTools {
             throw new Fault('LOCAL_FOLDER_CHANGED');
         }
         return this.execute(
-          { command, cwd: directory.cwd, root: directory.root },
+          { command, cwd: directory.cwd, root: directory.root, ...scope },
           run.abort.signal,
         );
       },

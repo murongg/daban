@@ -12,13 +12,13 @@ Updated clients and services (protocol 44 onward) offer three modes for the curr
 | --- | --- |
 | Request approval | Ask before every command, public webpage read, external tool call, or software installation |
 | Approve for me (default) | Commands in the local task sandbox and routine Linux operations run automatically. Risky or uncertain Linux operations, unauthorized webpages, and external tools ask |
-| Full access | Automatically approve enabled tools through the existing approval gates. Records identify automatic policy decisions. On Daban desktop, tasks can also open the built-in browser and use saved sign-ins |
+| Full access | Automatically approve enabled tools. Where supported, task commands run directly on the host with the current OS account's file and network permissions. Tasks can also open the built-in browser and use saved sign-ins where available |
 
 The choice survives a local reload. A new conversation returns to the default. Changes apply to future task starts and continuations. Running tasks, messages inserted into those tasks, and sends awaiting receipt reconciliation retain their captured policy. Questions still require human answers.
 
-Existing choices appear as **Full access (previous scope)**. Select **Full access** again to let future tasks in that conversation open the built-in browser. A connection opened under this conversation policy disconnects at the end of the task. For ongoing access, enable the per-Bot permission in Browser settings.
+Existing choices appear as **Full access (previous scope)** when new permissions are available. Select **Full access** again to grant the permissions shown for future tasks in that conversation. A browser connection opened under this policy disconnects at the end of the task. For ongoing access, enable the per-Bot permission in Browser settings.
 
-These modes control existing approval gates; they do not add approval to each browser or native desktop click. Full access preserves enabled-tool selection, execution and file boundaries, task ownership, human takeover, and request deduplication. It grants no additional host filesystem or shell access and never replays refused or uncertain operations.
+Full access applies the host command permission to `workspace_shell` on macOS and Linux. Commands start in the task directory and use the current OS account. Operating system permission prompts and administrator requirements still apply. Connected-folder commands through `local_shell` retain their separate approval and sandbox.
 
 ## Request types
 

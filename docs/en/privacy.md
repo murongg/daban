@@ -21,7 +21,7 @@ Keep passwords, API keys, and tokens out of roles, memory, skills, and ordinary 
 
 Linux Bots can administer the VM, including networking, sudo, software, and files. Host folders are not mounted by default. Bots share its system, files, and sign-ins; separate screens do not isolate them securely from each other.
 
-Native mode controls the current user's real computer, not a sandbox. Although there is no host shell tool bypassing the GUI, operations through a terminal GUI can still affect the host. Administrator, secure-desktop, and other protected interfaces are not automatically authorized.
+Native desktop control operates the current user's real computer. On macOS and Linux, selecting [Full access](approvals.md) also lets task commands run directly on the host with the current account's permissions, including its file and network access. Administrator, secure-desktop, and other protected interfaces require their own system permissions.
 
 ## Authorization changes
 
