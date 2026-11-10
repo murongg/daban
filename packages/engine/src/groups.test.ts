@@ -713,6 +713,36 @@ test('groups persist scoped membership and human messages, deduplicate exact sen
   }
 });
 
+test('group delivery distinguishes a human prompt from a bot-authored collaboration prompt', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-group-web-'));
+  const fake = runner();
+  const groups = new Groups(path.join(dir, 'groups.sqlite'), fake.value);
+  const start = fake.value.start;
+  const origins: unknown[] = [];
+  fake.value.start = async (bot, task, scope) => {
+    origins.push(scope.userAuthored);
+    return start(bot, task, scope);
+  };
+  fake.value.source = () => ({ intentId: 'mock-intent' });
+  try {
+    const group = await groups.register(input);
+    const prompt = 'Read https://article.example.test/';
+    await groups.send({ id: 'mock-paste', group: group.id, prompt, recipients: ['mock-alpha'] });
+    await groups.tick();
+    fake.complete(0, 'Synthetic answer');
+    await groups.tick();
+    await groups.collaborate(
+      { bot: 'mock-alpha', runId: 'mock-run' },
+      { name: 'Synthetic collaboration', members: ['mock-beta'], message: prompt },
+    );
+    await groups.tick();
+    expect(origins).toEqual([true, undefined]);
+  } finally {
+    await groups.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('restart never replays an ambiguous claimed stage and cancellation cannot stop unrelated work', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'synthetic-group-recovery-'));
   const run = runner();

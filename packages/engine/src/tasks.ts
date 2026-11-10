@@ -404,6 +404,7 @@ export function taskActivity(record: Pick<TaskRecord, 'trace' | 'executedCount'>
 export interface ConversationScope {
   id: string;
   context: string;
+  userAuthored?: true;
 }
 export interface RunReceipt {
   runId: string;

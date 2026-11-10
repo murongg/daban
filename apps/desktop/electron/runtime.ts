@@ -394,6 +394,7 @@ export class RuntimeClient {
         clientProtocol?: number;
         botCapabilities?: unknown;
         searchSettings?: unknown;
+        jinaReader?: unknown;
         localFolders?: unknown;
         localComputer?: unknown;
         linux?: unknown;
@@ -508,6 +509,7 @@ export class RuntimeClient {
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
       if (raw.searchSettings === true) snapshot.searchSettings = true;
+      if (typeof raw.jinaReader === 'boolean') snapshot.jinaReader = raw.jinaReader;
       if (this.agent && raw.localFolders === true) snapshot.localFolders = true;
       if (this.agent && raw.localComputer !== undefined)
         snapshot.localComputer = isLocalComputerStatus(raw.localComputer)
@@ -841,6 +843,17 @@ export class RuntimeClient {
         (!value || typeof value !== 'object' || !('restored' in value) || value.restored !== true)
       )
         throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (command.type === 'web.jina') {
+      const { enabled } = command;
+      if (typeof enabled !== 'boolean') throw new Error('INVALID_COMMAND');
+      const state = await this.status();
+      if (state.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+      if (state.jinaReader === undefined) throw new Error('RUNTIME_TOO_OLD');
+      if (recoveryBlocked(state)) throw new Error('RUNTIME_RECOVERY_PENDING');
+      const value = await this.api('/api/web/jina', { enabled });
+      if (value !== enabled) throw new Error('INVALID_RUNTIME_STATE');
       return value;
     }
     if (command.type.startsWith('search.')) {

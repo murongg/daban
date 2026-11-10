@@ -118,6 +118,10 @@ export const chinese = {
   'search.offline': '连接 Host 服务后可管理搜索设置。',
   'search.loading': '正在读取搜索设置…',
   'search.enabled': '启用搜索',
+  'search.jinaReader': '使用 Jina Reader 兜底',
+  'search.jinaScope':
+    '你贴出的无查询参数公网链接遇到 HTTP 403 或正文为空时，搭伴会把网址发给 Jina Reader 尝试读取一次。',
+  'search.jinaSaveFailed': '无法确认 Jina Reader 设置，请检查 Host 连接。',
   'search.provider': '搜索供应商',
   'search.key': '搜索 API Key',
   'search.keyHint':

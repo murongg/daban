@@ -107,6 +107,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
     return isSkillPackageCommand(value) ? value : fail();
   const v = value;
   const fields: Record<string, string[]> = {
+    'web.jina': ['type', 'enabled'],
     'work.list': ['type', 'query'],
     'work.read': ['type', 'id'],
     'work.write': ['type', 'request'],
@@ -278,6 +279,7 @@ export function parseCommand(value: unknown): RuntimeCommand {
       return fail();
   }
   if (v.type === 'group.register' && !isGroupInput(v.group)) return fail();
+  if (v.type === 'web.jina' && typeof v.enabled !== 'boolean') return fail();
   if (v.type === 'work.list' && !isWorkQuery(v.query)) return fail();
   if (v.type === 'work.read' && !validAgentId(v.id)) return fail();
   if ((v.type === 'work.write' || v.type === 'work.receipt') && !isWorkWrite(v.request))

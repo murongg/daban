@@ -31,6 +31,8 @@ The reader downloads bounded HTML, removes scripts, hidden content, and navigati
 
 The default page is approximately 16,000 text positions, with a maximum of 32,000 per page and a 2 MiB raw-response limit. Snapshots have retention and capacity limits; an expired snapshot or restart requires reading again from the beginning. Continuation offsets are supplied to the Bot, not something you need to manage.
 
+Settings → Search includes an optional Jina Reader fallback, which starts off. When enabled, Daban can send a public URL you pasted in the current task to Jina Reader once if the origin returns HTTP 403 or a successful response yields no text. Eligible URLs have no query parameters. The request sends the URL alone, and the result identifies Jina Reader while citing the original page. Existing approval and continuation rules apply.
+
 Example: “Read the full text of these three URLs, follow continuation pages to the end, and distinguish source claims, your summary, and unverified information.”
 
 ## When reading fails

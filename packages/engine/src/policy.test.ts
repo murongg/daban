@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { apply, inject, requestedUrls } from './policy.js';
+import { apply, inject, readWebGrant, requestedUrls } from './policy.js';
 
 test('registry execution counts survive a lost fence acknowledgement without trusting provider IDs', async () => {
   const fences: unknown[] = [];
@@ -101,6 +101,52 @@ test('ask mode requests approval even for a URL supplied in the accepted task', 
 test('the policy declares approval as a required Cordis capability', () => {
   expect.assert(inject.includes('approval'));
 });
+
+test.each(['auto', 'ask'] as const)(
+  'only grants Jina eligibility to user-pasted URLs in %s mode',
+  async (approvalMode) => {
+    const pasted = 'https://paste.example.test/post';
+    const found = 'https://found.example.test/post';
+    const exec = (name: string, args: unknown) => ({
+      name,
+      arguments: args,
+      signal: new AbortController().signal,
+      agent: {},
+    });
+    const listeners: Parameters<Parameters<typeof apply>[0]['on']>[] = [];
+    apply(
+      {
+        on: (...hook) => listeners.push(hook),
+        approval: { request: async () => 'allowed-once' },
+      },
+      { limit: 10, urls: [pasted], approvalMode },
+    );
+    const pre = listeners.find((hook) => hook[0] === 'tools/pre-execute');
+    const post = listeners.find((hook) => hook[0] === 'tools/post-execute');
+    expect.assert(pre && post);
+    await post[1](
+      exec('web_search', {}),
+      {
+        isError: false,
+        value: { sources: [{ url: found }] },
+      },
+      async () => ({ kind: 'accept' }),
+    );
+    for (const [url, userProvided] of [
+      [pasted, true],
+      [found, false],
+    ] as const) {
+      const read = exec('web_fetch', { url });
+      await pre[1](read, async () => {
+        expect(readWebGrant(read)).toMatchObject({
+          url,
+          userProvided,
+          canFollow: approvalMode === 'auto',
+        });
+      });
+    }
+  },
+);
 
 test('native session-bound schedules cannot bypass the product schedule service', async () => {
   let listener: (

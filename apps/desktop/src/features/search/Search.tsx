@@ -3,6 +3,7 @@ import {
   isSearchReceipt,
   isSearchReceiptQuery,
   isSearchStatus,
+  type RuntimeSnapshot,
   type SearchHealth,
   type SearchProvider,
   type SearchReceipt,
@@ -72,6 +73,8 @@ export function Search() {
   const supported = runtime.snapshot.searchSettings === true;
   const available = supported && runtime.enabled && runtime.snapshot.phase === 'ready';
   const [status, setStatus] = useState<SearchStatus>();
+  const [savingJina, setSavingJina] = useState(false);
+  const [jinaError, setJinaError] = useState(false);
   const [draft, setDraft] = useState<Draft>();
   const [pending, setPending] = useState(readPending);
   const [busy, setBusy] = useState<'submit' | 'recover'>();
@@ -269,6 +272,21 @@ export function Search() {
     }
   }
 
+  async function saveJina(enabled: boolean) {
+    setSavingJina(true);
+    setJinaError(false);
+    try {
+      // A lost write reply can still be confirmed from the Host's saved value.
+      await runtime.command({ type: 'web.jina', enabled }).catch(() => undefined);
+      const latest = await runtime.command<RuntimeSnapshot>({ type: 'status' });
+      setJinaError(latest.jinaReader !== enabled);
+    } catch {
+      setJinaError(true);
+    } finally {
+      setSavingJina(false);
+    }
+  }
+
   if (!supported) return <p className="inline-note">{t('search.legacyHost')}</p>;
   if (!available) return <p className="inline-note">{t('search.offline')}</p>;
   const dirty =
@@ -289,6 +307,29 @@ export function Search() {
 
   return (
     <div className="search-settings">
+      {runtime.snapshot.jinaReader !== undefined && (
+        <div>
+          <div className="search-enable">
+            <div>
+              <label className="setting-label" htmlFor={`${id}-jina`}>
+                {t('search.jinaReader')}
+              </label>
+              <p className="field-help" id={`${id}-jina-scope`}>
+                {t('search.jinaScope')}
+              </p>
+            </div>
+            <input
+              id={`${id}-jina`}
+              aria-describedby={`${id}-jina-scope`}
+              type="checkbox"
+              checked={runtime.snapshot.jinaReader}
+              disabled={savingJina}
+              onChange={(event) => saveJina(event.target.checked)}
+            />
+          </div>
+          {jinaError && <p role="alert">{t('search.jinaSaveFailed')}</p>}
+        </div>
+      )}
       {draft && status && (
         <form
           className="search-form"

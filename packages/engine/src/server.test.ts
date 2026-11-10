@@ -52,6 +52,13 @@ test('a failed optional desktop leaves ordinary Agent stores and HTTP tools avai
   expect(state.value.computerError).toBe('COMPUTER_START_FAILED');
   expect(state.value.bots).toStrictEqual({});
   expect(state.value.sharedLogin).toBe(false);
+  expect(state.value.jinaReader).toBe(false);
+  expect((await call('/api/web/jina', { enabled: true }, false)).status).toBe(403);
+  expect((await call('/api/web/jina', { enabled: 'true' })).status).toBe(400);
+  expect((await call('/api/web/jina', { enabled: true })).value).toBe(true);
+  expect((await call('/api/state')).value.jinaReader).toBe(true);
+  expect((await call('/api/web/jina', { enabled: false })).value).toBe(false);
+  expect((await call('/api/state')).value.jinaReader).toBe(false);
   expect.assert(!JSON.stringify(state.value).includes('SYNTHETIC_PRIVATE_GUI_FAILURE'));
   expect.assert(!JSON.stringify(state.value).includes('/private/synthetic-config'));
   expect(cleaned).toBe(process.platform === 'linux' ? 1 : 0);
