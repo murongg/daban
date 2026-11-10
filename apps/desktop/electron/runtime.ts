@@ -411,6 +411,7 @@ export class RuntimeClient {
         clientProtocol?: number;
         botCapabilities?: unknown;
         appConnections?: unknown;
+        appWorkspace?: unknown;
         searchSettings?: unknown;
         jinaReader?: unknown;
         localFolders?: unknown;
@@ -526,6 +527,7 @@ export class RuntimeClient {
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
+      if (raw.appWorkspace === true) snapshot.appWorkspace = true;
       if (raw.appConnections !== undefined) {
         if (!isAppConnectionsCapability(raw.appConnections))
           throw new Error('INVALID_RUNTIME_STATE');
@@ -1385,6 +1387,8 @@ export class RuntimeClient {
       const current = await this.status();
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 21) throw new Error('RUNTIME_TOO_OLD');
+      if (command.type === 'mcp.list' && command.allOwners && !current.appWorkspace)
+        throw new Error('RUNTIME_TOO_OLD');
       if (
         command.bot !== undefined &&
         [
@@ -1411,7 +1415,9 @@ export class RuntimeClient {
             value.items.every(
               (entry) =>
                 entry.deleted === !!command.includeDeleted &&
-                (entry.ownerBot === undefined || entry.ownerBot === command.bot),
+                (command.allOwners ||
+                  entry.ownerBot === undefined ||
+                  entry.ownerBot === command.bot),
             );
           break;
         case 'mcp.save':

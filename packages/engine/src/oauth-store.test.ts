@@ -267,3 +267,84 @@ test('corrupt persisted OAuth authority stays unavailable rather than forwarding
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a workspace account survives reopening and gives each Bot only its own explicit tool selection', async () => {
+  const root = await secureDirectory(
+    await mkdtemp(path.join(tmpdir(), 'synthetic-workspace-app-')),
+  );
+  const file = path.join(root, 'integrations.sqlite');
+  let store = new Integrations(file);
+  const workspace = {
+    connection: 'mock-workspace',
+    revision: 0,
+    requestId: 'mock-workspace-start',
+    app: 'notion',
+    name: 'Synthetic workspace account',
+  } as const;
+  try {
+    await store.save(
+      {
+        id: 'mock-private',
+        revision: 0,
+        requestId: 'mock-private-save',
+        name: 'Synthetic private MCP',
+        endpoint: 'https://private.example.test/mcp',
+      },
+      'mock-a',
+    );
+    const attempt = await store.beginOAuth(workspace, Date.now() + 600000);
+    await expect(
+      store.oauthAttempt({ ...workspace, bot: input.bot }, attempt.attempt),
+    ).rejects.toMatchObject({ code: 'OAUTH_ATTEMPT_NOT_FOUND' });
+    const ref = { connection: workspace.connection, revision: 0 };
+    await store.oauthPhase(ref, attempt.attempt, 'waiting');
+    await store.oauthPhase(ref, attempt.attempt, 'exchanging');
+    await store.oauthCommit(ref, attempt.attempt, grant);
+    const catalog = await store.catalog(ref.connection, 1, [
+      { name: 'synthetic_read', inputSchema: { type: 'object' } },
+      { name: 'synthetic_list', inputSchema: { type: 'object' } },
+    ]);
+    for (const bot of ['mock-a', 'mock-b']) {
+      expect((await store.capture(bot)).connections).toEqual([]);
+      expect(
+        (await store.assignments(bot)).items.find((item) => item.connection.id === ref.connection),
+      ).toMatchObject({ enabled: false, tools: [] });
+    }
+    const selection = {
+      connection: ref.connection,
+      configRevision: 1,
+      bindingRevision: 0,
+      catalogDigest: catalog.current.catalogDigest,
+      enabled: true,
+      tools: ['synthetic_read'],
+    };
+    await store.bind('mock-a', selection);
+    await store.bind('mock-b', { ...selection, tools: ['synthetic_list'] });
+    await store.close();
+    store = new Integrations(file);
+    expect((await store.list(false, undefined, 'apps', true)).items).toEqual([
+      expect.objectContaining({ id: 'mock-private', ownerBot: 'mock-a', boundBots: [] }),
+      expect.objectContaining({ id: ref.connection, boundBots: ['mock-a', 'mock-b'] }),
+    ]);
+    expect((await store.assignments('mock-b')).items.map((item) => item.connection.id)).toEqual([
+      ref.connection,
+    ]);
+    expect((await store.capture('mock-a')).connections[0].tools.map((tool) => tool.name)).toEqual([
+      'synthetic_read',
+    ]);
+    expect((await store.capture('mock-b')).connections[0].tools.map((tool) => tool.name)).toEqual([
+      'synthetic_list',
+    ]);
+    await store.bind('mock-a', { ...selection, bindingRevision: 1, enabled: false });
+    expect((await store.capture('mock-a')).connections).toEqual([]);
+    expect((await store.capture('mock-b')).connections).toHaveLength(1);
+    await expect(
+      store.disconnectOAuth({ ...ref, revision: 1, bot: 'mock-b' }, 'mock-b-disconnect'),
+    ).rejects.toMatchObject({ code: 'OAUTH_CONNECTION_MISMATCH' });
+    await store.disconnectOAuth({ ...ref, revision: 1 }, 'mock-workspace-disconnect');
+    expect((await store.capture('mock-b')).connections).toEqual([]);
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

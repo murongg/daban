@@ -135,6 +135,8 @@ export function mcpSecrets(config: {
 const legacyStoreTables =
   'call_receipts,config_commands,integration_bindings,integration_meta,integrations';
 const storeTables = `${legacyStoreTables},oauth_attempts,oauth_grants`;
+// The existing attempt journal requires a string. The empty scope cannot be a Bot ID.
+const workspaceAttempt = '';
 const pendingOAuth = ['preparing', 'waiting', 'exchanging'];
 const legacyColumns = [
   'id',
@@ -179,7 +181,7 @@ function legacy(client: DatabaseSync) {
 export class Integrations {
   private oauthReceipt(row: typeof oauthAttempts.$inferSelect): AppOAuthReceipt {
     return {
-      bot: row.bot,
+      ...(row.bot !== workspaceAttempt ? { bot: row.bot } : {}),
       connection: row.connection,
       revision: row.revision,
       requestId: row.requestId,
@@ -198,7 +200,7 @@ export class Integrations {
       .get();
     if (
       !row ||
-      row.bot !== target.bot ||
+      row.bot !== (target.bot ?? workspaceAttempt) ||
       row.connection !== target.connection ||
       row.revision !== target.revision
     )
@@ -206,21 +208,18 @@ export class Integrations {
     return row;
   }
   private reserved(nameKey: string, bot: string | undefined, except?: string) {
-    return (
-      bot !== undefined &&
-      this.available()
-        .select()
-        .from(oauthAttempts)
-        .where(
-          and(
-            eq(oauthAttempts.bot, bot),
-            eq(oauthAttempts.nameKey, nameKey),
-            inArray(oauthAttempts.phase, pendingOAuth),
-          ),
-        )
-        .all()
-        .some((a) => a.connection !== except)
-    );
+    return this.available()
+      .select()
+      .from(oauthAttempts)
+      .where(
+        and(
+          eq(oauthAttempts.bot, bot ?? workspaceAttempt),
+          eq(oauthAttempts.nameKey, nameKey),
+          inArray(oauthAttempts.phase, pendingOAuth),
+        ),
+      )
+      .all()
+      .some((a) => a.connection !== except);
   }
   private expireOAuth() {
     this.available()
@@ -258,7 +257,7 @@ export class Integrations {
     const row = db.select().from(integrations).where(eq(integrations.id, input.connection)).get();
     if (row) {
       this.scoped(input.connection, input.bot);
-      if (row.owner !== input.bot || row.authKind !== 'oauth')
+      if (this.owner(row) !== input.bot || row.authKind !== 'oauth')
         throw new Fault('OAUTH_CONNECTION_MISMATCH');
       const grant = db.select().from(oauthGrants).where(eq(oauthGrants.connection, row.id)).get();
       if (!grant || grant.app !== input.app) throw new Fault('OAUTH_CONNECTION_MISMATCH');
@@ -286,7 +285,7 @@ export class Integrations {
         .from(integrations)
         .where(
           and(
-            eq(integrations.owner, input.bot),
+            this.owned(input.bot),
             eq(integrations.nameKey, nameKey),
             ne(integrations.id, input.connection),
           ),
@@ -314,6 +313,7 @@ export class Integrations {
         .insert(oauthAttempts)
         .values({
           ...input,
+          bot: input.bot ?? workspaceAttempt,
           name,
           nameKey,
           hash: fingerprint,
@@ -341,7 +341,7 @@ export class Integrations {
       .from(oauthAttempts)
       .where(
         and(
-          eq(oauthAttempts.bot, target.bot),
+          eq(oauthAttempts.bot, target.bot ?? workspaceAttempt),
           eq(oauthAttempts.connection, target.connection),
           eq(oauthAttempts.revision, target.revision),
           eq(oauthAttempts.app, app),
@@ -444,7 +444,7 @@ export class Integrations {
     if (
       (old?.revision ?? 0) !== target.revision ||
       old?.deleted ||
-      (old && old.owner !== target.bot)
+      (old && this.owner(old) !== target.bot)
     )
       throw new Fault('OAUTH_CONFLICT');
     if (
@@ -453,7 +453,7 @@ export class Integrations {
         .from(integrations)
         .where(
           and(
-            eq(integrations.owner, target.bot),
+            this.owned(target.bot),
             eq(integrations.nameKey, operation.nameKey),
             ne(integrations.id, target.connection),
           ),
@@ -471,7 +471,7 @@ export class Integrations {
             revision: 1,
             name: operation.name,
             nameKey: operation.nameKey,
-            owner: target.bot,
+            owner: target.bot ?? null,
             endpoint: grant.resource,
             authKind: 'oauth',
             credentialEpoch: epoch,
@@ -644,22 +644,27 @@ export class Integrations {
     );
     await this.notify(connection, undefined, 'config');
   }
-  async oauthStates(bot: string, directory = false) {
+  async oauthStates(bot: string | undefined, directory = false) {
     await this.ready;
-    if (!validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    if (bot !== undefined && !validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
     this.expireOAuth();
     const db = this.available(),
       pending = db
         .select()
         .from(oauthAttempts)
-        .where(and(eq(oauthAttempts.bot, bot), inArray(oauthAttempts.phase, pendingOAuth)))
+        .where(
+          and(
+            bot === undefined ? undefined : eq(oauthAttempts.bot, bot),
+            inArray(oauthAttempts.phase, pendingOAuth),
+          ),
+        )
         .all();
     return db
       .select()
       .from(integrations)
       .where(
         and(
-          eq(integrations.owner, bot),
+          bot === undefined && directory ? undefined : this.owned(bot),
           eq(integrations.authKind, 'oauth'),
           eq(integrations.deleted, 0),
         ),
@@ -680,7 +685,14 @@ export class Integrations {
               : ('reconnect-required' as const);
         return {
           connection: row.id,
-          ...(directory ? { app: provider.id, name: row.name, revision: row.revision } : {}),
+          ...(directory
+            ? {
+                app: provider.id,
+                name: row.name,
+                revision: row.revision,
+                ...(bot === undefined && row.owner ? { ownerBot: row.owner } : {}),
+              }
+            : {}),
           state,
           ...(grant?.scope ? { scope: grant.scope } : {}),
           ...(grant?.expiresAt ? { expiresAt: grant.expiresAt } : {}),
@@ -688,16 +700,18 @@ export class Integrations {
       })
       .filter((entry) => entry !== undefined);
   }
-  async pendingOAuth(bot: string, directory = false) {
+  async pendingOAuth(bot: string | undefined, directory = false) {
     await this.ready;
-    if (!validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
+    if (bot !== undefined && !validAgentId(bot)) throw new Fault('OAUTH_INVALID_REQUEST', 400);
     this.expireOAuth();
     return this.available()
       .select()
       .from(oauthAttempts)
       .where(
         and(
-          eq(oauthAttempts.bot, bot),
+          bot === undefined && directory
+            ? undefined
+            : eq(oauthAttempts.bot, bot ?? workspaceAttempt),
           inArray(
             oauthAttempts.phase,
             directory ? [...pendingOAuth, 'expired', 'interrupted', 'failed'] : pendingOAuth,
@@ -710,7 +724,7 @@ export class Integrations {
       .all()
       .map((row) => ({
         input: {
-          bot: row.bot,
+          ...(row.bot !== workspaceAttempt ? { bot: row.bot } : {}),
           connection: row.connection,
           revision: row.revision,
           requestId: row.requestId,
@@ -740,7 +754,7 @@ export class Integrations {
       return receipt;
     }
     const row = this.scoped(target.connection, target.bot);
-    if (row.owner !== target.bot || row.authKind !== 'oauth')
+    if (this.owner(row) !== target.bot || row.authKind !== 'oauth')
       throw new Fault('OAUTH_CONNECTION_MISMATCH');
     if (row.revision !== target.revision || row.deleted) throw new Fault('OAUTH_CONFLICT');
     this.transaction(() => {
@@ -976,6 +990,9 @@ export class Integrations {
       throw new Fault('MCP_NOT_FOUND', 404);
     return row;
   }
+  private owned(bot?: string) {
+    return bot === undefined ? isNull(integrations.owner) : eq(integrations.owner, bot);
+  }
   // Shared connections plus the ones a Bot owns; `owner = NULL` never matches, as in the old SQL.
   private visible(bot: string | undefined) {
     return bot === undefined
@@ -1041,8 +1058,7 @@ export class Integrations {
     const provider = appProvider(grant?.app);
     if (
       row.authKind === 'oauth' &&
-      (!this.owner(row) ||
-        !grant ||
+      (!grant ||
         !provider ||
         grant.issuer !== provider.issuer ||
         grant.resource !== provider.resource ||
@@ -1144,20 +1160,46 @@ export class Integrations {
     await this.ready;
     return this.requireView(this.scoped(id, bot), view);
   }
-  async list(includeDeleted = false, bot?: string, view: McpView = 'apps') {
+  async list(includeDeleted = false, bot?: string, view: McpView = 'apps', allOwners = false) {
     await this.ready;
     if (bot !== undefined && !validAgentId(bot)) throw new Fault('INVALID_MCP_CONFIG', 400);
+    if (allOwners && (bot !== undefined || view !== 'apps'))
+      throw new Fault('INVALID_MCP_CONFIG', 400);
+    const db = this.available();
+    const bound = new Map<string, string[]>();
+    if (allOwners)
+      for (const { connection, bot } of db
+        .select({ connection: integrationBindings.connection, bot: integrationBindings.bot })
+        .from(integrationBindings)
+        .where(eq(integrationBindings.enabled, 1))
+        .all()) {
+        const owners = bound.get(connection) ?? [];
+        owners.push(bot);
+        bound.set(connection, owners);
+      }
     return {
       revision: this.currentRevision(),
-      items: this.available()
+      items: db
         .select()
         .from(integrations)
-        .where(and(eq(integrations.deleted, Number(includeDeleted)), this.visible(bot)))
+        .where(
+          and(
+            eq(integrations.deleted, Number(includeDeleted)),
+            allOwners ? undefined : this.visible(bot),
+          ),
+        )
         .orderBy(integrations.name)
         .all()
         .flatMap((row) => {
           const connection = this.publicView(row, view);
-          return connection ? [connection] : [];
+          return connection
+            ? [
+                {
+                  ...connection,
+                  ...(allOwners ? { boundBots: bound.get(connection.id) ?? [] } : {}),
+                },
+              ]
+            : [];
         }),
     };
   }
@@ -1249,11 +1291,7 @@ export class Integrations {
         .select({ id: integrations.id })
         .from(integrations)
         .where(
-          and(
-            eq(integrations.nameKey, nameKey),
-            scope === undefined ? isNull(integrations.owner) : eq(integrations.owner, scope),
-            ne(integrations.id, input.id),
-          ),
+          and(eq(integrations.nameKey, nameKey), this.owned(scope), ne(integrations.id, input.id)),
         )
         .get()
     )

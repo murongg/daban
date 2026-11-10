@@ -3585,20 +3585,30 @@ export const english = {
     'Update the Host to connect these apps. Existing connections and custom Bearer remain available.',
   'apps.partialHistory':
     'Only recent authorization attempts are shown. Reconcile uncertain outcomes using the original request.',
-  'apps.checkNext': 'Next: check the connection, then explicitly select allowed tools.',
-  'apps.chooseTools': 'Connection check passed. Review and explicitly select tool permissions.',
+  'apps.checkNext': 'Next: check the connection to load its tools.',
+  'apps.chooseTools':
+    'Connection ready. Choose tools under the Bot’s Capabilities → External tools.',
   'apps.accountImpact':
     'Disconnect clears local credentials and invalidates tool access. Revoke provider-side access separately in the official account.',
   'apps.transportDetails': 'Custom connection requirements',
   'apps.addApp': 'Add an app',
+  'apps.privateConnection': 'Available only to {0}',
+  'apps.affectedBots': 'Affected Bots: {0}',
+  'apps.botToolsHint':
+    'Choose connections and tools for this Bot. Add or check connections in Settings → External tools.',
+  'apps.botToolsUnavailable': 'External tools for this Bot are currently unavailable.',
+  'apps.noConnectionsForBot': 'No connections available. Add one in Settings → External tools.',
+  'apps.bound': 'Enabled',
+  'apps.notBound': 'Disabled',
+  'apps.bindingNeedsReview': 'Review required',
+  'integrationtools.finishSelection': 'Save, verify, or discard the current tool selection first.',
   'apps.title': 'App connections',
   'apps.notion': 'Notion',
   'apps.custom': 'Custom remote MCP',
   'apps.description':
-    'Authorize an account, then inspect and select tools. Each tool call still needs its own approval.',
+    'Connect an account or MCP service here, then choose allowed tools under the Bot’s Capabilities → External tools.',
   'apps.connectNotion': 'Connect Notion',
-  'apps.unverified':
-    'Notion is unavailable until independent test-account verification is complete.',
+  'apps.unverified': 'Notion connections are not available yet.',
   'apps.remoteUnavailable':
     'A local browser callback is unavailable for this connection. Use custom Bearer authentication.',
   'apps.authorize': 'Authorize in system browser',

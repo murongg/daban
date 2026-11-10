@@ -11,7 +11,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RuntimeProvider } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
-import { findSelectControl, selectControl, selectOption } from '../../test/select.fixture.ts';
+import { BotTools } from './BotTools';
 import { Integrations } from './Integrations';
 import { IntegrationTools } from './IntegrationTools';
 
@@ -52,13 +52,32 @@ function connect({
   stale = false,
   archived = false,
   offline = false,
+  ownerBot,
+}: {
+  empty?: boolean;
+  protocol?: number;
+  error?: string;
+  changeOnCheck?: boolean;
+  stale?: boolean;
+  archived?: boolean;
+  offline?: boolean;
+  ownerBot?: string;
 } = {}) {
-  let rows = empty ? [] : [{ ...structuredClone(connection), revision: stale ? 2 : 1 }];
+  let rows = empty
+    ? []
+    : [
+        {
+          ...structuredClone(connection),
+          revision: stale ? 2 : 1,
+          ...(ownerBot ? { ownerBot } : {}),
+        },
+      ];
   let offered = [tool];
   let saved: unknown;
   const bindings = new Map<string, McpAssignment>();
   const snapshot = disconnected(offline ? 'offline' : 'ready');
   snapshot.botCapabilities = true;
+  if (ownerBot) snapshot.appWorkspace = true;
   snapshot.protocolVersion = protocol;
   snapshot.mcp = { available: true, revision: 1 };
   snapshot.profiles = bots.map((bot) => ({
@@ -102,7 +121,7 @@ function connect({
           items: rows.filter(
             (row) =>
               row.deleted === !!command.includeDeleted &&
-              (!row.ownerBot || row.ownerBot === command.bot),
+              (command.allOwners || !row.ownerBot || row.ownerBot === command.bot),
           ),
         },
       };
@@ -199,6 +218,11 @@ it('does not promise usable conversation while the whole runtime is offline', as
     screen.queryByText('外部工具服务暂不可用，普通对话和已有工作区仍可使用。'),
   ).not.toBeInTheDocument();
 });
+const botView = (bot = bots[0], onDirty = vi.fn()) => (
+  <RuntimeProvider>
+    <BotTools bot={bot} onDirty={onDirty} />
+  </RuntimeProvider>
+);
 const view = () => (
   <RuntimeProvider>
     <Integrations bots={bots} />
@@ -272,6 +296,23 @@ it('creates a write-only connection without storing private input in the workspa
   expect(screen.queryByLabelText('Bearer Token')).not.toBeInTheDocument();
 });
 
+it('lets settings add a connection before any Bot exists and grants no tools', async () => {
+  const invoke = connect({ empty: true });
+  render(
+    <RuntimeProvider>
+      <Integrations bots={[]} />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '添加连接' }));
+  await userEvent.type(screen.getByLabelText('连接名称'), 'Synthetic workspace MCP');
+  await userEvent.type(screen.getByLabelText('服务地址'), 'https://mcp.example.test/mcp');
+  await userEvent.click(screen.getByRole('button', { name: '保存连接' }));
+  await screen.findByRole('heading', { name: 'Synthetic workspace MCP' });
+  const commands = invoke.mock.calls.map(([command]) => command);
+  expect(commands.find((command) => command.type === 'mcp.save')).not.toHaveProperty('bot');
+  expect(commands.some((command) => command.type === 'mcp.bind')).toBe(false);
+});
+
 it('keeps private drafts after a configuration conflict rather than replacing them with a late saved value', async () => {
   connect({ error: 'MCP_CONFLICT' });
   render(view());
@@ -304,10 +345,13 @@ it('inspects an uncertain save using its original nonce without sending the cred
 
 it('checks a connection without granting tools, then explicitly saves the reviewed selection for one Bot only', async () => {
   const invoke = connect();
-  render(view());
+  const settings = render(view());
   await userEvent.click(await screen.findByRole('button', { name: '检查 合成服务' }));
   expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
-  await userEvent.click(screen.getByRole('button', { name: '工具与授权 合成服务' }));
+  expect(screen.queryByRole('button', { name: '工具与授权 合成服务' })).not.toBeInTheDocument();
+  settings.unmount();
+  const first = render(botView());
+  await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await userEvent.click(await screen.findByRole('checkbox', { name: 'synthetic_echo' }));
   await userEvent.click(screen.getByRole('checkbox', { name: '允许这位 Bot 使用所选工具' }));
   await userEvent.click(screen.getByRole('button', { name: '保存工具选择' }));
@@ -327,7 +371,10 @@ it('checks a connection without granting tools, then explicitly saves the review
       enabled: true,
     },
   });
-  await selectOption(userEvent, selectControl('使用工具的 Bot'), 'mock-b');
+  await waitFor(() => expect(screen.getByText('已启用')).toBeVisible());
+  first.unmount();
+  render(botView(bots[1]));
+  await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   expect(
     await screen.findByRole('checkbox', { name: '允许这位 Bot 使用所选工具' }),
   ).not.toBeChecked();
@@ -356,24 +403,24 @@ it('leaves older runtimes explicit and never sends new MCP commands to them', as
   expect(invoke.mock.calls.some(([command]) => command.type.startsWith('mcp.'))).toBe(false);
 });
 
-it('keeps checking available while a tool selection is dirty and blocks navigation that would discard it', async () => {
+it('blocks closing the Bot panel while its tool selection is dirty', async () => {
   connect();
-  render(view());
+  const dirty = vi.fn();
+  render(botView(bots[0], dirty));
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await userEvent.click(await screen.findByRole('checkbox', { name: 'synthetic_echo' }));
-  await details();
-  expect(screen.getByRole('button', { name: '编辑 合成服务' })).toBeDisabled();
-  expect(selectControl('使用工具的 Bot')).toBeDisabled();
-  expect(screen.getByRole('button', { name: '检查 合成服务' })).toBeEnabled();
+  expect(dirty).toHaveBeenLastCalledWith(true);
+  expect(screen.getByRole('button', { name: '关闭工具设置' })).toBeDisabled();
   await userEvent.click(screen.getByRole('button', { name: '放弃选择修改' }));
-  expect(selectControl('使用工具的 Bot')).toBeEnabled();
+  expect(dirty).toHaveBeenLastCalledWith(false);
+  expect(screen.getByRole('button', { name: '关闭工具设置' })).toBeEnabled();
 });
 
 it('revalidates a changed catalog without losing dirty tool choices and requires an explicit version decision', async () => {
   const invoke = connect({ changeOnCheck: true });
   const mounted = render(
     <RuntimeProvider>
-      <IntegrationTools connection={connection} bots={bots} onClose={() => {}} />
+      <IntegrationTools connection={connection} bot={bots[0]} onClose={() => {}} />
     </RuntimeProvider>,
   );
   await userEvent.click(await screen.findByRole('checkbox', { name: 'synthetic_echo' }));
@@ -382,7 +429,7 @@ it('revalidates a changed catalog without losing dirty tool choices and requires
     <RuntimeProvider>
       <IntegrationTools
         connection={{ ...connection, toolCount: 2, catalogDigest: 'd'.repeat(64) }}
-        bots={bots}
+        bot={bots[0]}
         onClose={() => {}}
       />
     </RuntimeProvider>,
@@ -397,11 +444,10 @@ it('revalidates a changed catalog without losing dirty tool choices and requires
 
 it('treats stale saved authority as a review state without trapping navigation or silently renewing consent', async () => {
   const invoke = connect({ stale: true });
-  render(view());
+  render(botView());
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await screen.findByRole('checkbox', { name: 'synthetic_echo' });
   expect(screen.getByRole('button', { name: '关闭工具设置' })).toBeEnabled();
-  expect(selectControl('使用工具的 Bot')).toBeEnabled();
   expect(screen.getByRole('button', { name: '保存工具选择' })).toBeEnabled();
   await userEvent.click(screen.getByRole('button', { name: '关闭工具设置' }));
   expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
@@ -409,112 +455,37 @@ it('treats stale saved authority as a review state without trapping navigation o
 
 it('makes bounded tool definitions reachable as a named keyboard scrolling area', async () => {
   connect();
-  render(view());
+  render(botView());
   await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
   await userEvent.click(await screen.findByText('参数定义'));
   expect(screen.getByLabelText('synthetic_echo 参数定义')).toHaveAttribute('tabindex', '0');
 });
 
-it('does not select an archived identity when opening per-Bot external tool choices', async () => {
-  const invoke = connect({ archived: true });
-  render(view());
-  await userEvent.click(await screen.findByRole('button', { name: '工具与授权 合成服务' }));
-  const target = await findSelectControl('使用工具的 Bot');
-  expect(target).toHaveAttribute('data-value', 'mock-b');
-  expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bind')).toBe(false);
-});
-
-it('creates a connection for the Bot whose capability panel was opened, without granting another Bot', async () => {
-  const invoke = connect({ empty: true, protocol: 41 });
-  render(
-    <RuntimeProvider>
-      <Integrations bots={bots} bot={bots[1]} />
-    </RuntimeProvider>,
-  );
-  await userEvent.click(await screen.findByRole('button', { name: '添加连接' }));
-  await userEvent.type(screen.getByLabelText('连接名称'), 'Synthetic private connection');
-  await userEvent.type(screen.getByLabelText('服务地址'), 'https://mcp.example.test/mcp');
-  await userEvent.type(screen.getByLabelText('Bearer Token'), 'SYNTHETIC-BOT-KEY');
+it('keeps a legacy private connection editable in settings without broadening access', async () => {
+  const invoke = connect({ ownerBot: 'mock-b' });
+  const settings = render(view());
+  expect(await screen.findByText('仅 合成 Bot 2 可用')).toBeVisible();
+  await details();
+  await userEvent.click(screen.getByRole('button', { name: '编辑 合成服务' }));
   await userEvent.click(screen.getByRole('button', { name: '保存连接' }));
-  await waitFor(() =>
-    expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.save')).toBe(true),
-  );
-  const commands = invoke.mock.calls.map(([command]) => command);
-  expect(commands.find((command) => command.type === 'mcp.save')).toMatchObject({ bot: 'mock-b' });
-  expect(
-    commands
-      .filter((command) => command.type === 'mcp.list')
-      .every((command) => command.bot === 'mock-b'),
-  ).toBe(true);
-  expect(commands.some((command) => command.type === 'mcp.bind')).toBe(false);
-  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC-BOT-KEY');
-});
-
-it('adding an MCP connection to another Bot requires fresh credentials and does not copy its tool grants', async () => {
-  const invoke = connect({ protocol: 41 });
-  render(view());
-  await userEvent.click(await screen.findByRole('button', { name: '添加 合成服务 到其他 Bot' }));
-  const dialog = screen.getByRole('dialog', { name: '为其他 Bot 添加连接' });
-  expect(within(dialog).getByLabelText('Bearer Token')).toHaveValue('');
-  expect(within(dialog).getByLabelText('服务地址')).toHaveValue('');
-  await userEvent.type(within(dialog).getByLabelText('服务地址'), 'https://other.example.test/mcp');
-  await userEvent.type(within(dialog).getByLabelText('Bearer Token'), 'SYNTHETIC-OTHER-BOT-KEY');
-  await userEvent.click(within(dialog).getByRole('button', { name: '保存连接' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog', { name: '为其他 Bot 添加连接' })).not.toBeInTheDocument(),
-  );
-  const commands = invoke.mock.calls.map(([command]) => command);
-  expect(commands.find((command) => command.type === 'mcp.save')).toMatchObject({
+  expect(await screen.findByText('连接已保存，请检查连接并单独为 Bot 选择工具。')).toBeVisible();
+  expect(invoke.mock.calls.find(([command]) => command.type === 'mcp.save')?.[0]).toMatchObject({
     bot: 'mock-b',
-    input: {
-      revision: 0,
-      bearer: 'SYNTHETIC-OTHER-BOT-KEY',
-      endpoint: 'https://other.example.test/mcp',
-    },
+    input: { id: connection.id, revision: 1 },
   });
-  expect(commands.some((command) => command.type === 'mcp.bind')).toBe(false);
-  expect(JSON.stringify(localStorage)).not.toContain('SYNTHETIC-OTHER-BOT-KEY');
+  settings.unmount();
+  const other = render(botView());
+  expect(await screen.findByText(/暂无可用连接/)).toBeVisible();
+  other.unmount();
+  render(botView(bots[1]));
+  expect(await screen.findByRole('button', { name: '工具与授权 合成服务' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: '添加连接' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '检查 合成服务' })).not.toBeInTheDocument();
 });
 
-it('verifies an uncertain copied connection with the original Bot and nonce without resending its key', async () => {
-  const invoke = connect({ protocol: 41, error: 'RUNTIME_SESSION_CHANGED' });
-  render(view());
-  await userEvent.click(await screen.findByRole('button', { name: '添加 合成服务 到其他 Bot' }));
-  const dialog = screen.getByRole('dialog', { name: '为其他 Bot 添加连接' });
-  await userEvent.type(within(dialog).getByLabelText('服务地址'), 'https://other.example.test/mcp');
-  await userEvent.type(within(dialog).getByLabelText('Bearer Token'), 'SYNTHETIC-COPY-KEY');
-  await userEvent.click(within(dialog).getByRole('button', { name: '保存连接' }));
-  await userEvent.click(await within(dialog).findByRole('button', { name: '核对保存结果' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('dialog', { name: '为其他 Bot 添加连接' })).not.toBeInTheDocument(),
-  );
-  const commands = invoke.mock.calls.map(([command]) => command);
-  const writes = commands.filter((command) => command.type === 'mcp.save');
-  expect(writes).toHaveLength(1);
-  const written = writes[0];
-  expect(written.type).toBe('mcp.save');
-  if (written.type !== 'mcp.save') throw Error('MISSING_SAVE');
-  expect(commands.find((command) => command.type === 'mcp.saved')).toEqual({
-    type: 'mcp.saved',
-    bot: 'mock-b',
-    id: written.input.requestId,
-    connection: written.input.id,
-  });
-});
-
-it('prioritizes tool selection after a successful Bearer check and discloses low-frequency controls', async () => {
-  const invoke = connect();
-  render(view());
-  const tools = await screen.findByRole('button', { name: '工具与授权 合成服务' });
-  expect(tools).toHaveClass('primary');
-  const row = tools.closest<HTMLElement>('.integration-row')!;
-  const details = within(row).getByText('连接详情', { selector: 'summary' });
-  expect(details.parentElement).not.toHaveAttribute('open');
-  await userEvent.click(details);
-  expect(within(row).getByRole('button', { name: '编辑 合成服务' })).toBeVisible();
-  expect(
-    invoke.mock.calls.some(
-      ([command]) => command.type === 'mcp.check' || command.type === 'mcp.bind',
-    ),
-  ).toBe(false);
+it('does not load external-tool grants for an archived Bot', async () => {
+  const invoke = connect({ archived: true });
+  render(botView());
+  await screen.findByText('暂时无法管理这位 Bot 的外部工具。');
+  expect(invoke.mock.calls.some(([command]) => command.type === 'mcp.bindings')).toBe(false);
 });

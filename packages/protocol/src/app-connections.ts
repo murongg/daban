@@ -11,17 +11,20 @@ export type AppOAuthPhase =
   | 'failed'
   | 'interrupted';
 export interface AppTarget {
-  bot: string;
+  bot?: string;
   connection: string;
   revision: number;
 }
 export interface AppOAuthStart extends AppTarget {
+  bot: string;
   requestId: string;
   app: 'notion';
   name?: string;
 }
-export interface AppConnect extends Omit<AppOAuthStart, 'app'> {
+export interface AppConnect extends AppTarget {
   app: AppId;
+  requestId: string;
+  name?: string;
 }
 export const appDirectoryProtocol = 'app-directory-v2';
 export interface AppDirectoryEntry {
@@ -36,9 +39,14 @@ export interface AppDirectoryEntry {
 }
 export interface AppDirectory {
   protocol: typeof appDirectoryProtocol;
-  bot: string;
+  bot?: string;
   apps: AppDirectoryEntry[];
-  connections: (AppConnectionAuth & { app: AppId; name: string; revision: number })[];
+  connections: (AppConnectionAuth & {
+    app: AppId;
+    name: string;
+    revision: number;
+    ownerBot?: string;
+  })[];
   attempts: { input: AppConnect; receipt: AppOAuthReceipt }[];
   attemptsMore: boolean;
 }
@@ -73,7 +81,7 @@ export interface AppConnectionsCapability {
   oauthLoopback: boolean;
 }
 export type AppCommand =
-  | { type: 'app.directory'; bot: string }
+  | { type: 'app.directory'; bot?: string }
   | { type: 'app.oauth.connect'; input: AppConnect }
   | { type: 'app.catalog'; bot: string }
   | { type: 'app.oauth.start'; input: AppOAuthStart }
@@ -85,25 +93,26 @@ const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, allowed: string[]) =>
   Object.keys(v).every((k) => allowed.includes(k));
+const optionalBot = (v: unknown) => v === undefined || validAgentId(v);
 const revision = (v: unknown) =>
   Number.isSafeInteger(v) && Number(v) >= 0 && Number(v) < Number.MAX_SAFE_INTEGER - 1;
 export function isAppTarget(v: unknown): v is AppTarget {
   return (
     object(v) &&
     keys(v, ['bot', 'connection', 'revision']) &&
-    validAgentId(v.bot) &&
+    optionalBot(v.bot) &&
     validAgentId(v.connection) &&
     revision(v.revision)
   );
 }
 export function isAppOAuthStart(v: unknown): v is AppOAuthStart {
-  return isAppConnect(v) && v.app === 'notion';
+  return isAppConnect(v) && validAgentId(v.bot) && v.app === 'notion';
 }
 export function isAppConnect(v: unknown): v is AppConnect {
   return (
     object(v) &&
     keys(v, ['bot', 'connection', 'revision', 'requestId', 'app', 'name']) &&
-    validAgentId(v.bot) &&
+    optionalBot(v.bot) &&
     validAgentId(v.connection) &&
     revision(v.revision) &&
     validAgentId(v.requestId) &&
@@ -120,8 +129,9 @@ export function isAppCommand(v: unknown): v is AppCommand {
   if (!object(v)) return false;
   switch (v.type) {
     case 'app.catalog':
-    case 'app.directory':
       return keys(v, ['type', 'bot']) && validAgentId(v.bot);
+    case 'app.directory':
+      return keys(v, ['type', 'bot']) && optionalBot(v.bot);
     case 'app.oauth.start':
       return keys(v, ['type', 'input']) && isAppOAuthStart(v.input);
     case 'app.oauth.connect':
@@ -152,7 +162,7 @@ export function isAppOAuthReceipt(v: unknown): v is AppOAuthReceipt {
   return (
     object(v) &&
     keys(v, ['bot', 'connection', 'revision', 'requestId', 'attempt', 'phase', 'error']) &&
-    validAgentId(v.bot) &&
+    optionalBot(v.bot) &&
     validAgentId(v.connection) &&
     revision(v.revision) &&
     validAgentId(v.requestId) &&
@@ -186,7 +196,7 @@ function connectionAuth(v: unknown, directory = false): v is AppConnectionAuth {
       'state',
       'scope',
       'expiresAt',
-      ...(directory ? ['app', 'name', 'revision'] : []),
+      ...(directory ? ['app', 'name', 'revision', 'ownerBot'] : []),
     ]) &&
     validAgentId(v.connection) &&
     ['disconnected', 'authorizing', 'connected', 'reconnect-required'].includes(String(v.state)) &&
@@ -194,6 +204,7 @@ function connectionAuth(v: unknown, directory = false): v is AppConnectionAuth {
     (v.expiresAt === undefined || (Number.isSafeInteger(v.expiresAt) && Number(v.expiresAt) > 0)) &&
     (!directory ||
       (appProvider(v.app) !== undefined &&
+        optionalBot(v.ownerBot) &&
         revision(v.revision) &&
         Number(v.revision) > 0 &&
         typeof v.name === 'string' &&
@@ -210,7 +221,7 @@ export function isAppDirectory(v: unknown): v is AppDirectory {
     !object(v) ||
     !keys(v, ['protocol', 'bot', 'apps', 'connections', 'attempts', 'attemptsMore']) ||
     v.protocol !== appDirectoryProtocol ||
-    !validAgentId(v.bot) ||
+    !optionalBot(v.bot) ||
     typeof v.attemptsMore !== 'boolean' ||
     !Array.isArray(v.apps) ||
     v.apps.length !== appProviders.length + 1 ||
@@ -269,7 +280,7 @@ export function isAppDirectory(v: unknown): v is AppDirectory {
         keys(entry, ['input', 'receipt']) &&
         isAppConnect(entry.input) &&
         isAppOAuthReceipt(entry.receipt) &&
-        entry.input.bot === v.bot &&
+        (v.bot === undefined || entry.input.bot === v.bot) &&
         appReceiptMatches(entry.receipt, entry.input) &&
         entry.receipt.requestId === entry.input.requestId &&
         ['preparing', 'waiting', 'exchanging', 'failed', 'interrupted', 'expired'].includes(

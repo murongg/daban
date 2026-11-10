@@ -22,7 +22,7 @@ export interface OAuthOptions {
     url: string,
     body?: URLSearchParams | Record<string, unknown>,
   ) => Promise<{ status: number; data: unknown }>;
-  assertOwner?: (bot: string) => unknown | Promise<unknown>;
+  assertOwner?: (bot?: string) => unknown | Promise<unknown>;
 }
 interface Pending {
   application: Readonly<AppProvider>;

@@ -1828,6 +1828,7 @@ export async function startPrototype({
                 ? await models.integrations.status()
                 : { available: false, error: 'MCP_STORE_UNAVAILABLE' },
               appConnections: { catalog: true, oauthLoopback: !!host },
+              appWorkspace: true,
               ...(models?.tools.software ? { software: await models.tools.software.status() } : {}),
               skills: models
                 ? await models.skills.status()

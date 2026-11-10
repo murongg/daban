@@ -11,7 +11,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
-import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
 
 interface Selection {
@@ -47,30 +46,23 @@ function selection(catalog: McpCatalog, entry: McpAssignment): Selection {
 
 export function IntegrationTools({
   connection,
-  bots,
+  bot: target,
   onClose,
+  onChanged,
   onDirty,
 }: {
   connection: McpConnection;
-  bots: Bot[];
+  bot: Bot;
+  onChanged?: () => Promise<unknown>;
   onClose: () => unknown;
   onDirty?: (value: boolean) => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
-  const choices = bots.filter(
-    (bot) =>
-      !bot.members &&
-      !bot.archived &&
-      runtime.snapshot.profiles.some(
-        (profile) => profile.id === agentId(bot.id) && !profile.archived,
-      ),
-  );
-  const [bot, setBot] = useState(() => (choices[0] ? agentId(choices[0].id) : ''));
-  const first = choices[0] ? agentId(choices[0].id) : '';
-  useEffect(() => {
-    if (!bot && first) setBot(first);
-  }, [bot, first]);
+  const bot = agentId(target.id);
+  const active =
+    !target.archived &&
+    runtime.snapshot.profiles.some((profile) => profile.id === bot && !profile.archived);
   const [data, setData] = useState<{ bot: string; catalog: McpCatalog; entry: McpAssignment }>();
   const [draft, setDraft] = useState<Selection>();
   const [pending, setPending] = useState<McpBindingInput>();
@@ -81,6 +73,7 @@ export function IntegrationTools({
     mounted = useRef(true),
     working = useRef(false);
   const available =
+    active &&
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= 21 &&
     runtime.snapshot.mcp?.available === true;
@@ -163,6 +156,7 @@ export function IntegrationTools({
       setPending(undefined);
       setNotice(t('integrationtools.toolSelectionSavedActualCallsStillNeed'));
       await load(true);
+      await onChanged?.();
     } catch (error) {
       if (
         mounted.current &&
@@ -184,7 +178,6 @@ export function IntegrationTools({
   }
   const canSave =
     available &&
-    choices.some((entry) => agentId(entry.id) === bot) &&
     current &&
     draft &&
     (dirty(draft) || (current.entry.enabled && !current.entry.available)) &&
@@ -208,36 +201,6 @@ export function IntegrationTools({
           {t('integrationtools.closeToolSettings')}
         </button>
       </div>
-      <div className="field-label">
-        {t('integrationtools.botsUsingTools')}
-        <Select
-          label={t('integrationtools.botsUsingTools')}
-          value={bot}
-          disabled={locked || !available}
-          onValueChange={(value) => {
-            setBot(value);
-            setDraft(undefined);
-            setPending(undefined);
-            setError('');
-            setNotice('');
-          }}
-          options={[
-            ...(!choices.some((entry) => agentId(entry.id) === bot) && bot
-              ? [
-                  {
-                    value: bot,
-                    label: t('integrationtools.originalBotArchivedUnavailable'),
-                    disabled: true,
-                  },
-                ]
-              : []),
-            ...choices.map((item) => ({ value: agentId(item.id), label: item.name })),
-          ]}
-        />
-      </div>
-      {choices.length === 0 && (
-        <p className="inline-note">{t('integrationtools.createSyncBotSelectingTools')}</p>
-      )}
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -253,11 +216,7 @@ export function IntegrationTools({
           {t('integrationtools.externalToolsTemporarilyUnavailableUnsavedSelectionsRemain')}
         </p>
       )}
-      {locked && (
-        <p className="field-help">
-          {t('integrationtools.saveVerifyDiscardCurrentEditsSwitchingBots')}
-        </p>
-      )}
+      {locked && <p className="field-help">{t('integrationtools.finishSelection')}</p>}
       {current && draft && (
         <form
           onSubmit={async (event) => {
@@ -388,6 +347,7 @@ export function IntegrationTools({
                       setNotice(t('integrationtools.toolSelectionVerified'));
                     }
                     await load(true);
+                    await onChanged?.();
                   })
                 }
               >

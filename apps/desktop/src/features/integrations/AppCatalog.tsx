@@ -19,17 +19,16 @@ import { type MessageKey, t, useLocale } from '../../i18n/locale';
 import './app-catalog.css';
 
 export interface AppCatalogProps {
-  bot: string;
+  bot?: string;
+  botName?: (id: string) => string;
   rows: McpConnection[];
   blocked?: boolean;
   onCustom: () => unknown;
   onChanged: () => Promise<unknown>;
-  onDirty: (value: boolean) => unknown;
+  onDirty?: (value: boolean) => unknown;
   onOAuthConnections: (ids: string[]) => unknown;
   onDialogChange?: (open: boolean) => unknown;
   onCheck?: (row: McpConnection) => Promise<unknown>;
-  onTools?: (row: McpConnection) => unknown;
-  onCopy?: (row: McpConnection) => unknown;
   onArchive?: (row: McpConnection) => unknown;
 }
 const phases: Record<AppOAuthPhase, MessageKey> = {
@@ -72,6 +71,7 @@ function errorText(error: unknown) {
 }
 export function AppCatalog({
   bot,
+  botName = (id) => id,
   rows,
   blocked = false,
   onCustom,
@@ -80,8 +80,6 @@ export function AppCatalog({
   onOAuthConnections,
   onDialogChange,
   onCheck,
-  onTools,
-  onCopy,
   onArchive,
 }: AppCatalogProps) {
   useLocale();
@@ -91,6 +89,11 @@ export function AppCatalog({
   const [pending, setPending] = useState<AppConnect>();
   const [receipt, setReceipt] = useState<AppOAuthReceipt>();
   const [disconnect, setDisconnect] = useState<{ target: AppTarget; requestId: string }>();
+  const [confirmDisconnect, setConfirmDisconnect] = useState<{
+    target: AppTarget;
+    name: string;
+    bots: string[];
+  }>();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
@@ -105,17 +108,24 @@ export function AppCatalog({
     runtime.snapshot.phase === 'ready' &&
     (runtime.snapshot.mcp?.available === true || runtime.snapshot.appConnections?.catalog === true);
   const canControl = runtime.snapshot.appConnections?.catalog === true;
-  const canAuthorize = canControl && runtime.snapshot.appConnections?.oauthLoopback === true;
+  const canAuthorize =
+    canControl &&
+    runtime.snapshot.appConnections?.oauthLoopback === true &&
+    (bot !== undefined || runtime.snapshot.appWorkspace === true);
   const revision = runtime.snapshot.mcp?.available ? runtime.snapshot.mcp.revision : undefined;
   const load = useCallback(async () => {
     const serial = ++reads.current;
     let value: Catalog | AppDirectory;
     try {
-      value = await runtime.command<AppDirectory>({ type: 'app.directory', bot });
+      value = await runtime.command<AppDirectory>({
+        type: 'app.directory',
+        ...(bot ? { bot } : {}),
+      });
       if (!isAppDirectory(value) || value.bot !== bot) throw Error('INVALID_RUNTIME_STATE');
     } catch (cause) {
       // Only the read-only protocol probe permits legacy fallback. A start is never replayed on another route.
-      if (!(cause instanceof Error) || cause.message !== 'OAUTH_UPGRADE_REQUIRED') throw cause;
+      if (!bot || !(cause instanceof Error) || cause.message !== 'OAUTH_UPGRADE_REQUIRED')
+        throw cause;
       value = await runtime.command<Catalog>({ type: 'app.catalog', bot });
       if (!isAppCatalog(value) || value.bot !== bot) throw Error('INVALID_RUNTIME_STATE');
     }
@@ -150,12 +160,12 @@ export function AppCatalog({
     };
   }, [available, bot, load, revision]);
   useEffect(() => {
-    onDirty(busy || !!editor || (!!pending && !receipt) || !!disconnect);
+    onDirty?.(busy || !!editor || (!!pending && !receipt) || !!disconnect);
     return () => {
-      onDirty(false);
+      onDirty?.(false);
     };
   }, [busy, editor, pending, receipt, disconnect, onDirty]);
-  const dialogOpen = !!editor;
+  const dialogOpen = !!editor || !!confirmDisconnect;
   useEffect(() => {
     onDialogChange?.(dialogOpen);
     return () => {
@@ -182,7 +192,7 @@ export function AppCatalog({
       if (
         !live.current ||
         owner.current !== bot ||
-        value.bot !== bot ||
+        value.bot !== input.bot ||
         current?.requestId !== input.requestId ||
         value.requestId !== input.requestId ||
         value.connection !== input.connection ||
@@ -212,8 +222,11 @@ export function AppCatalog({
     const command =
       catalog && 'protocol' in catalog
         ? { type: 'app.oauth.connect' as const, input }
-        : input.app === 'notion'
-          ? { type: 'app.oauth.start' as const, input: { ...input, app: 'notion' as const } }
+        : input.app === 'notion' && input.bot
+          ? {
+              type: 'app.oauth.start' as const,
+              input: { ...input, bot: input.bot, app: 'notion' as const },
+            }
           : undefined;
     if (!command) throw Error('OAUTH_UPGRADE_REQUIRED');
     try {
@@ -278,6 +291,16 @@ export function AppCatalog({
   const editorApp = apps.find((app) => app.id === editor?.app);
   const unresolved = !!pending && (!receipt || activePhase(receipt));
   const disabled = busy || blocked || unresolved || !!disconnect;
+  async function disconnectAccount(target: AppTarget) {
+    const operation = disconnect ?? { target, requestId: crypto.randomUUID() };
+    setDisconnect(operation);
+    await runtime.command({ type: 'app.disconnect', ...operation });
+    if (!live.current || owner.current !== bot) return;
+    setDisconnect(undefined);
+    setNotice(t('apps.disconnectedNotice'));
+    await onChanged();
+    await load();
+  }
   function open(app: AppDirectoryEntry) {
     if (app.id === 'custom-mcp') return;
     // A completed attempt does not lock other accounts; an unknown or active start keeps its nonce and blocks new starts.
@@ -286,7 +309,7 @@ export function AppCatalog({
       setPending(undefined);
     }
     let name = app.publisher;
-    for (let index = 2; rows.some((row) => row.name === name); index++)
+    for (let index = 2; rows.some((row) => row.ownerBot === bot && row.name === name); index++)
       name = `${app.publisher} ${index}`;
     setEditor({ app: app.id, name });
     setReceipt(undefined);
@@ -301,8 +324,9 @@ export function AppCatalog({
         const identity = directory?.connections.find((c) => c.connection === auth.connection);
         const appId = identity?.app ?? 'notion';
         const app = apps.find((a) => a.id === appId);
+        const accountOwner = identity?.ownerBot ?? row?.ownerBot ?? bot;
         const target = {
-          bot,
+          ...(accountOwner ? { bot: accountOwner } : {}),
           connection: auth.connection,
           revision: identity?.revision ?? row?.revision ?? 0,
         };
@@ -326,6 +350,11 @@ export function AppCatalog({
               <p>
                 {app?.publisher} · {t(states[auth.state])}
               </p>
+              {accountOwner && bot === undefined && (
+                <p className="field-help">
+                  {t('apps.privateConnection', { 0: botName(accountOwner) })}
+                </p>
+              )}
               {auth.scope && <p className="field-help">{t('apps.scope', { 0: auth.scope })}</p>}
               {connected && (
                 <p className="field-help">{t(ready ? 'apps.chooseTools' : 'apps.checkNext')}</p>
@@ -343,16 +372,6 @@ export function AppCatalog({
                   {t('integrations.revision')} {target.revision}
                 </p>
                 <div className="integration-actions">
-                  {row && onCopy && (
-                    <button
-                      type="button"
-                      className="secondary"
-                      disabled={disabled || !fresh}
-                      onClick={() => onCopy(row)}
-                    >
-                      {t('capabilities.copyToBot')}
-                    </button>
-                  )}
                   {row && onArchive && (
                     <button
                       type="button"
@@ -405,17 +424,6 @@ export function AppCatalog({
                   {t('common.checkConnection')}
                 </button>
               )}
-              {connected && row && onTools && (
-                <button
-                  type="button"
-                  className={ready ? 'primary' : 'secondary'}
-                  disabled={disabled || !fresh}
-                  aria-label={t('integrations.namedToolsPermissions', { 0: name })}
-                  onClick={() => onTools(row)}
-                >
-                  {t('integrations.toolsPermissions')}
-                </button>
-              )}
               <button
                 type="button"
                 className="secondary"
@@ -428,18 +436,13 @@ export function AppCatalog({
                   (auth.state === 'disconnected' && !disconnect) ||
                   (!!disconnect && disconnect.target.connection !== auth.connection)
                 }
-                onClick={() =>
-                  perform(async () => {
-                    const operation = disconnect ?? { target, requestId: crypto.randomUUID() };
-                    setDisconnect(operation);
-                    await runtime.command({ type: 'app.disconnect', ...operation });
-                    if (!live.current || owner.current !== bot) return;
-                    setDisconnect(undefined);
-                    setNotice(t('apps.disconnectedNotice'));
-                    await onChanged();
-                    await load();
-                  })
-                }
+                onClick={() => {
+                  if (!disconnect && row?.boundBots?.length) {
+                    setConfirmDisconnect({ target, name, bots: row.boundBots });
+                    return;
+                  }
+                  return perform(() => disconnectAccount(target));
+                }}
               >
                 {t(disconnect ? 'apps.retryDisconnect' : 'apps.disconnect', { 0: name })}
               </button>
@@ -579,6 +582,36 @@ export function AppCatalog({
         </div>
       )}
       {directory?.attemptsMore && <p className="field-help">{t('apps.partialHistory')}</p>}
+      {confirmDisconnect && (
+        <Dialog
+          title={t('apps.disconnect', { 0: confirmDisconnect.name })}
+          onClose={() => setConfirmDisconnect(undefined)}
+        >
+          <p>{t('apps.affectedBots', { 0: confirmDisconnect.bots.map(botName).join(', ') })}</p>
+          <p className="field-help">{t('apps.accountImpact')}</p>
+          <div className="inline-form-actions">
+            <button
+              type="button"
+              className="secondary"
+              data-autofocus
+              onClick={() => setConfirmDisconnect(undefined)}
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                const { target } = confirmDisconnect;
+                setConfirmDisconnect(undefined);
+                return perform(() => disconnectAccount(target));
+              }}
+            >
+              {t('apps.disconnect', { 0: confirmDisconnect.name })}
+            </button>
+          </div>
+        </Dialog>
+      )}
       {editor && (
         <Dialog
           title={
@@ -604,7 +637,7 @@ export function AppCatalog({
               event.preventDefault();
               await perform(() =>
                 start({
-                  bot,
+                  ...(bot ? { bot } : {}),
                   app: editor.app,
                   connection: crypto.randomUUID(),
                   revision: 0,

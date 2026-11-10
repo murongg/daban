@@ -22,11 +22,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
   Reflect.deleteProperty(window, 'daban');
 });
-function fixture({ native = true, connected = false, failure = '' } = {}) {
+function fixture({ native = true, connected = false, failure = '', workspace = false } = {}) {
   const commands: RuntimeCommand[] = [];
   const snapshot = disconnected('ready');
   snapshot.protocolVersion = 44;
   snapshot.botCapabilities = true;
+  if (workspace) snapshot.appWorkspace = true;
   snapshot.mcp = { available: true, revision: 1 };
   if (native) snapshot.appConnections = { catalog: true, oauthLoopback: true };
   snapshot.profiles = [
@@ -45,7 +46,7 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
     id: 'mock-linear',
     name: 'Synthetic account',
     origin: 'https://mcp.linear.app',
-    ownerBot: 'mock-a',
+    ...(!workspace ? { ownerBot: 'mock-a' } : {}),
     credentialConfigured: true,
     revision: 1,
     deleted: false,
@@ -56,7 +57,7 @@ function fixture({ native = true, connected = false, failure = '' } = {}) {
   };
   const directory: AppDirectory = {
     protocol: appDirectoryProtocol,
-    bot: 'mock-a',
+    ...(!workspace ? { bot: 'mock-a' } : {}),
     apps: [
       ...appProviders.map((p) => ({
         id: p.id,
@@ -242,9 +243,7 @@ it('shows readable authorization scopes and lets the user dismiss before startin
       .map((item) => item.textContent),
   ).toEqual(requested.split(/\s+/));
   expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus();
-  expect(
-    within(dialog).getByText('先授权账号，再检查并选择工具。每次工具调用仍需单独批准。'),
-  ).toBeVisible();
+  expect(within(dialog).getByText(/到 Bot 的「能力 → 外部工具」选择/)).toBeVisible();
   await userEvent.click(within(dialog).getByRole('button', { name: '取消' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(opener).toHaveFocus();
@@ -355,8 +354,8 @@ it.each(['OAUTH_UPGRADE_REQUIRED', 'INVALID_RUNTIME_STATE'])(
     ).toBe(false);
   },
 );
-it('shows one account row and changes the primary next step only after an explicit connection check', async () => {
-  const f = fixture({ connected: true });
+it('shows one account row and sends tool grants to the Bot panel after an explicit connection check', async () => {
+  const f = fixture({ connected: true, workspace: true });
   render(
     <RuntimeProvider>
       <Integrations
@@ -380,13 +379,72 @@ it('shows one account row and changes the primary next step only after an explic
   expect(check).toHaveClass('primary');
   expect(f.commands.some((c) => c.type === 'mcp.check' || c.type === 'mcp.bind')).toBe(false);
   await userEvent.click(check);
-  await waitFor(() =>
-    expect(within(account).getByRole('button', { name: /工具.*Synthetic account/ })).toHaveClass(
-      'primary',
-    ),
-  );
+  await waitFor(() => expect(within(account).getByText(/到 Bot 的/)).toBeVisible());
   expect(f.commands.filter((c) => c.type === 'mcp.check')).toHaveLength(1);
   expect(f.commands.some((c) => c.type === 'mcp.bind')).toBe(false);
+});
+
+it('starts an account connection in settings without a Bot owner', async () => {
+  const f = fixture({ workspace: true });
+  render(
+    <RuntimeProvider>
+      <Integrations bots={[]} />
+    </RuntimeProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: '连接 Linear' }));
+  await userEvent.click(screen.getByRole('button', { name: '在系统浏览器中授权' }));
+  await waitFor(() =>
+    expect(f.commands.find((command) => command.type === 'app.oauth.connect')).toMatchObject({
+      input: { app: 'linear', name: 'Linear', revision: 0 },
+    }),
+  );
+  expect(f.commands.find((command) => command.type === 'app.oauth.connect')).not.toHaveProperty(
+    'input.bot',
+  );
+  expect(f.commands.some((command) => command.type === 'mcp.bind')).toBe(false);
+});
+
+it('names affected Bots before disconnecting an account with tool grants', async () => {
+  const f = fixture({ connected: true, workspace: true });
+  f.row.boundBots = ['mock-a', 'mock-b'];
+  render(
+    <RuntimeProvider>
+      <Integrations
+        bots={[
+          {
+            id: 'mock-a',
+            name: 'Synthetic first Bot',
+            role: '',
+            color: 'mint',
+            preview: '',
+            time: '',
+          },
+          {
+            id: 'mock-b',
+            name: 'Synthetic second Bot',
+            role: '',
+            color: 'mint',
+            preview: '',
+            time: '',
+          },
+        ]}
+      />
+    </RuntimeProvider>,
+  );
+  const name = '断开 Synthetic account';
+  await userEvent.click(await screen.findByRole('button', { name }));
+  const dialog = screen.getByRole('dialog', { name });
+  expect(within(dialog).getByText(/Synthetic first Bot, Synthetic second Bot/)).toBeVisible();
+  expect(f.commands.some((command) => command.type === 'app.disconnect')).toBe(false);
+  await userEvent.click(within(dialog).getByRole('button', { name }));
+  await waitFor(() =>
+    expect(f.commands.find((command) => command.type === 'app.disconnect')).toMatchObject({
+      target: { connection: f.row.id, revision: 1 },
+    }),
+  );
+  expect(f.commands.find((command) => command.type === 'app.disconnect')).not.toHaveProperty(
+    'target.bot',
+  );
 });
 
 it('uses the next available application name when authorizing another account', async () => {

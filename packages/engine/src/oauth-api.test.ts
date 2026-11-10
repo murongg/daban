@@ -11,7 +11,9 @@ import {
   appReceiptMatches,
   isAppAuthorizeUrl,
   isAppCatalog,
+  isAppDirectory,
   isAppOAuthReceipt,
+  isMcpList,
 } from '@daban/protocol';
 import { expect, test } from 'vitest';
 import { startNativeAgent } from './host-server.js';
@@ -79,6 +81,7 @@ test('Host app reads are public metadata while OAuth mutations require independe
       memory: '',
       color: 'mint',
     });
+    expect((await call('/api/state')).value.appWorkspace).toBe(true);
     expect((await call('/api/state')).value.appConnections).toEqual({
       catalog: true,
       oauthLoopback: true,
@@ -209,7 +212,7 @@ test('Host app reads are public metadata while OAuth mutations require independe
         type: 'app.oauth.connect',
         input: {
           app: provider.id,
-          bot: 'mock-a',
+          ...(provider.id === 'sentry' ? {} : { bot: 'mock-a' }),
           connection: `mock-${provider.id}`,
           revision: 0,
           requestId: `mock-${provider.id}-start`,
@@ -267,15 +270,37 @@ test('Host app reads are public metadata while OAuth mutations require independe
       }),
     );
     expect([...counts.values()]).toEqual([1, 1, 1, 1, 1]);
+    const workspace = await invoke({ type: 'app.directory' });
+    expect(isAppDirectory(workspace)).toBe(true);
+    expect(workspace).not.toHaveProperty('bot');
+    expect(workspace.connections).toHaveLength(providers.length);
+    expect(workspace.connections).toContainEqual(
+      expect.objectContaining({ app: 'linear', ownerBot: 'mock-a' }),
+    );
+    if (!isAppDirectory(workspace)) throw Error('SYNTHETIC_INVALID_DIRECTORY');
+    expect(workspace.connections.find((row) => row.app === 'sentry')).not.toHaveProperty(
+      'ownerBot',
+    );
+    const settings = await call('/api/mcp/list', { type: 'mcp.list', allOwners: true });
+    expect(isMcpList(settings.value)).toBe(true);
+    expect(settings.value.items).toContainEqual(
+      expect.objectContaining({ id: 'mock-linear', ownerBot: 'mock-a', boundBots: [] }),
+    );
+    expect(settings.value.items).toContainEqual(
+      expect.objectContaining({ id: 'mock-sentry', boundBots: [] }),
+    );
     const directory = await invoke({ type: 'app.directory', bot: 'mock-a' });
     expect(directory).toMatchObject({
       connections: expect.arrayContaining(
-        providers.map((provider) =>
-          expect.objectContaining({ app: provider.id, state: 'connected', revision: 1 }),
-        ),
+        providers
+          .filter((provider) => provider.id !== 'sentry')
+          .map((provider) =>
+            expect.objectContaining({ app: provider.id, state: 'connected', revision: 1 }),
+          ),
       ),
     });
-    expect(JSON.stringify(directory)).not.toMatch(
+    expect(directory.connections).toHaveLength(providers.length - 1);
+    expect(JSON.stringify(workspace)).not.toMatch(
       /synthetic-.*-(access|refresh)|clientId|clientSecret|authorize/,
     );
     const legacy = await invoke({ type: 'app.catalog', bot: 'mock-a' });

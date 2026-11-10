@@ -959,6 +959,10 @@ export class ModelRuns {
     this.integrations = new Integrations(path.join(dir, 'integrations.sqlite'));
     this.oauth = new OAuth(this.integrations, {
       assertOwner: (bot) => {
+        if (bot === undefined) {
+          if (!this.admission()) throw new Fault('OAUTH_OWNER_UNAVAILABLE');
+          return;
+        }
         this.profiles.assertActive(bot);
         if (!this.botAdmission(bot)) throw new Fault('OAUTH_OWNER_UNAVAILABLE');
       },

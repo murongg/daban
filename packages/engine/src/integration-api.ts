@@ -20,7 +20,8 @@ export async function appCommand(
       : command.type === 'app.oauth.start' || command.type === 'app.oauth.connect'
         ? command.input.bot
         : command.target.bot;
-  if (!(await models.profiles.get(bot))) throw new Fault('MCP_BOT_NOT_FOUND', 404);
+  if (bot !== undefined && !(await models.profiles.get(bot)))
+    throw new Fault('MCP_BOT_NOT_FOUND', 404);
   if (command.type === 'app.directory') {
     const records = await models.integrations.pendingOAuth(bot, true);
     const seen = new Set<string>();
@@ -40,7 +41,7 @@ export async function appCommand(
   }
   if (command.type === 'app.catalog')
     return {
-      bot,
+      bot: command.bot,
       apps: appCatalog(loopback),
       connections: await models.integrations.oauthStates(bot),
       attempts: await models.integrations.pendingOAuth(bot),
@@ -68,7 +69,7 @@ export async function integrationCommand(
   const store = models.integrations;
   switch (command.type) {
     case 'mcp.list':
-      return store.list(command.includeDeleted, command.bot, view);
+      return store.list(command.includeDeleted, command.bot, view, command.allOwners);
     case 'mcp.save': {
       if (view === 'bearer') {
         try {

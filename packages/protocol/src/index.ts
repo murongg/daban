@@ -177,6 +177,7 @@ export type McpView = 'bearer' | 'apps';
 
 export interface McpConnection {
   ownerBot?: string;
+  boundBots?: string[];
   id: string;
   name: string;
   revision: number;
@@ -251,7 +252,7 @@ export interface McpHistory {
   items: McpReceipt[];
 }
 export type McpCommand =
-  | { type: 'mcp.list'; includeDeleted?: boolean; bot?: string }
+  | { type: 'mcp.list'; includeDeleted?: boolean; bot?: string; allOwners?: true }
   | { type: 'mcp.save'; input: McpSave; bot?: string }
   | { type: 'mcp.saved'; id: string; connection: string; bot?: string }
   | { type: 'mcp.catalog'; id: string; bot?: string }
@@ -369,7 +370,12 @@ export function isMcpConnection(value: unknown): value is McpConnection {
       'createdAt',
       'updatedAt',
       'ownerBot',
+      'boundBots',
     ]) &&
+    (value.boundBots === undefined ||
+      (Array.isArray(value.boundBots) &&
+        value.boundBots.every(validAgentId) &&
+        new Set(value.boundBots).size === value.boundBots.length)) &&
     validAgentId(value.id) &&
     (value.ownerBot === undefined || validAgentId(value.ownerBot)) &&
     typeof value.name === 'string' &&
@@ -562,7 +568,8 @@ export function isMcpCommand(value: unknown): value is McpCommand {
   switch (value.type) {
     case 'mcp.list':
       return (
-        browserKeys(value, ['type', 'includeDeleted', 'bot']) &&
+        browserKeys(value, ['type', 'includeDeleted', 'bot', 'allOwners']) &&
+        (value.allOwners === undefined || (value.allOwners === true && value.bot === undefined)) &&
         (value.includeDeleted === undefined || typeof value.includeDeleted === 'boolean')
       );
     case 'mcp.save':
@@ -1560,6 +1567,7 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
 }
 export interface RuntimeSnapshot {
   appConnections?: AppConnectionsCapability;
+  appWorkspace?: true;
   localFolders?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
