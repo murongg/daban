@@ -202,6 +202,7 @@ export function Sidebar({
     const computer = target ? runtime.snapshot.bots[target] : undefined;
     const connection = runtime.snapshot.computers?.items.find((item) => item.bot === target);
     const local = runtime.snapshot.localComputer?.session;
+    const task = agentTask(runtime.snapshot, bot.id);
     let preview =
       state.controls[bot.id] === 'human' ? t('sidebar.controllingBotSComputer') : bot.preview;
     if (runtime.enabled) {
@@ -220,14 +221,13 @@ export function Sidebar({
             : 'sidebar.runtimeDisconnected',
         );
       else if (computer?.owner === 'human') preview = t('sidebar.controllingBotSComputer');
-      else if (agentTask(runtime.snapshot, bot.id)?.running)
-        preview = t('common.processingMessage');
+      else if (task?.running) preview = t('common.processingMessage');
       else if (connection?.phase === 'connecting') preview = t('common.connectingComputer');
       else if (connection?.phase === 'stopping') preview = t('common.stoppingComputer');
       else if (computer) preview = t('sidebar.localLinuxIndependentDesktop');
       else preview = bot.role || t('sidebar.readyToChat');
     }
-    if (local?.bot === agentId(bot.id) && !agentTask(runtime.snapshot, bot.id)?.running)
+    if (local?.bot === agentId(bot.id) && !task?.running)
       preview = local.owner === 'human' ? t('localComputer.paused') : t('localComputer.connected');
     return (
       <div
@@ -255,6 +255,12 @@ export function Sidebar({
         >
           <Avatar
             bot={bot}
+            working={
+              runtime.snapshot.phase === 'ready' &&
+              task?.running &&
+              task.phase === 'running' &&
+              computer?.owner !== 'human'
+            }
             human={
               runtime.enabled ? computer?.owner === 'human' : state.controls[bot.id] === 'human'
             }

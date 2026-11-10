@@ -698,10 +698,40 @@ textarea.field {
   width: 37px;
   height: 39px;
 }
-.bot-avatar > img {
+.bot-avatar > img,
+.bot-avatar > svg {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bot-avatar[data-working] > :is(img, svg) {
+    animation: avatar-working 3.2s ease-in-out infinite;
+  }
+  @keyframes avatar-working {
+    50% {
+      translate: 0 -2px;
+      scale: 1.04 0.98;
+    }
+  }
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .bot-avatar > :is(img, svg) {
+    transition: transform 230ms cubic-bezier(0.2, 0.8, 0.3, 1);
+  }
+  :is(.bot-avatar:hover, .avatar-choice:enabled:hover .bot-avatar) > :is(img, svg) {
+    transform: translateY(-2px) rotate(-7deg) scale(1.07);
+  }
+  :is(.bot-avatar:hover, .avatar-choice:enabled:hover .bot-avatar) .avatar-face {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: avatar-blink 280ms ease-in-out;
+  }
+  @keyframes avatar-blink {
+    40% {
+      scale: 1 0.35;
+    }
+  }
 }
 .bot-avatar.small {
   width: 25px;
@@ -3216,22 +3246,67 @@ textarea.skill-source {
   display: grid;
   gap: 19px;
 }
-.avatar-choices {
-  display: flex;
+.avatar-picker {
+  display: grid;
+  justify-items: center;
   gap: 8px;
 }
-.avatar-choice {
-  border: 1px solid transparent;
-  border-radius: 12px;
-  padding: 5px;
+.avatar-preview {
+  display: grid;
+  place-items: center;
+  margin-bottom: 2px;
 }
-.avatar-choice[aria-pressed="true"] {
-  border-color: var(--line-strong);
+.avatar-preview .bot-avatar {
+  width: 96px;
+  height: 96px;
+}
+.avatar-choices {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  width: min(100%, 272px);
+  gap: 4px;
+}
+.avatar-colors {
+  width: min(100%, 224px);
+}
+.avatar-choices legend {
+  margin: 0 auto 4px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.avatar-choice {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 42px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.avatar-choice:hover:not(:disabled) {
   background: var(--soft);
 }
+.avatar-choice[aria-pressed="true"] {
+  border-color: var(--focus);
+  background: var(--soft);
+}
+.avatar-choice:focus-visible {
+  outline-offset: 2px;
+}
 .avatar-choice .bot-avatar {
-  width: 29px;
+  width: min(31px, 100%);
   height: 31px;
+}
+.avatar-color {
+  height: 34px;
+  border-radius: 50%;
+}
+.avatar-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  forced-color-adjust: none;
 }
 .dialog-actions {
   display: flex;
