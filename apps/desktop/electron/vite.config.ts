@@ -27,7 +27,11 @@ export default defineConfig(({ mode }) => ({
     // Sandboxed preloads require CommonJS; the source remains TypeScript while Electron stays external.
     rolldownOptions: {
       // Dependencies may use bare Node names (for example crypto); browser shims break the Windows native bridge.
-      external: (id) => id === 'electron' || id.startsWith('node:') || builtinModules.includes(id),
+      external: (id) =>
+        id === 'electron' ||
+        id === '@trycua/cua-driver' ||
+        id.startsWith('node:') ||
+        builtinModules.includes(id),
     },
   },
 }));

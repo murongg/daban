@@ -51,6 +51,8 @@ function fixture(permissions = true) {
       for (const listener of listeners) listener(snapshot);
       return { ok: true, value: snapshot.localComputer };
     }
+    if (command.type === 'local.windows')
+      return { ok: true, value: [{ id: '11:22', name: '合成窗口' }] };
     if (command.type === 'local.connect') {
       snapshot = {
         ...snapshot,
@@ -109,7 +111,12 @@ it('requires a concrete screen-sharing consent before connecting the selected Bo
   expect(backend.invoke.mock.calls.some(([command]) => command.type === 'local.connect')).toBe(
     false,
   );
-  await userEvent.click(within(dialog).getByRole('button', { name: '允许操作本机' }));
+  const allow = within(dialog).getByRole('button', { name: '允许操作本机' });
+  expect(allow).toBeDisabled();
+  await userEvent.click(within(dialog).getByRole('button', { name: /操作范围/ }));
+  await userEvent.click(await screen.findByRole('option', { name: '合成窗口' }));
+  expect(within(dialog).getByText(/只观察和操作/)).toBeVisible();
+  await userEvent.click(allow);
   expect(await screen.findByRole('button', { name: '断开本机' })).toBeVisible();
   expect(
     backend.invoke.mock.calls.find(([command]) => command.type === 'local.connect')?.[0],
@@ -118,6 +125,7 @@ it('requires a concrete screen-sharing consent before connecting the selected Bo
     bot: 'a',
     model: 'provider:mock-provider:mock-vision',
     modelRevision: 1,
+    window: '11:22',
   });
 });
 it('guides each missing permission from live status without granting host control', async () => {

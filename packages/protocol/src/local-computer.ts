@@ -7,6 +7,11 @@ export interface LocalComputerSession {
   owner: 'agent' | 'human';
   model: string;
   modelRevision: number;
+  window?: string;
+}
+export interface LocalComputerWindow {
+  id: string;
+  name: string;
 }
 export interface LocalComputerStatus {
   platform: 'darwin' | 'win32' | 'unsupported';
@@ -29,12 +34,20 @@ export type LocalComputerInput =
   | { type: 'click'; x: number; y: number; button?: number }
   | { type: 'pointer'; x: number; y: number; phase: 'down' | 'move' | 'up'; button?: number }
   | { type: 'key'; key: string }
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; x?: number; y?: number }
   | { type: 'scroll'; deltaY: number; x?: number; y?: number };
 export type LocalComputerCommand =
   | { type: 'local.status' }
+  | { type: 'local.windows' }
   | { type: 'local.permissions' }
-  | { type: 'local.connect'; id: string; bot: string; model: string; modelRevision: number }
+  | {
+      type: 'local.connect';
+      id: string;
+      bot: string;
+      model: string;
+      modelRevision: number;
+      window?: string;
+    }
   | {
       type: 'local.pause' | 'local.resume' | 'local.disconnect' | 'local.preview';
       session: string;
@@ -52,16 +65,22 @@ const model = (value: unknown): value is string =>
   value.length > 0 &&
   value.length <= 256 &&
   !Array.from(value).some((character) => character.charCodeAt(0) < 32);
+const windowId = (value: unknown) =>
+  typeof value === 'string' && /^[1-9]\d{0,9}:[1-9]\d{0,9}$/.test(value);
+export function isLocalComputerWindow(value: unknown): value is LocalComputerWindow {
+  return record(value) && exact(value, ['id', 'name']) && windowId(value.id) && model(value.name);
+}
 export function isLocalComputerSession(value: unknown): value is LocalComputerSession {
   return (
     record(value) &&
-    exact(value, ['id', 'bot', 'revision', 'owner', 'model', 'modelRevision']) &&
+    exact(value, ['id', 'bot', 'revision', 'owner', 'model', 'modelRevision', 'window']) &&
     validAgentId(value.id) &&
     validAgentId(value.bot) &&
     revision(value.revision, 1) &&
     ['agent', 'human'].includes(String(value.owner)) &&
     model(value.model) &&
-    revision(value.modelRevision)
+    revision(value.modelRevision) &&
+    (value.window === undefined || model(value.window))
   );
 }
 export function isLocalComputerStatus(value: unknown): value is LocalComputerStatus {
@@ -82,15 +101,20 @@ export function isLocalComputerStatus(value: unknown): value is LocalComputerSta
 }
 export function isLocalComputerCommand(value: unknown): value is LocalComputerCommand {
   if (!record(value)) return false;
-  if (value.type === 'local.status' || value.type === 'local.permissions')
+  if (
+    value.type === 'local.status' ||
+    value.type === 'local.permissions' ||
+    value.type === 'local.windows'
+  )
     return exact(value, ['type']);
   if (value.type === 'local.connect')
     return (
-      exact(value, ['type', 'id', 'bot', 'model', 'modelRevision']) &&
+      exact(value, ['type', 'id', 'bot', 'model', 'modelRevision', 'window']) &&
       validAgentId(value.id) &&
       validAgentId(value.bot) &&
       model(value.model) &&
-      revision(value.modelRevision)
+      revision(value.modelRevision) &&
+      (value.window === undefined || windowId(value.window))
     );
   return (
     ['local.pause', 'local.resume', 'local.disconnect', 'local.preview'].includes(
@@ -145,10 +169,11 @@ export function isLocalComputerInput(value: unknown): value is LocalComputerInpu
       );
     case 'text':
       return (
-        exact(value, ['type', 'text']) &&
+        exact(value, ['type', 'text', 'x', 'y']) &&
         typeof value.text === 'string' &&
         value.text.length <= 4000 &&
-        !value.text.includes('\0')
+        !value.text.includes('\0') &&
+        ((value.x === undefined && value.y === undefined) || (point(value.x) && point(value.y)))
       );
     case 'scroll':
       return (

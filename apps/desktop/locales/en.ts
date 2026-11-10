@@ -2418,6 +2418,13 @@ export const english = {
   'localComputer.occupied': 'Another Bot is using this computer.',
   'localComputer.updateRequired': 'Update the background service to use local control.',
   'localComputer.consentTitle': 'Let {0} use this computer?',
+  'localComputer.scope': 'Control scope',
+  'localComputer.fullDesktop': 'Entire primary display (foreground)',
+  'localComputer.windowScope':
+    'The Bot will only see and interact with the selected window while you use other apps.',
+  'localComputer.windowShortcut': 'Press {0} to pause. Quitting disconnects local control.',
+  'localComputer.windowConnected': 'Background control connected · {0}',
+  'localComputer.windowUnavailable': 'This window is unavailable. Open it and connect again.',
   'localComputer.consentScope':
     'The Bot will use real apps and files on your primary display. Local control has no VM isolation.',
   'localComputer.consentRecipient': 'Screenshots will be sent to {0}, using {1}.',

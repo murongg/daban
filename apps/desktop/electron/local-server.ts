@@ -69,8 +69,18 @@ export async function localServer(dataRoot: string, computer: LocalComputer) {
       const data = value as Record<string, unknown>;
       if (typeof data.method !== 'string') throw new Error('LOCAL_INVALID_REQUEST');
       let result: unknown;
-      if (data.method === 'status' && Object.keys(data).length === 1) result = computer.status();
-      else if (
+      if (
+        data.method === 'status' &&
+        (Object.keys(data).length === 1 || (data.scope === true && Object.keys(data).length === 2))
+      ) {
+        const status = computer.status();
+        if (status.session?.window) {
+          // Old agents require the original status shape, and new agents only need the scope.
+          delete status.session.window;
+          if (data.scope === true) status.session.window = 'window';
+        }
+        result = status;
+      } else if (
         data.method === 'cancel' &&
         Object.keys(data).length === 3 &&
         validAgentId(data.runId) &&

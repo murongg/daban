@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { LocalComputer, type LocalDriver } from './local-computer';
+import { LocalComputer, type LocalDriver, type WindowDriver } from './local-computer';
 
 function fixture() {
   const actions: unknown[] = [];
@@ -211,4 +211,121 @@ it('reports a pause that races a foreground-window change before input', async (
   ).rejects.toThrow('LOCAL_PAUSED');
   await paused;
   expect(actions).toHaveLength(0);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => unknown;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it('binds input to the authorized window while keeping Daban available', async () => {
+  const { controller, driver, actions } = fixture();
+  driver.hide = async () => {
+    throw new Error('Must leave Daban visible');
+  };
+  const received: unknown[] = [];
+  driver.windows = () => [{ id: '11:22', name: 'Synthetic editor' }];
+  driver.forWindow = async (id) => {
+    expect(id).toBe('11:22');
+    return {
+      name: 'Synthetic editor',
+      capture: driver.capture,
+      context: driver.context,
+      input: async (input) => {
+        received.push(input);
+      },
+    };
+  };
+  expect(controller.windows()).toEqual([{ id: '11:22', name: 'Synthetic editor' }]);
+  const status = await controller.connect({ ...connect, window: '11:22' });
+  expect(status.session?.window).toBe('Synthetic editor');
+  await controller.interruptForeground();
+  const frame = await controller.capture(binding(controller));
+  await expect(
+    controller.openApp({ ...binding(controller), observation: frame.observation, app: 'files' }),
+  ).rejects.toThrow('LOCAL_WINDOW_SCOPED');
+  const input = { type: 'text', x: 20, y: 30, text: 'SYNTHETIC' };
+  await controller.act({
+    ...binding(controller),
+    observation: frame.observation,
+    actions: [input],
+  });
+  expect(received).toEqual([input]);
+  expect(actions).toEqual([]);
+  await controller.interrupt();
+  const paused = controller.status().session!;
+  expect(paused.owner).toBe('human');
+  await controller.resume(paused.id, paused.revision);
+});
+
+it('invalidates a pending window authorization on revocation', async () => {
+  const { controller, driver } = fixture();
+  const lookup = deferred<WindowDriver>();
+  const entered = deferred<undefined>();
+  driver.forWindow = () => {
+    entered.resolve(undefined);
+    return lookup.promise;
+  };
+  const pending = controller.connect({ ...connect, window: '11:22' });
+  const rejected = expect(pending).rejects.toThrow('LOCAL_CONSENT_EXPIRED');
+  await entered.promise;
+  const revoked = controller.revoke();
+  lookup.resolve({
+    name: 'Synthetic window',
+    capture: driver.capture,
+    context: driver.context,
+    input: driver.input,
+  });
+  await rejected;
+  await revoked;
+  expect(controller.status().session).toBeUndefined();
+});
+
+it('interrupts in-flight window input before pause waits for the SDK', async () => {
+  const { controller, driver } = fixture();
+  const entered = deferred<undefined>();
+  const blocked = deferred<undefined>();
+  let interrupted = false;
+  driver.forWindow = () => ({
+    name: 'Synthetic window',
+    capture: driver.capture,
+    context: driver.context,
+    input: async () => {
+      entered.resolve(undefined);
+      return blocked.promise;
+    },
+    interrupt: () => {
+      interrupted = true;
+      blocked.resolve(undefined);
+    },
+  });
+  const state = await controller.connect({ ...connect, window: '11:22' });
+  const frame = await controller.capture(binding(controller));
+  const pending = controller.act({
+    ...binding(controller),
+    observation: frame.observation,
+    actions: [{ type: 'click', x: 10, y: 10 }],
+  });
+  const rejected = expect(pending).rejects.toThrow('LOCAL_PAUSED');
+  await entered.promise;
+  const paused = controller.pause(state.session!.id, state.session!.revision);
+  const interruptedBeforeDrain = interrupted;
+  blocked.resolve(undefined);
+  await rejected;
+  await paused;
+  expect(interruptedBeforeDrain).toBe(true);
+});
+
+it('refuses an unavailable window without granting foreground access', async () => {
+  const { controller, driver } = fixture();
+  driver.forWindow = async () => {
+    throw new Error('LOCAL_WINDOW_UNAVAILABLE');
+  };
+  await expect(controller.connect({ ...connect, window: '11:22' })).rejects.toThrow(
+    'LOCAL_WINDOW_UNAVAILABLE',
+  );
+  expect(controller.status().session).toBeUndefined();
 });

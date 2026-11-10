@@ -180,6 +180,7 @@ export function runtimeMessage(code: string, fallback = code) {
     LOCAL_DRIVER_FAILED: t('localComputer.driverUnavailable'),
     LOCAL_SHORTCUT_UNAVAILABLE: t('localComputer.shortcutUnavailable'),
     LOCAL_OTHER_DISPLAY: t('localComputer.primaryDisplay'),
+    LOCAL_WINDOW_UNAVAILABLE: t('localComputer.windowUnavailable'),
     NOTE_CONFLICT: t('errors.noteUpdatedEditsRetainedReviewLatestRevision'),
     NOTE_TRASHED: t('errors.noteMovedTrashEditsRetainedReviewLatest'),
     NOTE_NOT_FOUND: t('errors.noteNotFoundYetDraftRetainedRefresh'),

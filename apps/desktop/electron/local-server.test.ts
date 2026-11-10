@@ -36,6 +36,12 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
     },
     true,
   );
+  computer.driver.forWindow = () => ({
+    name: 'Synthetic window',
+    capture: computer.driver.capture,
+    context: computer.driver.context,
+    input: computer.driver.input,
+  });
   const close = await localServer(root, computer);
   let closed = false;
   try {
@@ -70,6 +76,7 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
       bot: 'mock-bot',
       model: 'provider:mock-provider:mock-vision',
       modelRevision: 1,
+      window: '11:22',
     });
     const client = new LocalComputerClient(root);
     client.modelRevision = async () => 1;
@@ -88,6 +95,10 @@ it('keeps host RPC private, forbids RPC consent, and binds returned images to th
     };
     expect(await client.prepare(run)).toBe(true);
     const first = await client.invoke(run, 'screenshot', { surface: 'desktop' });
+    expect(first.content[0]).toMatchObject({
+      type: 'text',
+      text: expect.stringContaining('"scope":"window"'),
+    });
     expect(first.content[1]).toEqual({ type: 'image', mimeType: 'image/jpeg', data: 'AA==' });
     const retained = join(root, 'mock-retained-token');
     await rename(paths.token, retained);

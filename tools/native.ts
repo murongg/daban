@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
-import { constants } from 'node:fs';
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { constants, existsSync } from 'node:fs';
+import { copyFile, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,12 +19,19 @@ export async function packageNative(
   if (!dependency) return;
   const versions = new Map<string, string>();
   async function copy(name: string, from: string, optional = false): Promise<unknown> {
-    let manifestFile: string;
+    const require = createRequire(from);
+    let manifestFile: string | undefined;
     try {
-      manifestFile = createRequire(from).resolve(`${name}/package.json`);
+      manifestFile = require.resolve(`${name}/package.json`);
     } catch (error) {
-      if (optional) return;
-      throw error;
+      // ESM packages can hide their manifest behind exports.
+      if ((error as NodeJS.ErrnoException).code === 'ERR_PACKAGE_PATH_NOT_EXPORTED')
+        manifestFile = require.resolve
+          .paths(name)
+          ?.map((directory) => path.join(directory, name, 'package.json'))
+          .find((file) => existsSync(file));
+      if (!manifestFile && optional) return;
+      if (!manifestFile) throw error;
     }
     const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
       version: string;
@@ -52,6 +59,14 @@ export async function packageNative(
       await copy(dependency, manifestFile, true);
   }
   await copy(dependency, owner);
+  if (platform === 'darwin') {
+    await copy('@trycua/cua-driver', owner);
+    await copy(`@trycua/cua-driver-darwin-${process.arch}`, owner);
+    await copyFile(
+      new URL('../apps/desktop/licenses/cua-driver-LICENSE', import.meta.url),
+      path.join(directory, 'node_modules/@trycua/cua-driver/LICENSE'),
+    );
+  }
   await writeFile(
     path.join(directory, 'NATIVE-NOTICES.md'),
     [

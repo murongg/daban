@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import type { RequestListener, Server } from 'node:http';
 import { createRequire } from 'node:module';
@@ -6,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
 import { expect, test } from 'vitest';
+import { packageNative } from './native.ts';
 
 test('the bundled native channel uses Node cryptography when generating a Windows TLS certificate', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'mock-native-bundle-'));
@@ -41,3 +43,26 @@ test('the bundled native channel uses Node cryptography when generating a Window
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'loads the staged Cua SDK outside the workspace',
+  async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'mock-native-dependencies-'));
+    try {
+      const owner = fileURLToPath(new URL('../apps/desktop/package.json', import.meta.url));
+      await packageNative(directory, owner);
+      const output = execFileSync(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          "import { CuaDriver } from '@trycua/cua-driver'; const driver = CuaDriver.create({ embedded: true }); await driver.shutdown(); driver.uniffiDestroy(); console.log('staged SDK loaded')",
+        ],
+        { cwd: directory, encoding: 'utf8' },
+      );
+      expect(output.trim()).toBe('staged SDK loaded');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
