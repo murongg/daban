@@ -10,12 +10,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { runtimeError, useRuntime } from '../../app/Runtime';
 import type { Bot } from '../../app/state';
 import { Dialog } from '../../components/controls/Dialog';
-import { Select } from '../../components/controls/Select';
 import { t, useLocale } from '../../i18n/locale';
-import { IntegrationTools } from './IntegrationTools';
-import { McpCopy } from './McpCopy';
+import { AppCatalog } from './AppCatalog';
 
 interface Draft {
+  ownerBot?: string;
   id: string;
   revision: number;
   name: string;
@@ -42,79 +41,10 @@ const health = {
 
 export function Integrations({
   bots,
-  bot,
   onDialogChange,
-  onDirty,
 }: {
   bots: Bot[];
-  bot?: Bot;
   onDialogChange?: (open: boolean) => unknown;
-  onDirty?: (dirty: boolean) => unknown;
-}) {
-  useLocale();
-  const runtime = useRuntime();
-  const choices = bots.filter(
-    (item) =>
-      !item.members &&
-      !item.archived &&
-      runtime.snapshot.profiles.some(
-        (profile) => profile.id === agentId(item.id) && !profile.archived,
-      ),
-  );
-  const [selected, setSelected] = useState(bot?.id ?? choices[0]?.id ?? '');
-  const [dirty, setDirty] = useState(false);
-  const first = choices[0]?.id;
-  useEffect(() => {
-    if (!selected && first) setSelected(first);
-  }, [selected, first]);
-  useEffect(() => {
-    onDirty?.(dirty);
-    return () => {
-      onDirty?.(false);
-    };
-  }, [dirty, onDirty]);
-  const target = bot ?? bots.find((item) => item.id === selected);
-  return (
-    <>
-      {!bot && (
-        <div className="setting-row">
-          <div className="setting-label">{t('capabilities.chooseBot')}</div>
-          <Select
-            label={t('capabilities.chooseBot')}
-            value={selected}
-            disabled={dirty}
-            onValueChange={setSelected}
-            options={choices.map((item) => ({ value: item.id, label: item.name }))}
-          />
-        </div>
-      )}
-      {target ? (
-        <BotIntegrations
-          key={target.id}
-          bots={bots}
-          bot={target}
-          privatePanel={!!bot}
-          onDialogChange={onDialogChange}
-          onDirty={setDirty}
-        />
-      ) : (
-        <p className="inline-note">{t('capabilities.createBotFirst')}</p>
-      )}
-    </>
-  );
-}
-function BotIntegrations({
-  bots,
-  bot,
-  privatePanel,
-  onDialogChange,
-  onDirty,
-}: {
-  bots: Bot[];
-  bot: Bot;
-  privatePanel: boolean;
-  onDialogChange?: (open: boolean) => unknown;
-  onDirty: (dirty: boolean) => unknown;
 }) {
   useLocale();
   const runtime = useRuntime();
@@ -123,11 +53,10 @@ function BotIntegrations({
   const [draft, setDraft] = useState<Draft>();
   const [pending, setPending] = useState<McpSave>();
   const [conflict, setConflict] = useState<McpConnection>();
-  const [selected, setSelected] = useState<McpConnection>();
-  const [accessDirty, setAccessDirty] = useState(false);
-  const [copying, setCopying] = useState<McpConnection>();
   const [archiving, setArchiving] = useState<McpConnection>();
-  const dialogOpen = !!archiving || !!copying;
+  const [appDialog, setAppDialog] = useState(false);
+  const [oauthConnections, setOAuthConnections] = useState<string[]>([]);
+  const dialogOpen = !!archiving || appDialog;
   useEffect(() => {
     onDialogChange?.(dialogOpen);
   }, [dialogOpen, onDialogChange]);
@@ -141,8 +70,6 @@ function BotIntegrations({
     runtime.enabled &&
     runtime.snapshot.phase === 'ready' &&
     runtime.snapshot.protocolVersion >= 21 &&
-    runtime.snapshot.botCapabilities === true &&
-    !bot.archived &&
     runtime.snapshot.mcp?.available === true;
   const revision = runtime.snapshot.mcp?.available ? runtime.snapshot.mcp.revision : undefined;
   useEffect(() => {
@@ -152,15 +79,17 @@ function BotIntegrations({
       reads.current++;
     };
   }, []);
+  const allOwners = runtime.snapshot.appWorkspace;
+  const botName = (id: string) => bots.find((bot) => agentId(bot.id) === id)?.name ?? id;
   const load = useCallback(async () => {
     const serial = ++reads.current;
     const value = await runtime.command<{ revision: number; items: McpConnection[] }>({
       type: 'mcp.list',
       includeDeleted: trash,
-      bot: agentId(bot.id),
+      ...(allOwners ? { allOwners } : {}),
     });
     if (mounted.current && serial === reads.current) setRows(value.items);
-  }, [runtime.command, trash, bot.id]);
+  }, [runtime.command, trash, allOwners]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Store revisions refresh metadata without replacing a private editor draft.
   useEffect(() => {
     if (!available) return;
@@ -186,12 +115,12 @@ function BotIntegrations({
     }
   }
   function edit(entry?: McpConnection) {
-    setSelected(undefined);
     setPending(undefined);
     setConflict(undefined);
     setError('');
     setNotice('');
     setDraft({
+      ownerBot: entry?.ownerBot,
       id: entry?.id ?? crypto.randomUUID(),
       revision: entry?.revision ?? 0,
       name: entry?.name ?? '',
@@ -227,9 +156,7 @@ function BotIntegrations({
       await acknowledge(
         await runtime.command<McpSaved>({
           type: 'mcp.save',
-          ...(rows.find((row) => row.id === input.id && !row.ownerBot) && !privatePanel
-            ? {}
-            : { bot: agentId(bot.id) }),
+          ...(draft.ownerBot ? { bot: draft.ownerBot } : {}),
           input,
         }),
       );
@@ -239,42 +166,58 @@ function BotIntegrations({
       throw error;
     }
   }
-  useEffect(() => {
-    onDirty(busy || !!draft || !!pending || accessDirty || !!archiving || !!copying);
-  }, [busy, draft, pending, accessDirty, archiving, copying, onDirty]);
-  const entry = rows.find((row) => row.id === selected?.id) ?? selected;
-  const blocked = !available || busy || !!draft || accessDirty;
+  const blocked = !available || busy || !!draft;
   return (
     <div className="settings-section integration-settings">
       <h2>{t('common.externalTools')}</h2>
-      <p className="setting-description">
-        {t(
-          draft && draft.revision > 0 && rows.some((row) => row.id === draft.id && !row.ownerBot)
-            ? 'capabilities.editSharedMcp'
-            : 'capabilities.installForBot',
-          { 0: bot.name },
-        )}
-      </p>
-      <p className="setting-description">
-        {t('integrations.connectMcpServicesSelectToolsBotsEach')}
-      </p>
-      <p className="field-help">
-        {t('integrations.currentlySupportsPublicHttpsStreamableHttpLocal')}
-      </p>
+      <p className="setting-description">{t('apps.description')}</p>
       {!available && (
         <p className="inline-note">
-          {runtime.snapshot.protocolVersion < 21 || runtime.snapshot.botCapabilities !== true
+          {runtime.snapshot.phase === 'ready' && runtime.snapshot.protocolVersion < 21
             ? t('capabilities.updateRuntime')
             : runtime.snapshot.phase !== 'ready'
               ? t('integrations.localRuntimeNotConnectedManageExternalTools')
               : t('integrations.externalToolsTemporarilyUnavailableOrdinaryChatExisting')}
         </p>
       )}
+      {!draft && !trash && available && allOwners && (
+        <AppCatalog
+          botName={botName}
+          rows={rows}
+          blocked={blocked}
+          onCustom={() => edit()}
+          onChanged={load}
+          onOAuthConnections={setOAuthConnections}
+          onDialogChange={setAppDialog}
+          onCheck={async (row) =>
+            perform(async () => {
+              await runtime.command({
+                type: 'mcp.check',
+                ...(row.ownerBot ? { bot: row.ownerBot } : {}),
+                id: row.id,
+                revision: row.revision,
+              });
+              if (mounted.current)
+                setNotice(t('integrations.checkCompleteNoAdditionalBotToolPermissions'));
+              await load();
+            })
+          }
+          onArchive={setArchiving}
+        />
+      )}
+      <details className="integration-requirements">
+        <summary>{t('apps.transportDetails')}</summary>
+        <p className="field-help">
+          {t('integrations.currentlySupportsPublicHttpsStreamableHttpLocal')}
+        </p>
+      </details>
       <div className="integration-actions">
-        <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>
-          <Plus />
-          {t('integrations.addConnection')}
-        </button>
+        {!allOwners && (
+          <button className="secondary" type="button" disabled={blocked} onClick={() => edit()}>
+            <Plus />
+            {t('integrations.addConnection')}
+          </button>
+        )}
         <button
           className="secondary"
           type="button"
@@ -282,7 +225,6 @@ function BotIntegrations({
           aria-pressed={trash}
           onClick={() => {
             setTrash(!trash);
-            setSelected(undefined);
           }}
         >
           {trash ? t('integrations.backConnections') : t('common.archived')}
@@ -405,7 +347,7 @@ function BotIntegrations({
                       acknowledge(
                         await runtime.command<McpSaved>({
                           type: 'mcp.saved',
-                          bot: agentId(bot.id),
+                          ...(draft.ownerBot ? { bot: draft.ownerBot } : {}),
                           id: pending.requestId,
                           connection: pending.id,
                         }),
@@ -433,7 +375,7 @@ function BotIntegrations({
                   perform(async () => {
                     const value = await runtime.command<McpCatalog>({
                       type: 'mcp.catalog',
-                      bot: agentId(bot.id),
+                      ...(draft.ownerBot ? { bot: draft.ownerBot } : {}),
                       id: draft.id,
                     });
                     if (mounted.current) setConflict(value.current);
@@ -465,99 +407,90 @@ function BotIntegrations({
             : t('integrations.noExternalConnectionsYetAddOneCheck')}
         </p>
       )}
-      {rows.map((row) => (
-        <div className="integration-row" key={row.id}>
-          <div className="integration-meta">
-            <h3>{row.name}</h3>
-            <p>{row.origin}</p>
-            <span className="badge">{t(health[row.health])}</span>
-            <span className="field-help">
-              {t(row.ownerBot ? 'capabilities.onlyThisBot' : 'capabilities.legacyShared')}
-            </span>
-            <span className="field-help">
-              {row.toolCount}
-              {t('integrations.tools')}
-              {row.credentialConfigured
-                ? t('integrations.credentialsConfigured')
-                : t('integrations.noCredentialsConfigured')}
-            </span>
-          </div>
-          <div className="integration-actions">
-            {!trash && (
-              <button
-                type="button"
-                className="secondary"
-                aria-label={t('capabilities.addMcpNamed', { 0: row.name })}
-                disabled={blocked}
-                onClick={() => setCopying(row)}
-              >
-                {t('capabilities.copyToBot')}
-              </button>
-            )}
-            {privatePanel && !row.ownerBot && !trash && (
-              <button
-                type="button"
-                className="secondary"
-                disabled={blocked}
-                onClick={() => {
-                  setDraft({
-                    id: crypto.randomUUID(),
-                    revision: 0,
-                    name: row.name,
-                    endpoint: '',
-                    bearer: '',
-                    clearBearer: false,
-                  });
-                  setNotice(t('capabilities.newConnectionCredentials'));
-                }}
-              >
-                {t('capabilities.makePrivateCopy')}
-              </button>
-            )}
-            {trash ? (
-              <button
-                className="secondary"
-                type="button"
-                aria-label={t('common.restoreNamedItem', { 0: row.name })}
-                disabled={blocked || (privatePanel && !row.ownerBot)}
-                onClick={() =>
-                  perform(async () => {
-                    await runtime.command({
-                      type: 'mcp.restore',
-                      ...(row.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
-                      id: row.id,
-                      revision: row.revision,
-                    });
-                    if (mounted.current)
-                      setNotice(t('integrations.connectionRestoredSelectEnableToolsAgainEach'));
-                    await load();
-                  })
-                }
-              >
-                <RotateCcw />
-                {t('common.restore')}
-              </button>
-            ) : (
-              <>
+      {rows
+        .filter((row) => trash || !oauthConnections.includes(row.id))
+        .map((row) => (
+          <div className="integration-row" key={row.id}>
+            <div className="integration-meta">
+              <h3>{row.name}</h3>
+              <span className="badge">{t(health[row.health])}</span>
+              {row.ownerBot && (
+                <span className="field-help">
+                  {t('apps.privateConnection', { 0: botName(row.ownerBot) })}
+                </span>
+              )}
+              <span className="field-help">
+                {row.toolCount}
+                {t('integrations.tools')}
+                {row.credentialConfigured
+                  ? t('integrations.credentialsConfigured')
+                  : t('integrations.noCredentialsConfigured')}
+              </span>
+              <details>
+                <summary>{t('apps.details')}</summary>
+                <p>{row.origin}</p>
+                <div className="integration-actions">
+                  {!trash && (
+                    <>
+                      <button
+                        className="secondary"
+                        type="button"
+                        aria-label={t('common.editNamedItem', { 0: row.name })}
+                        disabled={blocked}
+                        onClick={() => edit(row)}
+                      >
+                        {t('common.edit')}
+                      </button>
+                      <button
+                        className="secondary"
+                        type="button"
+                        aria-label={t('integrations.archive', { 0: row.name })}
+                        disabled={blocked}
+                        onClick={() => setArchiving(row)}
+                      >
+                        <Archive />
+                        {t('common.archive')}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </details>
+            </div>
+            <div className="integration-actions">
+              {trash ? (
                 <button
                   className="secondary"
                   type="button"
-                  aria-label={t('common.editNamedItem', { 0: row.name })}
-                  disabled={blocked || (privatePanel && !row.ownerBot)}
-                  onClick={() => edit(row)}
+                  aria-label={t('common.restoreNamedItem', { 0: row.name })}
+                  disabled={blocked}
+                  onClick={() =>
+                    perform(async () => {
+                      await runtime.command({
+                        type: 'mcp.restore',
+                        ...(row.ownerBot ? { bot: row.ownerBot } : {}),
+                        id: row.id,
+                        revision: row.revision,
+                      });
+                      if (mounted.current)
+                        setNotice(t('integrations.connectionRestoredSelectEnableToolsAgainEach'));
+                      await load();
+                    })
+                  }
                 >
-                  {t('common.edit')}
+                  <RotateCcw />
+                  {t('common.restore')}
                 </button>
+              ) : (
                 <button
-                  className="secondary"
+                  className={row.health === 'ready' ? 'secondary' : 'primary'}
                   type="button"
                   aria-label={t('integrations.check', { 0: row.name })}
-                  disabled={!available || busy || !!draft || (privatePanel && !row.ownerBot)}
+                  disabled={blocked}
                   onClick={() =>
                     perform(async () => {
                       await runtime.command({
                         type: 'mcp.check',
-                        ...(row.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
+                        ...(row.ownerBot ? { bot: row.ownerBot } : {}),
                         id: row.id,
                         revision: row.revision,
                       });
@@ -569,55 +502,10 @@ function BotIntegrations({
                 >
                   {t('common.checkConnection')}
                 </button>
-                <button
-                  className="secondary"
-                  type="button"
-                  aria-label={t('integrations.namedToolsPermissions', { 0: row.name })}
-                  disabled={blocked}
-                  onClick={() => setSelected(selected?.id === row.id ? undefined : row)}
-                >
-                  {t('integrations.toolsPermissions')}
-                </button>
-                <button
-                  className="secondary"
-                  type="button"
-                  aria-label={t('integrations.archive', { 0: row.name })}
-                  disabled={blocked || (privatePanel && !row.ownerBot)}
-                  onClick={() => setArchiving(row)}
-                >
-                  <Archive />
-                  {t('common.archive')}
-                </button>
-              </>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      ))}
-      {entry && !trash && (
-        <IntegrationTools
-          connection={entry}
-          bots={
-            privatePanel || entry.ownerBot
-              ? bots.filter((item) => agentId(item.id) === (entry.ownerBot ?? agentId(bot.id)))
-              : bots
-          }
-          onDirty={setAccessDirty}
-          onClose={() => setSelected(undefined)}
-        />
-      )}
-      {copying && (
-        <McpCopy
-          connection={copying}
-          bot={bot}
-          bots={bots}
-          onClose={() => setCopying(undefined)}
-          onCopied={(recipient) => {
-            setCopying(undefined);
-            setNotice(t('capabilities.mcpAdded', { 0: recipient.name }));
-            load().catch((cause) => setError(runtimeError(cause)));
-          }}
-        />
-      )}
+        ))}
       {archiving && (
         <Dialog
           title={t('integrations.archiveConnection')}
@@ -641,6 +529,11 @@ function BotIntegrations({
           <p className="field-help">
             {t('integrations.connectionCanRestoredSelectEnableToolsAgain')}
           </p>
+          {!!archiving.boundBots?.length && (
+            <p className="field-help">
+              {t('apps.affectedBots', { 0: archiving.boundBots.map(botName).join(', ') })}
+            </p>
+          )}
           <div className="inline-form-actions">
             <button
               className="primary"
@@ -650,14 +543,11 @@ function BotIntegrations({
                 perform(async () => {
                   await runtime.command({
                     type: 'mcp.archive',
-                    ...(archiving.ownerBot || privatePanel ? { bot: agentId(bot.id) } : {}),
+                    ...(archiving.ownerBot ? { bot: archiving.ownerBot } : {}),
                     id: archiving.id,
                     revision: archiving.revision,
                   });
-                  if (mounted.current) {
-                    setArchiving(undefined);
-                    setSelected(undefined);
-                  }
+                  if (mounted.current) setArchiving(undefined);
                   await load();
                 })
               }

@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, test } from 'vitest';
+import { migrate } from './database.js';
+import { IntegrationTools } from './integration-tools.js';
 import { Integrations } from './integrations.js';
+import { migrations } from './integrations-migrations.js';
+import { Interactions } from './interactions.js';
+import { mcpCatalog, mcpDigest } from './mcp-catalog.js';
 import { privateMetadata, secureDirectory } from './private-files.js';
 
 const save = {
@@ -26,6 +31,231 @@ const tools = [
     },
   },
 ];
+const retiredApproval = {
+  name: '20261104105325_approval-decision',
+  hash: '401436292d92fb1b1d1fb7ba6be2c143b23af9a7b5520286780df027df71fde7',
+  folderMillis: 1793789605000,
+  bps: true,
+  sql: ['ALTER TABLE `call_receipts` ADD `policyDecision` text;'],
+};
+const retiredMerge = {
+  name: '20261105104541_merge-approval-oauth',
+  hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+  folderMillis: 1793875541000,
+  bps: true,
+  sql: [''],
+};
+test.each(['approval', 'combined', 'd87'] as const)(
+  '%s experimental MCP database keeps its records and reopens without replaying migrations',
+  async (mode) => {
+    const root = await secureDirectory(
+      await mkdtemp(path.join(tmpdir(), 'synthetic-integration-upgrade-')),
+    );
+    const file = path.join(root, 'integrations.sqlite');
+    const bot = 'mock-bot',
+      connection = 'mock-upgrade';
+    const hasOAuth = mode !== 'approval';
+    const catalog = mcpCatalog(connection, tools, []);
+    const digest = mcpDigest(catalog);
+    const decision = { effect: 'allow', scope: { kind: 'bot', bot }, historical: true };
+    let store: Integrations | undefined;
+    try {
+      const old = new DatabaseSync(file);
+      try {
+        const [baseline, oauth, providers] = migrations;
+        migrate(
+          old,
+          mode === 'approval'
+            ? [baseline, retiredApproval]
+            : [
+                baseline,
+                retiredApproval,
+                oauth,
+                retiredMerge,
+                ...(mode === 'd87' ? [providers] : []),
+              ],
+        );
+        const at = '2026-01-01T00:00:00.000Z';
+        old
+          .prepare(
+            'INSERT INTO integrations(id,revision,name,name_key,endpoint,bearer,deleted,health,catalog,digest,created,updated,owner) VALUES(?,1,?,?,?,?,0,?,?,?,?,?,?)',
+          )
+          .run(
+            connection,
+            'Synthetic upgrade',
+            'synthetic upgrade',
+            hasOAuth ? 'https://mcp.notion.com/mcp' : 'https://mcp.example.test/mcp',
+            'synthetic-bearer',
+            'ready',
+            JSON.stringify(catalog),
+            digest,
+            at,
+            at,
+            bot,
+          );
+        old
+          .prepare(
+            'INSERT INTO integration_bindings(bot,connection,revision,config_revision,digest,tools,enabled) VALUES(?,?,3,1,?,?,0)',
+          )
+          .run(bot, connection, digest, JSON.stringify(['synthetic_echo']));
+        old
+          .prepare('INSERT INTO config_commands VALUES(?,?,?,1)')
+          .run('mock-old-save', 'a'.repeat(64), connection);
+        old
+          .prepare(
+            'INSERT INTO call_receipts(id,hash,semantic,bot,run,session,connection,config_revision,tool,phase,preview,result,created,updated) VALUES(?,?,?,?,?,?,?,1,?,?,?, ?,?,?)',
+          )
+          .run(
+            'mock-old-call',
+            'b'.repeat(64),
+            'c'.repeat(64),
+            bot,
+            'mock-run',
+            'mock-session',
+            connection,
+            'synthetic_echo',
+            'settled',
+            JSON.stringify({ value: 'Synthetic' }),
+            JSON.stringify({
+              isError: false,
+              content: [{ type: 'text', text: 'Synthetic result' }],
+            }),
+            at,
+            at,
+          );
+        old.prepare('UPDATE call_receipts SET policyDecision=?').run(JSON.stringify(decision));
+        if (hasOAuth) {
+          old
+            .prepare("UPDATE integrations SET auth_kind='oauth',credential_epoch=1,bearer=NULL")
+            .run();
+          old
+            .prepare(
+              "INSERT INTO oauth_grants(connection,epoch,state,issuer,resource,client_id,client_secret,redirect_uri,token_endpoint,access_token,refresh_token,expires_at,scope) VALUES(?,1,'connected',?,?,?,?,?,?,?,?,?,?)",
+            )
+            .run(
+              connection,
+              'https://mcp.notion.com',
+              'https://mcp.notion.com/mcp',
+              'mock-client',
+              'synthetic-client-secret',
+              'http://127.0.0.1:45123/oauth/mock',
+              'https://mcp.notion.com/token',
+              'synthetic-access',
+              'synthetic-refresh',
+              Date.now() + 3600000,
+              'default',
+            );
+        }
+        old.exec('UPDATE integration_meta SET revision=7');
+      } finally {
+        old.close();
+      }
+      let previousJournal: unknown;
+      for (let open = 0; open < 2; open++) {
+        store = new Integrations(file);
+        await store.ready;
+        expect((await store.status()).available).toBe(true);
+        expect(await store.read(connection, bot)).toMatchObject({
+          ownerBot: bot,
+          revision: 1,
+          catalogDigest: digest,
+        });
+        expect((await store.catalogView(connection, bot)).tools).toEqual(catalog);
+        expect((await store.assignments(bot)).items[0]).toMatchObject({
+          revision: 3,
+          enabled: false,
+          tools: ['synthetic_echo'],
+        });
+        expect((await store.saved('mock-old-save', connection, bot)).receipt.revision).toBe(1);
+        const receipt = await store.receipt(bot, 'mock-run', 'mock-old-call');
+        expect(receipt).toMatchObject({
+          phase: 'settled',
+          preview: JSON.stringify({ value: 'Synthetic' }),
+        });
+        expect(receipt).not.toHaveProperty('policyDecision');
+        if (hasOAuth)
+          expect(await store.oauthGrant(connection)).toMatchObject({
+            app: 'notion',
+            epoch: 1,
+            state: 'connected',
+            accessToken: 'synthetic-access',
+            refreshToken: 'synthetic-refresh',
+            clientSecret: 'synthetic-client-secret',
+            scope: 'default',
+          });
+        else expect((await store.privateConfig(connection)).bearer).toBe('synthetic-bearer');
+        await store.close();
+        store = undefined;
+        const audit = new DatabaseSync(file, { readOnly: true });
+        try {
+          const names = audit
+            .prepare('SELECT name,hash FROM __drizzle_migrations ORDER BY name')
+            .all();
+          expect(names).toEqual(
+            [...migrations, retiredApproval, ...(hasOAuth ? [retiredMerge] : [])]
+              .map((migration) => ({ name: migration.name, hash: migration.hash }))
+              .sort((a, b) => String(a.name).localeCompare(String(b.name))),
+          );
+          if (open) expect(names).toEqual(previousJournal);
+          previousJournal = names;
+          expect(
+            audit
+              .prepare('SELECT policyDecision FROM call_receipts WHERE id=?')
+              .get('mock-old-call')?.policyDecision,
+          ).toBe(JSON.stringify(decision));
+          expect(
+            audit
+              .prepare('PRAGMA table_info(call_receipts)')
+              .all()
+              .map((column) => column.name),
+          ).toContain('policyDecision');
+          expect(
+            audit
+              .prepare('PRAGMA table_info(integrations)')
+              .all()
+              .map((column) => column.name),
+          ).toEqual(expect.arrayContaining(['auth_kind', 'credential_epoch']));
+        } finally {
+          audit.close();
+        }
+      }
+    } finally {
+      await store?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+test.each(['hash', 'timestamp', 'future'] as const)(
+  'a journal with a different %s is still rejected',
+  async (kind) => {
+    const f = await fixture();
+    const file = path.join(f.root, 'integrations.sqlite');
+    try {
+      await f.store.save(save);
+      await f.store.close();
+      const old = new DatabaseSync(file);
+      try {
+        old
+          .prepare('INSERT INTO __drizzle_migrations(name,hash,created_at) VALUES(?,?,?)')
+          .run(
+            kind === 'future' ? '20270101000000_future' : retiredApproval.name,
+            kind === 'hash' ? 'a'.repeat(64) : retiredApproval.hash,
+            retiredApproval.folderMillis + Number(kind === 'timestamp'),
+          );
+      } finally {
+        old.close();
+      }
+      const store = new Integrations(file);
+      try {
+        expect(await store.status()).toEqual({ available: false, error: 'MCP_STORE_UNAVAILABLE' });
+      } finally {
+        await store.close();
+      }
+    } finally {
+      await f.close();
+    }
+  },
+);
 async function fixture() {
   const temporary = await mkdtemp(path.join(tmpdir(), 'synthetic-integrations-'));
   const root = await secureDirectory(path.join(temporary, 'private'));
@@ -265,6 +495,161 @@ test('only reviewed catalogs can enable selected tools for a Bot, and catalog ch
     expect((await f.store.assignments('mock-a')).items[0].enabled).toBe(false);
     expect((await f.store.capture('mock-a')).connections.length).toBe(0);
   } finally {
+    await f.close();
+  }
+});
+
+test.each([64, 77])(
+  'a %i-tool candidate catalog reopens intact without automatically exposing more than the 32 explicitly bound tools',
+  async (count) => {
+    const f = await fixture();
+    let reopened: Integrations | undefined;
+    try {
+      await f.store.save(save, 'mock-a');
+      const input = Array.from({ length: count }, (_, index) => ({
+        ...tools[0],
+        name: `synthetic_capacity_${index}`,
+      }));
+      const catalog = await f.store.catalog(save.id, 1, input);
+      expect(catalog.current.toolCount).toBe(count);
+      expect((await f.store.capture('mock-a')).connections).toEqual([]);
+      const selected = input.slice(0, 32).map((entry) => entry.name);
+      await f.store.bind('mock-a', {
+        connection: save.id,
+        configRevision: 1,
+        bindingRevision: 0,
+        catalogDigest: catalog.current.catalogDigest,
+        tools: selected,
+        enabled: true,
+      });
+      expect((await f.store.capture('mock-a')).connections[0].tools).toHaveLength(32);
+      await f.store.close();
+      reopened = new Integrations(f.store.file);
+      await reopened.ready;
+      expect((await reopened.list(false, 'mock-a')).items[0].toolCount).toBe(count);
+      expect((await reopened.catalogView(save.id, 'mock-a')).tools).toEqual(catalog.tools);
+      const restored = await reopened.capture('mock-a');
+      expect(restored.connections[0].tools.map((entry) => entry.name)).toEqual(
+        [...selected].sort(),
+      );
+      await expect(
+        reopened.bind('mock-a', {
+          connection: save.id,
+          configRevision: 1,
+          bindingRevision: 1,
+          catalogDigest: catalog.current.catalogDigest,
+          tools: [...selected, input[32].name],
+          enabled: true,
+        }),
+      ).rejects.toMatchObject({ code: 'INVALID_MCP_BINDING' });
+      expect((await reopened.capture('mock-a')).connections).toEqual(restored.connections);
+    } finally {
+      await reopened?.close();
+      await f.close();
+    }
+  },
+);
+
+test('the existing 32-tool selection budget remains global to a Bot across multiple reviewed bindings', async () => {
+  const f = await fixture();
+  try {
+    for (const suffix of ['first', 'second']) {
+      const id = `mock-${suffix}`;
+      await f.store.save(
+        { ...save, id, requestId: `mock-save-${suffix}`, name: `Synthetic ${suffix}` },
+        'mock-a',
+      );
+      const definitions = Array.from({ length: 32 }, (_, index) => ({
+        ...tools[0],
+        name: `synthetic_${suffix}_${index}`,
+      }));
+      const catalog = await f.store.catalog(id, 1, definitions);
+      await f.store.bind('mock-a', {
+        connection: id,
+        configRevision: 1,
+        bindingRevision: 0,
+        catalogDigest: catalog.current.catalogDigest,
+        tools: definitions.slice(0, 16).map((entry) => entry.name),
+        enabled: true,
+      });
+    }
+    const captured = await f.store.capture('mock-a');
+    expect(captured.connections).toHaveLength(2);
+    expect(captured.connections.every((entry) => entry.tools.length === 16)).toBe(true);
+    expect(captured.connections.flatMap((entry) => entry.tools)).toHaveLength(32);
+    const second = (await f.store.catalogView('mock-second', 'mock-a')).current;
+    await expect(
+      f.store.bind('mock-a', {
+        connection: second.id,
+        configRevision: second.revision,
+        bindingRevision: 1,
+        catalogDigest: second.catalogDigest,
+        tools: Array.from({ length: 17 }, (_, index) => `synthetic_second_${index}`),
+        enabled: true,
+      }),
+    ).rejects.toMatchObject({ code: 'MCP_TOOL_LIMIT' });
+    expect((await f.store.capture('mock-a')).connections).toEqual(captured.connections);
+  } finally {
+    await f.close();
+  }
+});
+
+test('binding admission totals enabled connections, releases replaced selections, and keeps other Bots independent', async () => {
+  const f = await fixture();
+  const interactions = new Interactions(path.join(f.root, 'synthetic-budget-interactions'));
+  const service = new IntegrationTools(f.store, interactions);
+  await interactions.ready;
+  try {
+    const catalogs = new Map<string, Awaited<ReturnType<Integrations['catalog']>>>();
+    for (const [id, bot] of [
+      ['mock-budget-a', 'mock-a'],
+      ['mock-budget-b', 'mock-a'],
+      ['mock-budget-c', 'mock-b'],
+    ]) {
+      await f.store.save({ ...save, id, requestId: `save-${id}`, name: `Synthetic ${id}` }, bot);
+      catalogs.set(
+        id,
+        await f.store.catalog(
+          id,
+          1,
+          Array.from({ length: 32 }, (_, index) => ({ ...tools[0], name: `synthetic_${index}` })),
+        ),
+      );
+    }
+    const input = (id: string, revision: number, count: number, enabled = true) => ({
+      connection: id,
+      configRevision: 1,
+      bindingRevision: revision,
+      catalogDigest: catalogs.get(id)!.current.catalogDigest,
+      tools: Array.from({ length: count }, (_, index) => `synthetic_${index}`),
+      enabled,
+    });
+    await f.store.bind('mock-a', input('mock-budget-a', 0, 32));
+    const before = await f.store.status();
+    await expect(f.store.bind('mock-a', input('mock-budget-b', 0, 1))).rejects.toMatchObject({
+      code: 'MCP_TOOL_LIMIT',
+    });
+    expect(await f.store.status()).toEqual(before);
+    expect(
+      (await f.store.assignments('mock-a')).items.find(
+        (entry) => entry.connection.id === 'mock-budget-b',
+      ),
+    ).toMatchObject({ revision: 0, enabled: false, tools: [] });
+    const offered = async (bot: string) =>
+      service.list({ bot, abort: new AbortController(), integrations: await f.store.capture(bot) });
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-b', input('mock-budget-c', 0, 32));
+    expect(await offered('mock-b')).toHaveLength(32);
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-a', input('mock-budget-a', 1, 16));
+    await f.store.bind('mock-a', input('mock-budget-b', 0, 16));
+    expect(await offered('mock-a')).toHaveLength(32);
+    await f.store.bind('mock-a', input('mock-budget-a', 2, 0, false));
+    await f.store.bind('mock-a', input('mock-budget-b', 1, 32));
+    expect(await offered('mock-a')).toHaveLength(32);
+    expect(await offered('mock-b')).toHaveLength(32);
+  } finally {
+    await service.close();
     await f.close();
   }
 });

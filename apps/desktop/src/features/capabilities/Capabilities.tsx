@@ -3,7 +3,7 @@ import { type Dispatch, useState } from 'react';
 import type { Action, Bot, State } from '../../app/state';
 import { Dialog } from '../../components/controls/Dialog';
 import { t, useLocale } from '../../i18n/locale';
-import { Integrations } from '../integrations/Integrations';
+import { BotTools } from '../integrations/BotTools';
 import { Skills } from '../skills/Skills';
 import './capabilities.css';
 
@@ -47,7 +47,7 @@ export function Capabilities({
             setConnectionBot(undefined);
           }}
         >
-          <Integrations bots={state.bots} bot={connectionBot} onDirty={setDirty} />
+          <BotTools bot={connectionBot} onDirty={setDirty} />
         </Dialog>
       )}
     </>

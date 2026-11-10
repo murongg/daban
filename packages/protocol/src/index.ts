@@ -157,6 +157,11 @@ export function isDiagnosticReport(value: unknown): value is DiagnosticReport {
     )
   );
 }
+export * from './app-connections.js';
+export * from './app-providers.js';
+
+import type { AppCommand, AppConnectionsCapability } from './app-connections.js';
+
 export interface McpTool {
   name: string;
   alias: string;
@@ -164,8 +169,15 @@ export interface McpTool {
   inputSchema: Record<string, unknown>;
   digest: string;
 }
+export const mcpCatalogToolLimit = 128;
+// The absent view header preserves the closed 64-tool Bearer response understood by older clients.
+export const legacyMcpCatalogToolLimit = 64;
+export const mcpAppsView = { header: 'x-daban-mcp-view', value: 'apps' } as const;
+export type McpView = 'bearer' | 'apps';
+
 export interface McpConnection {
   ownerBot?: string;
+  boundBots?: string[];
   id: string;
   name: string;
   revision: number;
@@ -240,7 +252,7 @@ export interface McpHistory {
   items: McpReceipt[];
 }
 export type McpCommand =
-  | { type: 'mcp.list'; includeDeleted?: boolean; bot?: string }
+  | { type: 'mcp.list'; includeDeleted?: boolean; bot?: string; allOwners?: true }
   | { type: 'mcp.save'; input: McpSave; bot?: string }
   | { type: 'mcp.saved'; id: string; connection: string; bot?: string }
   | { type: 'mcp.catalog'; id: string; bot?: string }
@@ -358,7 +370,12 @@ export function isMcpConnection(value: unknown): value is McpConnection {
       'createdAt',
       'updatedAt',
       'ownerBot',
+      'boundBots',
     ]) &&
+    (value.boundBots === undefined ||
+      (Array.isArray(value.boundBots) &&
+        value.boundBots.every(validAgentId) &&
+        new Set(value.boundBots).size === value.boundBots.length)) &&
     validAgentId(value.id) &&
     (value.ownerBot === undefined || validAgentId(value.ownerBot)) &&
     typeof value.name === 'string' &&
@@ -370,7 +387,7 @@ export function isMcpConnection(value: unknown): value is McpConnection {
     typeof value.deleted === 'boolean' &&
     ['unchecked', 'ready', 'unavailable'].includes(String(value.health)) &&
     browserNumber(value.toolCount) &&
-    Number(value.toolCount) <= 64 &&
+    Number(value.toolCount) <= mcpCatalogToolLimit &&
     (value.catalogDigest === undefined || mcpHash(value.catalogDigest)) &&
     (value.health !== 'ready' || mcpHash(value.catalogDigest)) &&
     (value.checkedAt === undefined || mcpDate(value.checkedAt)) &&
@@ -551,7 +568,8 @@ export function isMcpCommand(value: unknown): value is McpCommand {
   switch (value.type) {
     case 'mcp.list':
       return (
-        browserKeys(value, ['type', 'includeDeleted', 'bot']) &&
+        browserKeys(value, ['type', 'includeDeleted', 'bot', 'allOwners']) &&
+        (value.allOwners === undefined || (value.allOwners === true && value.bot === undefined)) &&
         (value.includeDeleted === undefined || typeof value.includeDeleted === 'boolean')
       );
     case 'mcp.save':
@@ -1548,6 +1566,8 @@ export function isSetupStatus(value: unknown): value is SetupStatus {
   );
 }
 export interface RuntimeSnapshot {
+  appConnections?: AppConnectionsCapability;
+  appWorkspace?: true;
   localFolders?: true;
   linux?: { available: boolean };
   hostBrowser?: HostBrowserStatus;
@@ -1625,6 +1645,8 @@ export function recoveryReader(command: RuntimeCommand) {
   if (command.type === 'search.status' || command.type === 'search.saved') return true;
   if (command.type === 'input') return command.input.type === 'release';
   return [
+    'app.catalog',
+    'app.oauth.status',
     'frame',
     'files.list',
     'files.read',
@@ -4159,6 +4181,7 @@ export type RuntimeCommand =
   | { type: 'recovery.inspect' | 'recovery.cancel' | 'recovery.start'; id: string }
   | { type: 'runtime.inspect' }
   | McpCommand
+  | AppCommand
   | { type: 'skill.list'; bot: string; includeDeleted?: boolean }
   | { type: 'skill.read'; bot: string; id: string }
   | SkillPackageCommand

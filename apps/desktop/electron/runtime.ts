@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { inspectSkillPackage } from '@daban/engine/skill-package';
 import {
+  type AppCommand,
+  appReceiptMatches,
   botBundleLimit,
   botBundleText,
   botCopyKey,
@@ -11,6 +13,13 @@ import {
   disconnected,
   groupCopyKey,
   imageProtocol,
+  isAppAuthorizeUrl,
+  isAppCatalog,
+  isAppCommand,
+  isAppConnectionsCapability,
+  isAppDirectory,
+  isAppDirectoryCapability,
+  isAppOAuthReceipt,
   isAttachmentEntry,
   isAttachmentOriginal,
   isAttachmentPage,
@@ -106,6 +115,7 @@ import {
   isWorkList,
   isWorkReceipt,
   isWorkStatus,
+  mcpAppsView,
   noteKey,
   noteQueryKey,
   parseBotJSON,
@@ -326,7 +336,13 @@ export class RuntimeClient {
       });
     return this.authenticating;
   }
-  private async api(route: string, data?: unknown, retry = true, protocol = 28): Promise<unknown> {
+  private async api(
+    route: string,
+    data?: unknown,
+    retry = true,
+    protocol = 28,
+    privateHeaders: Record<string, string> = {},
+  ): Promise<unknown> {
     await this.authenticate();
     const token = this.token;
     const response = await this.fetcher(this.origin + route, {
@@ -334,6 +350,7 @@ export class RuntimeClient {
       headers: {
         host: this.serverHost,
         'x-prototype-token': token,
+        ...privateHeaders,
         // Unchanged group shapes keep28; Work passes its proven format explicitly.
         'x-daban-client-protocol': String(protocol),
         ...(data === undefined ? {} : { 'content-type': 'application/json' }),
@@ -393,6 +410,8 @@ export class RuntimeClient {
       const raw = data as unknown as {
         clientProtocol?: number;
         botCapabilities?: unknown;
+        appConnections?: unknown;
+        appWorkspace?: unknown;
         searchSettings?: unknown;
         jinaReader?: unknown;
         localFolders?: unknown;
@@ -508,6 +527,12 @@ export class RuntimeClient {
       snapshot.protocolVersion = raw.clientProtocol || 0;
       // Protocol updates for other features do not imply Bot-owned installation support.
       if (raw.botCapabilities === true) snapshot.botCapabilities = true;
+      if (raw.appWorkspace === true) snapshot.appWorkspace = true;
+      if (raw.appConnections !== undefined) {
+        if (!isAppConnectionsCapability(raw.appConnections))
+          throw new Error('INVALID_RUNTIME_STATE');
+        snapshot.appConnections = raw.appConnections;
+      }
       if (raw.searchSettings === true) snapshot.searchSettings = true;
       if (typeof raw.jinaReader === 'boolean') snapshot.jinaReader = raw.jinaReader;
       if (this.agent && raw.localFolders === true) snapshot.localFolders = true;
@@ -812,7 +837,114 @@ export class RuntimeClient {
       throw new Error('INVALID_RUNTIME_STATE');
     return value;
   }
-  async invoke(command: RuntimeCommand): Promise<unknown> {
+  async appInteractive(command: AppCommand, proof: string) {
+    if (
+      !isAppCommand(command) ||
+      ['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type) ||
+      !/^[a-f0-9]{64}$/.test(proof) ||
+      !this.agent
+    )
+      throw new Error('OAUTH_INTERACTIVE_REQUIRED');
+    return this.appRequest(command, proof);
+  }
+  private async appRequest(input: AppCommand, proof?: string): Promise<unknown> {
+    const command = structuredClone(input);
+    const versioned = command.type === 'app.directory' || command.type === 'app.oauth.connect';
+    if (versioned) {
+      let capability: unknown;
+      try {
+        capability = await this.api('/api/mcp/apps', undefined, true, 28);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'NOT_FOUND')
+          throw Error('OAUTH_UPGRADE_REQUIRED');
+        throw error;
+      }
+      if (!isAppDirectoryCapability(capability)) throw Error('INVALID_RUNTIME_STATE');
+    }
+    const current = await this.status();
+    if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
+    if (!current.appConnections?.catalog) throw new Error('OAUTH_UNAVAILABLE');
+    if (proof && !current.appConnections.oauthLoopback)
+      throw new Error('OAUTH_CALLBACK_UNAVAILABLE');
+    const value = await this.api(
+      versioned ? '/api/mcp/apps' : '/api/mcp/app',
+      command,
+      false,
+      28,
+      proof ? { 'x-daban-app-control': proof } : {},
+    );
+    if (command.type === 'app.directory') {
+      if (!isAppDirectory(value) || value.bot !== command.bot) throw Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    if (command.type === 'app.catalog') {
+      if (!isAppCatalog(value) || value.bot !== command.bot)
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    const object = (v: unknown): v is Record<string, unknown> =>
+      !!v && typeof v === 'object' && !Array.isArray(v);
+    if (command.type === 'app.disconnect') {
+      if (
+        !object(value) ||
+        Object.keys(value).some(
+          (k) =>
+            !['bot', 'connection', 'revision', 'requestId', 'disconnected', 'revocation'].includes(
+              k,
+            ),
+        ) ||
+        value.bot !== command.target.bot ||
+        value.connection !== command.target.connection ||
+        value.revision !== command.target.revision ||
+        value.requestId !== command.requestId ||
+        value.disconnected !== true ||
+        value.revocation !== 'unconfirmed'
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+      return value;
+    }
+    const starting = command.type === 'app.oauth.start' || command.type === 'app.oauth.connect';
+    const target = starting ? command.input : command.target;
+    const receipt = starting && object(value) ? value.receipt : value;
+    if (
+      !isAppOAuthReceipt(receipt) ||
+      !appReceiptMatches(receipt, target) ||
+      (!starting && receipt.attempt !== command.attempt) ||
+      (command.type !== 'app.oauth.status' &&
+        receipt.requestId !== (starting ? command.input.requestId : command.requestId))
+    )
+      throw new Error('INVALID_RUNTIME_STATE');
+    if (!starting) return receipt;
+    if (!object(value) || Object.keys(value).some((k) => !['receipt', 'authorize'].includes(k)))
+      throw new Error('INVALID_RUNTIME_STATE');
+    if (value.authorize !== undefined) {
+      const authorize = value.authorize;
+      if (
+        receipt.phase !== 'waiting' ||
+        !object(authorize) ||
+        Object.keys(authorize).some((k) => !['url', 'expiresAt'].includes(k)) ||
+        !isAppAuthorizeUrl(authorize.url, command.input.app) ||
+        !Number.isSafeInteger(authorize.expiresAt) ||
+        Number(authorize.expiresAt) <= Date.now() ||
+        Number(authorize.expiresAt) > Date.now() + 610000
+      )
+        throw new Error('INVALID_RUNTIME_STATE');
+    } else if (receipt.phase === 'waiting') throw new Error('INVALID_RUNTIME_STATE');
+    return value;
+  }
+  async invoke(command: RuntimeCommand, appProof?: string): Promise<unknown> {
+    if (
+      appProof !== undefined &&
+      (!['mcp.archive', 'mcp.restore'].includes(command.type) ||
+        !this.agent ||
+        !/^[a-f0-9]{64}$/.test(appProof))
+    )
+      throw new Error('OAUTH_INTERACTIVE_REQUIRED');
+    if (isAppCommand(command)) {
+      if (!['app.catalog', 'app.directory', 'app.oauth.status'].includes(command.type))
+        throw new Error('OAUTH_INTERACTIVE_REQUIRED');
+      return this.appRequest(command);
+    }
     if (isFolderCommand(command)) {
       const captured = structuredClone(command);
       const state = await this.status();
@@ -1255,6 +1387,8 @@ export class RuntimeClient {
       const current = await this.status();
       if (current.phase !== 'ready') throw new Error('RUNTIME_OFFLINE');
       if (current.protocolVersion < 21) throw new Error('RUNTIME_TOO_OLD');
+      if (command.type === 'mcp.list' && command.allOwners && !current.appWorkspace)
+        throw new Error('RUNTIME_TOO_OLD');
       if (
         command.bot !== undefined &&
         [
@@ -1269,7 +1403,10 @@ export class RuntimeClient {
         current.botCapabilities !== true
       )
         throw new Error('RUNTIME_TOO_OLD');
-      const value = await this.api(`/api/mcp/${command.type.slice(4)}`, command);
+      const value = await this.api(`/api/mcp/${command.type.slice(4)}`, command, true, 28, {
+        [mcpAppsView.header]: mcpAppsView.value,
+        ...(appProof ? { 'x-daban-app-control': appProof } : {}),
+      });
       let valid = false;
       switch (command.type) {
         case 'mcp.list':
@@ -1278,7 +1415,9 @@ export class RuntimeClient {
             value.items.every(
               (entry) =>
                 entry.deleted === !!command.includeDeleted &&
-                (entry.ownerBot === undefined || entry.ownerBot === command.bot),
+                (command.allOwners ||
+                  entry.ownerBot === undefined ||
+                  entry.ownerBot === command.bot),
             );
           break;
         case 'mcp.save':

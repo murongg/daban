@@ -55,7 +55,7 @@ export function Dialog({
   motion = true,
   closeDisabled = false,
 }: {
-  title: string;
+  title: ReactNode;
   onClose: () => unknown;
   children: ReactNode;
   wide?: boolean;
