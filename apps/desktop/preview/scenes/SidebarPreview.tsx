@@ -110,7 +110,11 @@ const bridge: RuntimeBridge = {
 };
 Object.defineProperty(window, 'daban', {
   configurable: true,
-  value: { platform: 'darwin', runtime: bridge, updates: updatePreview() },
+  value: {
+    platform: query.get('platform') === 'win32' ? 'win32' : 'darwin',
+    runtime: bridge,
+    updates: updatePreview(),
+  },
 });
 let sequence = 0;
 const eventPrefix = `mock-sidebar-${crypto.randomUUID()}`;
