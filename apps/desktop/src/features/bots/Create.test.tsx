@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { expect, it, vi } from 'vitest';
 import { demoState } from '../../test/fixtures';
 import { Create } from './Create';
@@ -16,16 +17,22 @@ vi.mock('../../app/Runtime', () => ({
   }),
 }));
 
-it('navigates creation tabs with one tab stop and labelled panels while retaining the draft', async () => {
-  render(
+function CreationTabs() {
+  const [group, setGroup] = useState(false);
+  return (
     <Create
       state={demoState()}
       dispatch={vi.fn()}
       close={vi.fn()}
       notify={vi.fn()}
-      onImport={vi.fn()}
-    />,
+      group={group}
+      onGroupChange={setGroup}
+    />
   );
+}
+
+it('navigates creation tabs with one tab stop and labelled panels while retaining the draft', async () => {
+  render(<CreationTabs />);
   const tabs = screen.getByRole('tablist', { name: '创建类型' });
   const bot = within(tabs).getByRole('tab', { name: '新建 Bot' });
   const group = within(tabs).getByRole('tab', { name: '创建群聊' });
@@ -61,6 +68,7 @@ it('keeps importing as an action outside the creation tablist', async () => {
       dispatch={vi.fn()}
       close={vi.fn()}
       notify={vi.fn()}
+      onGroupChange={vi.fn()}
       onImport={onImport}
     />,
   );
@@ -81,6 +89,7 @@ it('previews color and expression independently and saves them for the new Bot',
       dispatch={dispatch}
       close={vi.fn()}
       notify={vi.fn()}
+      onGroupChange={vi.fn()}
       persist={persist}
     />,
   );
@@ -102,4 +111,28 @@ it('previews color and expression independently and saves them for the new Bot',
   expect(dispatch).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'avatar-expression', expression: 'wink' }),
   );
+});
+
+it('prefills a recommended preset without submitting or losing the chosen expression', async () => {
+  const persist = vi.fn(async () => ({}));
+  render(
+    <Create
+      state={demoState()}
+      dispatch={vi.fn()}
+      close={vi.fn()}
+      notify={vi.fn()}
+      onGroupChange={vi.fn()}
+      persist={persist}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: '眨眼' }));
+  const recommendations = screen.getByRole('region', { name: '推荐预设' });
+  await userEvent.click(
+    within(recommendations).getByRole('button', { name: '使用「通用助手」预设' }),
+  );
+  expect(screen.getByRole('textbox', { name: '名称' })).toHaveValue('通用助手');
+  expect(screen.getByRole('textbox', { name: '名称' })).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: '职责' })).not.toHaveValue('');
+  expect(screen.getByRole('img', { name: '头像预览：薄荷绿，眨眼' })).toBeVisible();
+  expect(persist).not.toHaveBeenCalled();
 });

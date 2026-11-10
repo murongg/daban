@@ -1,5 +1,5 @@
 import { disconnected, type RuntimeBridge, type RuntimeCommand } from '@daban/protocol';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { App } from '../../app/App';
@@ -92,6 +92,14 @@ it('keeps shipped migration matching independent of mutable preview data', () =>
   }
 });
 
+it('opens the personal creation page from the empty workspace', async () => {
+  render(<App />);
+  await userEvent.click(screen.getByRole('button', { name: '自定义 Bot' }));
+  const page = within(screen.getByRole('main'));
+  expect(page.getByRole('tab', { name: '新建 Bot' })).toHaveAttribute('aria-selected', 'true');
+  expect(page.getByRole('group', { name: '表情' })).toBeVisible();
+});
+
 it('opens an empty workspace, searches presets, edits a preset and creates a fresh Bot without a desktop', async () => {
   render(<App />);
   expect(screen.getByRole('heading', { name: '从一段对话开始' })).toBeVisible();
@@ -107,12 +115,19 @@ it('opens an empty workspace, searches presets, edits a preset and creates a fre
   await userEvent.click(
     within(screen.getByRole('dialog')).getByRole('button', { name: '使用这个 Bot' }),
   );
-  const dialog = screen.getByRole('dialog');
-  expect(within(dialog).getByRole('textbox', { name: '名称' })).toHaveValue('研究员');
-  expect(within(dialog).getByRole('textbox', { name: '职责' })).not.toHaveValue('');
-  await userEvent.clear(within(dialog).getByRole('textbox', { name: '名称' }));
-  await userEvent.type(within(dialog).getByRole('textbox', { name: '名称' }), '合成研究搭子');
-  await userEvent.click(within(dialog).getByRole('button', { name: '创建 Bot' }));
+  const page = within(screen.getByRole('main'));
+  expect(page.getByRole('textbox', { name: '名称' })).toHaveValue('研究员');
+  expect(page.queryByRole('searchbox', { name: '搜索预设 Bot' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect(page.getByRole('searchbox', { name: '搜索预设 Bot' })).toHaveValue('研究');
+  await userEvent.click(page.getByRole('button', { name: '查看 研究员' }));
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: '使用这个 Bot' }),
+  );
+  expect(page.getByRole('textbox', { name: '职责' })).not.toHaveValue('');
+  await userEvent.clear(page.getByRole('textbox', { name: '名称' }));
+  await userEvent.type(page.getByRole('textbox', { name: '名称' }), '合成研究搭子');
+  await userEvent.click(page.getByRole('button', { name: '创建 Bot' }));
   expect(screen.getByRole('heading', { name: '合成研究搭子' })).toBeVisible();
   const saved = restore(localStorage.getItem(storageKey));
   expect(saved.bots).toHaveLength(1);
@@ -176,9 +191,9 @@ it('supports keyboard detail dismissal and focuses the preset creation form', as
   expect(trigger).toHaveFocus();
   await userEvent.keyboard('{Enter}');
   await userEvent.click(screen.getByRole('button', { name: '使用这个 Bot' }));
-  expect(screen.getByRole('textbox', { name: '名称' })).toHaveFocus();
+  expect(screen.getByRole('heading', { name: '认识你的新搭档' })).toHaveFocus();
   await userEvent.keyboard('{Escape}');
-  expect(trigger).toHaveFocus();
+  await waitFor(() => expect(trigger).toHaveFocus());
 });
 
 it('keeps dialog keyboard focus when the surrounding runtime refreshes', async () => {

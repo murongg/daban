@@ -9,12 +9,15 @@ import { modelChoices, modelIcon, modelInputs, modelName } from '../models/model
 import { Avatar } from './Avatar';
 import { AvatarPicker } from './AvatarPicker';
 import type { AvatarExpression } from './appearance';
-import type { BotPreset } from './presets';
+import { type BotPreset, localizePreset, presets } from './presets';
+
+const recommended = presets.slice(0, 3);
 
 export function Create({
   state,
   dispatch,
-  group = false,
+  group: isGroup = false,
+  onGroupChange,
   close,
   notify,
   persist,
@@ -25,6 +28,7 @@ export function Create({
   state: State;
   dispatch: Dispatch<Action>;
   group?: boolean;
+  onGroupChange: (group: boolean) => unknown;
   close: () => unknown;
   notify: (text: string) => unknown;
   persist?: (profile: BotProfileInput) => Promise<unknown>;
@@ -36,31 +40,35 @@ export function Create({
   const runtime = useRuntime();
   const modelsAvailable = runtime.enabled && runtime.snapshot.protocolVersion >= 14;
   const [model, setModel] = useState('');
-  const [isGroup, setGroup] = useState(group);
   const [name, setName] = useState(preset?.name ?? '');
   const [role, setRole] = useState(preset?.instructions ?? '');
   const [color, setColor] = useState<Color>(preset?.color ?? 'violet');
   const [expression, setExpression] = useState<AvatarExpression>('original');
   const [members, setMembers] = useState<string[]>([]);
-  const [error, setError] = useState('');
+  const [failure, setFailure] = useState<{ group: boolean; message: string }>();
   // Retries keep this identity; preset catalog IDs must never become shared runtime Bot IDs.
   const [id] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
+    heading.current?.focus({ preventScroll: true });
     return () => {
       mounted.current = false;
     };
   }, []);
   return (
     <>
-      <p className="dialog-description">{t('create.nameDescribeWhatWantWorkTogether')}</p>
+      <h2 className="sr-only" ref={heading} tabIndex={-1}>
+        {t('app.meetNewCompanion')}
+      </h2>
       <Tabs
         selectedKey={isGroup ? 'group' : 'bot'}
         onSelectionChange={(key) => {
-          setGroup(key === 'group');
-          setError('');
+          onGroupChange(key === 'group');
+          setFailure(undefined);
         }}
       >
         <div className="form-tabs">
@@ -91,19 +99,20 @@ export function Create({
         {/* TabPanel IDs are stable per instance; switching type needs the matching panel identity. */}
         <TabPanel key={isGroup ? 'group' : 'bot'} id={isGroup ? 'group' : 'bot'}>
           <form
+            className="creation-form"
             onSubmit={async (e) => {
               e.preventDefault();
               if (!name.trim()) {
-                setError(t('create.enterName'));
+                setFailure({ group: isGroup, message: t('create.enterName') });
                 return;
               }
               if (isGroup && (members.length < 2 || members.length > 8)) {
-                setError(t('create.selectBotsGroup'));
+                setFailure({ group: isGroup, message: t('create.selectBotsGroup') });
                 return;
               }
               if (saving) return;
               setSaving(true);
-              setError('');
+              setFailure(undefined);
               try {
                 if (isGroup) {
                   if (runtime.enabled && runtime.snapshot.protocolVersion < 15)
@@ -136,27 +145,32 @@ export function Create({
                 close();
                 notify(isGroup ? t('create.groupCreated') : t('create.botCreatedCanStartChatting'));
               } catch (error) {
-                if (mounted.current) setError(runtimeError(error));
+                if (mounted.current) setFailure({ group: isGroup, message: runtimeError(error) });
               } finally {
                 if (mounted.current) setSaving(false);
               }
             }}
           >
+            {!isGroup && (
+              <AvatarPicker
+                color={color}
+                expression={expression}
+                disabled={saving}
+                onColorChange={setColor}
+                onExpressionChange={setExpression}
+              />
+            )}
             <div className="form-stack">
-              {!isGroup && (
-                <AvatarPicker
-                  color={color}
-                  expression={expression}
-                  disabled={saving}
-                  onColorChange={setColor}
-                  onExpressionChange={setExpression}
-                />
-              )}
               <label className="field-label">
-                {t('common.name')}
+                <span>
+                  {t('common.name')}{' '}
+                  <span className="creation-required" aria-hidden="true">
+                    *
+                  </span>
+                </span>
                 <input
+                  ref={nameInput}
                   className="field"
-                  data-autofocus
                   aria-label={t('common.name')}
                   disabled={saving}
                   required
@@ -253,16 +267,13 @@ export function Create({
                   </div>
                 </>
               )}
-              {error && (
+              {failure?.group === isGroup && (
                 <p className="form-error" role="alert">
-                  {error}
+                  {failure.message}
                 </p>
               )}
             </div>
-            <div className="dialog-actions">
-              <button className="text-button" type="button" onClick={close}>
-                {t('common.cancel')}
-              </button>
+            <div className="creation-actions">
               <button className="primary" type="submit" disabled={saving}>
                 {saving
                   ? t('create.creating')
@@ -272,6 +283,39 @@ export function Create({
               </button>
             </div>
           </form>
+          {!isGroup && (
+            <section className="creation-presets" aria-label={t('create.recommendedPresets')}>
+              <h2>{t('create.recommendedPresets')}</h2>
+              <ul>
+                {recommended.map((source) => {
+                  const preset = localizePreset(source);
+                  return (
+                    <li key={preset.id}>
+                      <button
+                        type="button"
+                        className="creation-preset"
+                        disabled={saving}
+                        aria-label={t('create.usePreset', { 0: preset.name })}
+                        onClick={() => {
+                          setName(preset.name);
+                          setRole(preset.instructions);
+                          setColor(preset.color);
+                          setFailure(undefined);
+                          nameInput.current?.focus();
+                        }}
+                      >
+                        <Avatar bot={preset} />
+                        <span>
+                          <strong>{preset.name}</strong>
+                          <small>{preset.description}</small>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
         </TabPanel>
       </Tabs>
     </>

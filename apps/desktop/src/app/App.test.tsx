@@ -107,17 +107,34 @@ describe('daban client', () => {
     expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('');
     expect(screen.getAllByText(/尚未连接模型/).length).toBeGreaterThan(0);
   });
-  it('creates a Bot and validates its required name', async () => {
+  it('creates a Bot in the conversation pane while keeping its sidebar', async () => {
     render(<App />);
     await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
-    const dialog = screen.getByRole('dialog');
-    const name = within(dialog).getByRole('textbox', { name: '名称' });
+    const page = within(screen.getByRole('main'));
+    const sidebar = within(screen.getByRole('complementary', { name: '侧栏' }));
+    expect(sidebar.getByRole('searchbox', { name: '搜索 Bot 和对话' })).toBeVisible();
+    expect(sidebar.getByRole('navigation', { name: 'Bot 列表' })).toBeVisible();
+    expect(screen.getByRole('separator', { name: '调整侧栏宽度' })).toBeVisible();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(page.queryByRole('textbox', { name: '发送消息' })).not.toBeInTheDocument();
+    const name = page.getByRole('textbox', { name: '名称' });
     expect(name).toBeRequired();
     await userEvent.type(name, '测试助手');
-    await userEvent.type(within(dialog).getByRole('textbox', { name: '职责' }), '只用于合成测试');
-    await userEvent.click(within(dialog).getByRole('button', { name: '创建 Bot' }));
+    await userEvent.click(sidebar.getByRole('button', { name: '创建 Bot 群聊' }));
+    expect(page.getByRole('tab', { name: '创建群聊' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(page.getByRole('button', { name: '创建群聊' }));
+    expect(page.getByRole('alert')).toHaveTextContent('请选择 2–8 位 Bot');
+    await userEvent.click(sidebar.getByRole('button', { name: '添加 Bot' }));
+    expect(page.queryByRole('alert')).not.toBeInTheDocument();
+    expect(page.getByRole('tab', { name: '新建 Bot' })).toHaveAttribute('aria-selected', 'true');
+    expect(page.getByRole('textbox', { name: '名称' })).toHaveValue('测试助手');
+    await userEvent.type(page.getByRole('textbox', { name: '职责' }), '只用于合成测试');
+    await userEvent.click(page.getByRole('button', { name: '蓝色' }));
+    await userEvent.click(page.getByRole('button', { name: '眨眼' }));
+    expect(page.getByRole('img', { name: '头像预览：蓝色，眨眼' })).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: '创建 Bot' }));
     expect(screen.getByRole('heading', { name: '测试助手' })).toBeVisible();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(page.queryByRole('textbox', { name: '名称' })).not.toBeInTheDocument();
   });
   it('keeps research takeover active after switching to another Bot and back', async () => {
     render(<App />);
@@ -215,11 +232,16 @@ describe('daban client', () => {
     expect(screen.getByRole('heading', { name: '浏览器助手' })).toBeVisible();
     expect(screen.getByRole('button', { name: '交还给 Bot' })).toBeVisible();
   });
-  it('closes the create dialog with Escape', async () => {
+  it('returns to the same conversation when cancelling creation', async () => {
     render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '发送消息' }), '合成草稿');
     await userEvent.click(screen.getByRole('button', { name: '添加 Bot' }));
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const page = within(screen.getByRole('main'));
+    expect(page.getByRole('heading', { name: '认识你的新搭档' })).toHaveFocus();
+    expect(page.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: '取消' }));
+    expect(screen.getByRole('heading', { name: '研究员' })).toBeVisible();
+    expect(screen.getByRole('textbox', { name: '发送消息' })).toHaveValue('合成草稿');
   });
 });
 

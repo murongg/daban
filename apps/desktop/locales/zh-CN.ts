@@ -1046,11 +1046,13 @@ export const chinese = {
   'create.groupMembers': '群成员',
   'create.importFile': '从文件导入',
   'create.mint': '薄荷绿',
-  'create.nameDescribeWhatWantWorkTogether': '给它一个名字，告诉它你希望一起做什么。',
   'create.pink': '粉色',
+  'create.recommendedPresets': '推荐预设',
   'create.selectBotsGroup': '请选择 2–8 位 Bot 加入群聊。',
   'create.softViolet': '淡紫',
   'create.teal': '青色',
+  'create.title': '创建 Bot 或群聊',
+  'create.usePreset': '使用「{0}」预设',
   'create.usesConfiguredWorkspaceConnectionCanChangeBot':
     '使用工作区已配置的连接，之后可在 Bot 资料中修改。',
   'create.usesSelectedProviderConnectionFullScreenObservation':

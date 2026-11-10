@@ -128,7 +128,6 @@ type Modal =
   | { type: 'import' }
   | { type: 'copy'; bot?: string }
   | { type: 'group-copy'; group?: string }
-  | { type: 'create'; group: boolean; preset?: BotPreset }
   | { type: 'profile'; bot: string }
   | { type: 'model'; bot: string }
   | { type: 'archive'; bot: string }
@@ -215,14 +214,19 @@ function Workbench() {
   const [settingsSurface, setSettingsSurface] = useState<'dialog' | 'page' | undefined>(
     legacySettings.current ? 'dialog' : undefined,
   );
+  const [creation, setCreation] = useState<{ group: boolean; preset?: BotPreset }>();
   const settingsOpen = !!settingsSurface;
-  const view = settingsSurface === 'page' ? 'settings' : state.view;
+  // The form is transient. Keeping the source view lets Cancel return without altering stored navigation.
+  const view = settingsSurface === 'page' ? 'settings' : creation ? 'create' : state.view;
+  const navigationView = view === 'create' ? 'chat' : view;
   const dispatch = useCallback((action: Action) => {
     if (action.type === 'view' && action.view === 'settings') {
       setSettingsSurface((current) => current ?? 'dialog');
       return;
     }
     if (action.type === 'select' || action.type === 'view') setSettingsSurface(undefined);
+    if (action.type === 'select' || action.type === 'view' || action.type === 'create')
+      setCreation(undefined);
     update(action);
   }, []);
   const [query, setQuery] = useState('');
@@ -230,6 +234,7 @@ function Workbench() {
   const [listCollapsed, setListCollapsed] = useState(false);
   const sidebarOverlay = useMediaQuery('(max-width: 700px)');
   const titlebar = useRef<HTMLElement>(null);
+  const creationOpener = useRef<HTMLElement>(null);
   const alignTitlebar = useCallback((width: number) => {
     // The rendered pane width can differ from its saved width when the window is constrained.
     titlebar.current?.style.setProperty('--titlebar-sidebar-width', `${width}px`);
@@ -283,9 +288,26 @@ function Workbench() {
         : undefined,
     });
   });
-  useAttention(state, dispatch, !!modal || settingsOpen || !!trash.issue);
+  useAttention(state, dispatch, !!modal || settingsOpen || !!creation || !!trash.issue);
   const work = useWork(state, dispatch, notify);
   const closeModal = useCallback(() => setModal(null), []);
+  function openCreation(group = false, preset?: BotPreset, opener = document.activeElement) {
+    creationOpener.current = opener instanceof HTMLElement ? opener : null;
+    setSidebarOpen(false);
+    setCreation({ group, preset });
+  }
+  const closeCreation = useCallback(() => {
+    const opener = creationOpener.current;
+    creationOpener.current = null;
+    setCreation(undefined);
+    requestAnimationFrame(() => {
+      const target =
+        opener?.isConnected && !opener.closest('[hidden], [inert]')
+          ? opener
+          : titlebar.current?.querySelector('h1');
+      target?.focus({ preventScroll: true });
+    });
+  }, []);
   const closeSettings = useCallback(() => {
     setSettingsSurface(undefined);
     if (settingsSurface === 'page') {
@@ -300,7 +322,7 @@ function Workbench() {
   }, [state.selected, state.view, modal, settingsSurface, sidebarOverlay]);
   const preview = useCallback((file: WorkspaceFile) => setModal({ type: 'file', file }), []);
   useNotices((activation) => {
-    if (modal || settingsOpen) return false;
+    if (modal || settingsOpen || creation) return false;
     const target = activation.target;
     if (target.kind === 'settings') {
       dispatch({ type: 'view', view: 'settings' });
@@ -998,12 +1020,13 @@ function Workbench() {
   useLayoutEffect(() => {
     if (sidebarOverlay) {
       if (sidebarOpen) {
-        const target = view === 'chat' ? search.current : document.getElementById('sidebar-chats');
+        const target =
+          navigationView === 'chat' ? search.current : document.getElementById('sidebar-chats');
         target?.focus({ preventScroll: true });
       } else if (previousSidebarOpen.current) sidebarToggle.current?.focus({ preventScroll: true });
     }
     previousSidebarOpen.current = sidebarOpen;
-  }, [sidebarOpen, sidebarOverlay, view]);
+  }, [sidebarOpen, sidebarOverlay, navigationView]);
   useEffect(() => {
     function key(e: KeyboardEvent) {
       // Local editors share Dialog without owning the main modal state.
@@ -1016,7 +1039,7 @@ function Workbench() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         if (modal) return;
-        if (view !== 'chat') dispatch({ type: 'view', view: 'chat' });
+        if (navigationView !== 'chat') dispatch({ type: 'view', view: 'chat' });
         if (sidebarOverlay) setSidebarOpen(true);
         else setListCollapsed(false);
         requestAnimationFrame(() => search.current?.focus());
@@ -1032,6 +1055,10 @@ function Workbench() {
           closeSettings();
           return;
         }
+        if (view === 'create') {
+          closeCreation();
+          return;
+        }
         if (document.getElementById('bot-workspace')?.contains(document.activeElement))
           document.getElementById('workspace-toggle')?.focus({ preventScroll: true });
         dispatch({ type: 'panel', panel: null });
@@ -1039,7 +1066,17 @@ function Workbench() {
     }
     document.addEventListener('keydown', key);
     return () => document.removeEventListener('keydown', key);
-  }, [modal, dispatch, sidebarOpen, sidebarOverlay, view, settingsSurface, closeSettings]);
+  }, [
+    modal,
+    dispatch,
+    sidebarOpen,
+    sidebarOverlay,
+    view,
+    navigationView,
+    settingsSurface,
+    closeSettings,
+    closeCreation,
+  ]);
   const computerBot =
     modal?.type === 'computer' ? state.bots.find((b) => b.id === modal.bot) : undefined;
   const settingsContent = settingsOpen && (
@@ -1059,7 +1096,7 @@ function Workbench() {
       <header
         ref={titlebar}
         className="app-titlebar"
-        data-view={view}
+        data-view={navigationView}
         inert={sidebarOverlay && sidebarOpen}
       >
         <IconButton
@@ -1072,7 +1109,7 @@ function Workbench() {
         >
           <Menu />
         </IconButton>
-        {view === 'chat' && !sidebarOverlay && (
+        {navigationView === 'chat' && !sidebarOverlay && (
           <div className="titlebar-leading" aria-hidden="true">
             <span className="header-divider titlebar-divider" />
           </div>
@@ -1089,6 +1126,7 @@ function Workbench() {
               )}
               <div className="chat-identity">
                 <h1
+                  tabIndex={-1}
                   aria-describedby="titlebar-conversation-status"
                   title={`${titlebarName} · ${titlebarStatus}`}
                 >
@@ -1244,18 +1282,20 @@ function Workbench() {
         ) : (
           <>
             <div className="chat-identity">
-              <h1>
-                {view === 'chat'
-                  ? t('workspace.title')
-                  : view === 'gallery'
-                    ? t('common.botGallery')
-                    : view === 'inbox'
-                      ? t('common.inbox')
-                      : view === 'tasks'
-                        ? t('common.tasks')
-                        : t('settings.title')}
+              <h1 tabIndex={-1}>
+                {view === 'create'
+                  ? t(creation?.group ? 'common.createGroup' : 'common.newBot')
+                  : view === 'chat'
+                    ? t('workspace.title')
+                    : view === 'gallery'
+                      ? t('common.botGallery')
+                      : view === 'inbox'
+                        ? t('common.inbox')
+                        : view === 'tasks'
+                          ? t('common.tasks')
+                          : t('settings.title')}
               </h1>
-              {view !== 'settings' && (
+              {view !== 'settings' && view !== 'create' && (
                 <p className="chat-subtitle">
                   {view === 'tasks'
                     ? t('app.sharedDosVisibleAllBots')
@@ -1268,6 +1308,10 @@ function Workbench() {
               <IconButton label={t('common.close')} onClick={closeSettings}>
                 <X />
               </IconButton>
+            ) : view === 'create' ? (
+              <button type="button" className="text-button" onClick={closeCreation}>
+                {t('common.cancel')}
+              </button>
             ) : (
               view !== 'chat' && (
                 <IconButton
@@ -1284,7 +1328,7 @@ function Workbench() {
       <div className="app-body">
         <Sidebar
           state={state}
-          view={view}
+          view={navigationView}
           settingsOpen={settingsOpen}
           listCollapsed={!sidebarOverlay && listCollapsed}
           dispatch={dispatch}
@@ -1294,15 +1338,15 @@ function Workbench() {
           onImport={() => setModal({ type: 'import' })}
           onCopy={(bot) => setModal({ type: 'copy', bot })}
           onCopyGroup={(group) => setModal({ type: 'group-copy', group })}
-          onCreate={(group) => {
-            setSidebarOpen(false);
-            setModal({ type: 'create', group: !!group });
-          }}
+          onCreate={openCreation}
           onNewChat={() => createChat()}
           onLifecycle={(id) => setModal({ type: 'archive', bot: id })}
           onTrash={trash.move}
           onChats={openChats}
-          onSettings={() => setSettingsSurface('page')}
+          onSettings={() => {
+            setCreation(undefined);
+            setSettingsSurface('page');
+          }}
           onToggleList={
             sidebarOverlay ? undefined : () => setListCollapsed((collapsed) => !collapsed)
           }
@@ -1313,6 +1357,12 @@ function Workbench() {
         />
         <main className="main" inert={sidebarOverlay && sidebarOpen}>
           <RecoveryNotice open={() => setModal({ type: 'recovery' })} />
+          {state.view === 'gallery' && (view === 'gallery' || view === 'create') && (
+            <Gallery
+              hidden={view === 'create'}
+              onUsePreset={(preset, opener) => openCreation(false, preset, opener)}
+            />
+          )}
           {view === 'chat' ? (
             bot ? (
               <div className="conversation-layout">
@@ -1422,12 +1472,46 @@ function Workbench() {
             ) : (
               <Welcome
                 chat={() => createChat()}
-                create={() => setModal({ type: 'create', group: false })}
+                create={() => openCreation()}
                 explore={() => dispatch({ type: 'view', view: 'gallery' })}
               />
             )
-          ) : view === 'gallery' ? (
-            <Gallery onUsePreset={(preset) => setModal({ type: 'create', group: false, preset })} />
+          ) : view === 'create' && creation ? (
+            <section className="creation-page" aria-label={t('create.title')}>
+              <div className="creation-content">
+                <Create
+                  key={creation.preset?.id ?? 'custom'}
+                  preset={creation.preset}
+                  state={state}
+                  dispatch={dispatch}
+                  group={creation.group}
+                  onGroupChange={(group) =>
+                    setCreation((current) => current && { ...current, group })
+                  }
+                  close={closeCreation}
+                  onImport={() => setModal({ type: 'import' })}
+                  persist={
+                    runtime.enabled
+                      ? async (profile: BotProfileInput) => {
+                          await runtime.command<BotProfile>({ type: 'bot.register', profile });
+                        }
+                      : undefined
+                  }
+                  persistGroup={
+                    runtime.enabled
+                      ? async (input) => {
+                          const group = await runtime.command<Group>({
+                            type: 'group.register',
+                            group: input,
+                          });
+                          dispatch({ type: 'groups', groups: [group] });
+                        }
+                      : undefined
+                  }
+                  notify={notify}
+                />
+              </div>
+            </section>
           ) : view === 'tasks' ? (
             <Tasks state={state} dispatch={dispatch} work={work} />
           ) : view === 'inbox' ? (
@@ -1613,41 +1697,6 @@ function Workbench() {
       {modal?.type === 'export' && (
         <Dialog title={t('common.exportBot')} onClose={closeModal}>
           <ExportBot bot={modal.bot} close={closeModal} notify={notify} />
-        </Dialog>
-      )}
-      {modal?.type === 'create' && (
-        <Dialog
-          title={modal.group ? t('common.createGroup') : t('app.meetNewCompanion')}
-          onClose={closeModal}
-        >
-          <Create
-            key={modal.preset?.id ?? 'custom'}
-            preset={modal.preset}
-            state={state}
-            dispatch={dispatch}
-            group={modal.group}
-            close={closeModal}
-            onImport={() => setModal({ type: 'import' })}
-            persist={
-              runtime.enabled
-                ? async (profile: BotProfileInput) => {
-                    await runtime.command<BotProfile>({ type: 'bot.register', profile });
-                  }
-                : undefined
-            }
-            persistGroup={
-              runtime.enabled
-                ? async (input) => {
-                    const group = await runtime.command<Group>({
-                      type: 'group.register',
-                      group: input,
-                    });
-                    dispatch({ type: 'groups', groups: [group] });
-                  }
-                : undefined
-            }
-            notify={notify}
-          />
         </Dialog>
       )}
       {modal?.type === 'file' && (

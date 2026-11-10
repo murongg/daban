@@ -3315,6 +3315,104 @@ textarea.skill-source {
   display: grid;
   gap: 19px;
 }
+.creation-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(24px, 4vw, 52px) clamp(18px, 4vw, 48px) 32px;
+}
+.creation-content {
+  max-width: 960px;
+  margin-inline: auto;
+}
+.creation-content .form-tabs {
+  max-width: 360px;
+  margin: 0 auto 18px;
+  padding: 0;
+  background: none;
+}
+.creation-content .form-tabs [role="tab"][aria-selected="true"] {
+  background: var(--soft);
+}
+.creation-form {
+  container-type: inline-size;
+  display: grid;
+  max-width: 520px;
+  margin-inline: auto;
+  gap: 18px;
+}
+.creation-form .avatar-preview .bot-avatar {
+  width: 108px;
+  height: 108px;
+}
+.creation-form .form-stack {
+  gap: 14px;
+}
+.creation-required {
+  color: var(--danger);
+}
+.creation-form textarea.field {
+  min-height: 84px;
+}
+.creation-actions {
+  display: flex;
+  justify-content: center;
+}
+.creation-actions .primary {
+  min-width: 144px;
+  min-height: 40px;
+}
+@container (width >= 480px) {
+  .creation-form .avatar-choices:not(.avatar-colors) {
+    width: 100%;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+}
+.creation-presets {
+  margin-top: clamp(36px, 5vw, 64px);
+}
+.creation-presets h2 {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+.creation-presets ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr));
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.creation-preset {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 96px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  text-align: start;
+}
+.creation-preset:hover:not(:disabled) {
+  background: var(--soft);
+}
+.creation-preset strong,
+.creation-preset small {
+  display: block;
+}
+.creation-preset strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.creation-preset small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .avatar-picker {
   display: grid;
   justify-items: center;
