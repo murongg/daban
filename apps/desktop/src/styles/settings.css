@@ -62,6 +62,8 @@
 .main > .settings-layout {
   flex: 1;
   height: auto;
+  /* Keep the rail background from covering the page shell's rounded border. */
+  border-start-start-radius: inherit;
 }
 .settings-nav {
   display: flex;
