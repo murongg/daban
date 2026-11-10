@@ -90,19 +90,21 @@ export class WebReader {
       throw new Fault('APPROVAL_POLICY_CHANGED', 403);
     const offset = value.offset ?? 0,
       limit = value.limit ?? defaultPageSize;
+    // Some models send an empty string for optional arguments on the first call.
+    const requestedPageId = value.pageId === '' ? undefined : value.pageId;
     if (
       !Number.isSafeInteger(offset) ||
       Number(offset) < 0 ||
       !Number.isSafeInteger(limit) ||
       Number(limit) < 128 ||
       Number(limit) > maxPageSize ||
-      (value.pageId !== undefined &&
-        (typeof value.pageId !== 'string' || !/^[a-f0-9-]{36}$/.test(value.pageId))) ||
-      (offset !== 0 && !value.pageId)
+      (requestedPageId !== undefined &&
+        (typeof requestedPageId !== 'string' || !/^[a-f0-9-]{36}$/.test(requestedPageId))) ||
+      (offset !== 0 && !requestedPageId)
     )
       throw new Fault('INVALID_WEB_READ', 400);
     for (const [key, page] of this.pages) if (page.expires <= this.now()) this.pages.delete(key);
-    let pageId = typeof value.pageId === 'string' ? value.pageId : undefined;
+    let pageId = requestedPageId;
     let stored = pageId ? this.pages.get(pageId) : undefined;
     if (pageId && (!stored || stored.owner !== owner || stored.requested !== url.href))
       throw new Fault('WEB_PAGE_EXPIRED', 410);
@@ -253,7 +255,7 @@ export async function apply(ctx: Context, config: { sdkFile: string; jinaFile?: 
         },
         pageId: {
           type: 'string',
-          description: 'Snapshot ID returned by a prior call, required when offset > 0.',
+          description: 'Omit on the first call. For continuation, copy the returned snapshot ID.',
         },
         offset: { type: 'integer', description: 'Returned nextOffset, or 0 for the beginning.' },
         limit: {
