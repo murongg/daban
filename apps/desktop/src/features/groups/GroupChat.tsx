@@ -386,6 +386,12 @@ export function GroupChat({
       const firstRun = value.runId && !rendered.has(value.runId) ? value.runId : undefined;
       if (firstRun) rendered.add(firstRun);
       rows.push({
+        bubbleKey:
+          value.role === 'bot' && value.runId
+            ? `run:${value.runId}`
+            : value.role === 'user' || value.role === 'bot'
+              ? `message:${value.id}`
+              : undefined,
         id: `message:${value.id}`,
         persistent: !!firstRun && pendingRuns.has(firstRun),
         content: (
@@ -427,6 +433,7 @@ export function GroupChat({
       });
     for (const { delivery, task } of tasks.filter((item) => item.delivery.sourceId === sourceId)) {
       rows.push({
+        bubbleKey: task.response?.text && task.runId ? `run:${task.runId}` : undefined,
         id: `delivery:${delivery.id}`,
         persistent: true,
         content: (
@@ -505,7 +512,7 @@ export function GroupChat({
   }
   return (
     <section className="conversation" aria-label={t('common.conversation', { 0: bot.name })}>
-      <Transcript scope={bot.id} entries={rows} scroll={scroll} />
+      <Transcript scope={bot.id} entries={rows} scroll={scroll} loading={!page || loading} />
       <div className="composer-wrap">
         {readOnly && (
           <p className="inline-note" role="status">

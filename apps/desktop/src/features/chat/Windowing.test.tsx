@@ -37,6 +37,47 @@ function SyntheticTranscript({
   );
 }
 
+it('animates a new bubble once without replaying saved or streamed content', () => {
+  const animate = vi.fn();
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+  Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+  const message = (id: string, bubbleKey: string, text: string) => ({
+    id,
+    bubbleKey,
+    content: (
+      <article className="message">
+        <div className="bubble">{text}</div>
+      </article>
+    ),
+  });
+  try {
+    const saved = message('mock-old', 'mock-old', 'Synthetic saved bubble');
+    const view = render(<SyntheticTranscript entries={[saved]} />);
+    expect(animate).not.toHaveBeenCalled();
+    const earlier = message('mock-earlier', 'mock-earlier', 'Synthetic older history');
+    view.rerender(<SyntheticTranscript entries={[earlier, saved]} />);
+    expect(animate).not.toHaveBeenCalled();
+    const live = message('mock-live', 'mock-run', 'Synthetic stream begins');
+    view.rerender(<SyntheticTranscript entries={[saved, live]} />);
+    expect(animate).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <SyntheticTranscript
+        entries={[saved, message('mock-live', 'mock-run', 'Synthetic stream grows')]}
+      />,
+    );
+    view.rerender(<SyntheticTranscript entries={[saved]} />);
+    view.rerender(
+      <SyntheticTranscript
+        entries={[saved, message('mock-final', 'mock-run', 'Synthetic final reply')]}
+      />,
+    );
+    expect(animate).toHaveBeenCalledTimes(1);
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'animate', original);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+  }
+});
+
 it('returns a history reader to the latest virtualized messages and keeps keyboard focus in the log', async () => {
   const entries = Array.from({ length: 120 }, (_, index) => ({
     id: `mock-latest-${index}`,

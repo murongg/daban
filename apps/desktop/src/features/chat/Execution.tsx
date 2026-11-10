@@ -540,9 +540,10 @@ export function Execution(props: {
   phase?: TaskPhase;
   elapsedMs?: number;
   thinking?: ReplyStream['thinking'];
+  messageDetails?: boolean;
 }) {
   useLocale();
-  const { scope } = props;
+  const { scope, messageDetails } = props;
   const runtime = useRuntime();
   const active = runtime.snapshot.agents[scope.bot];
   const matching =
@@ -568,7 +569,7 @@ export function Execution(props: {
     : undefined;
   return (
     <div
-      className="execution-block"
+      className={messageDetails ? 'execution-block message-details' : 'execution-block'}
       key={JSON.stringify([
         scope.bot,
         scope.runId,

@@ -20,7 +20,6 @@ export const Message = memo(function Message({
   recordedPhase,
   recordedElapsed,
   recordedThinking,
-  phase,
   dispatch,
   preview,
   openLink,
@@ -37,7 +36,6 @@ export const Message = memo(function Message({
   recordedPhase?: TaskPhase;
   recordedElapsed?: number;
   recordedThinking?: ReplyStream['thinking'];
-  phase?: TaskPhase;
   dispatch: Dispatch<Action>;
   preview: (file: WorkspaceFile) => unknown;
   openLink: (url: string) => unknown;
@@ -100,6 +98,16 @@ export const Message = memo(function Message({
         </p>
       </div>
     );
+  const completed = recordedPhase === 'completed';
+  const execution = recordedRun && (
+    <Execution
+      scope={{ bot: target, runId: recordedRun, chatRevision: revision }}
+      phase={recordedPhase}
+      elapsedMs={recordedElapsed}
+      thinking={recordedThinking}
+      messageDetails={completed}
+    />
+  );
   return (
     <article
       className={`message ${message.role}`}
@@ -111,14 +119,7 @@ export const Message = memo(function Message({
           {author.name}
         </div>
       )}
-      {recordedRun && (
-        <Execution
-          scope={{ bot: target, runId: recordedRun, chatRevision: revision }}
-          phase={recordedPhase}
-          elapsedMs={recordedElapsed}
-          thinking={recordedThinking}
-        />
-      )}
+      {!completed && execution}
       <div
         className="bubble"
         data-chat-excerpt={!message.streaming && !message.error ? '' : undefined}
@@ -138,16 +139,9 @@ export const Message = memo(function Message({
           message.text
         )}
       </div>
-      {(message.streaming || message.incomplete) && (
-        <p className="inline-note reply-state">
-          {message.incomplete
-            ? t('chat.responseIncomplete')
-            : phase === 'waiting'
-              ? t('common.waitingReply')
-              : phase === 'paused'
-                ? t('common.waitingComputerHandback')
-                : t('chat.responding')}
-        </p>
+      {completed && execution}
+      {message.incomplete && (
+        <p className="inline-note reply-state">{t('chat.responseIncomplete')}</p>
       )}
       {message.files?.map(artifact)}
       {message.files?.includes('weekly-summary') && (

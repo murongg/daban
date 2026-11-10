@@ -14,8 +14,8 @@ colors:
   strong: "#252523"
   strong-hover: "#42423d"
   on-strong: "#ffffff"
-  bubble: "#252523"
-  on-bubble: "#ffffff"
+  bubble: "#ecece8"
+  on-bubble: "#252523"
   success: "#4b7d68"
   warning: "#9d7326"
   danger: "#b23e3e"
@@ -37,7 +37,7 @@ colors:
   dark-strong: "#e8e8e0"
   dark-strong-hover: "#ffffff"
   dark-on-strong: "#252523"
-  dark-bubble: "#353531"
+  dark-bubble: "#2d2d29"
   dark-on-bubble: "#eeeeea"
   dark-success: "#8ab49c"
   dark-warning: "#d2af6a"
@@ -92,8 +92,7 @@ rounded:
   badge: "5px"
   control: "9px"
   row: "12px"
-  bubble: "17px"
-  bubble-tail: "5px"
+  bubble: "19px"
   composer: "19px"
   desktop: "10px"
 spacing:
@@ -157,12 +156,12 @@ components:
   message-bot:
     backgroundColor: "{colors.soft}"
     textColor: "{colors.ink}"
-    padding: "12px 16px"
+    padding: "9px 14px"
     typography: "{typography.message}"
   message-user:
     backgroundColor: "{colors.bubble}"
     textColor: "{colors.on-bubble}"
-    padding: "12px 16px"
+    padding: "9px 14px"
     typography: "{typography.message}"
   workspace-tab:
     textColor: "{colors.muted}"
@@ -257,7 +256,7 @@ The workspace is flat at rest. Thin dividers, neutral surface changes, and selec
 
 ## Shapes
 
-Controls and fields have gently rounded corners; selected Bot rows and file-artifact containers are slightly broader. Message bubbles have an asymmetric small corner facing their author: lower left for assistant messages and lower right for user messages. The composer is the largest rounded input surface. The send control, status dots, and toggle thumb are circular. Dividers and fields use fine (1px) borders.
+Controls and fields have gently rounded corners; selected Bot rows and file-artifact containers are slightly broader. Message bubbles have softly rounded corners and quiet neutral fills. Alignment distinguishes the author. New bubbles settle with a brief spring motion when the reader is following the conversation. History loading, stream updates, and reduced-motion mode skip the entrance. The composer is the largest rounded input surface. The send control, status dots, and toggle thumb are circular. Dividers and fields use fine (1px) borders.
 
 Bot avatars are transparent PNG robot-head cutouts with rounded shell and ear modules, a small antenna, a dark screen and cream facial marks. The mint, violet, orange, blue, teal and pink shells distinguish Bots within one friendly illustrated family. Calm smiles, a wink and curved-eye smiles are decorative identity details, not operational status. Keep the transparent surround rather than adding a background tile or circle; reuse the family instead of profile photos or emoji avatars. Other UI icons remain fine monochrome outlines, mostly (14–18px).
 
@@ -429,11 +428,11 @@ The six synthetic production-React desktop captures, current paths/hashes and bo
 
 ### Task Progress and Recovery
 
-Public webpage retrieval shows “正在读取网页”, separate from reasoning, workspace tools and desktop actions. Keep the same compact status row and stop action; tool progress is actual DSH activity, never a simulated sequence.
+Public webpage retrieval shows “正在读取网页”, separate from reasoning, workspace tools and desktop actions. Show the current DSH activity beside the Bot avatar in the transcript.
 
-Native search shows “正在搜索”. Visible assistant deltas use the same bubble geometry and stable response identity as the final answer; reasoning and tool arguments are excluded. The small muted “回复进行中” or “回复未完成” line describes partial content without inventing a new card style. Do not write streaming prefixes into client storage until terminal interruption. Keep settled question/approval cards before the continued answer; active questions may follow their introducing text. Follow a growing answer only while the reader stays near the bottom, and preserve position when they scroll up. Polling must not overwrite a newer accepted-task snapshot or replay unchanged task history through the reducer. Native Electron scroll/typing performance still requires device verification after unlock.
+Native search shows “正在搜索”. Visible assistant deltas use the same bubble geometry and stable response identity as the final answer; reasoning and tool arguments are excluded. The inline activity describes a live response. An interrupted response keeps its muted “回复未完成” label. Do not write streaming prefixes into client storage until terminal interruption. Keep settled question/approval cards before the continued answer; active questions may follow their introducing text. Follow a growing answer only while the reader stays near the bottom, and preserve position when they scroll up. Polling must not overwrite a newer accepted-task snapshot or replay unchanged task history through the reducer. Native Electron scroll/typing performance still requires device verification after unlock.
 
-The read-only “执行过程” extends the existing quiet activity disclosure in `apps/desktop/src/features/chat/Execution.tsx`, shared by private conversations, group deliveries and personal history. Place it before the corresponding assistant bubble, after the author when present, with an (8px) bottom gap. Default to collapsed, and retain the user's expanded state through streaming and completion. The header shows the current phase and observed task duration when available; old records without timing omit it. Opening the outer disclosure loads scoped metadata and provider-returned thinking text inline, while tool content retains its nested lazy disclosure. Thinking uses muted (14px, line height 1.7) text with a fine neutral guide, a short preview and an explicit full-text toggle. Live thinking yields to its committed native step without duplicating it; reply text, tool arguments and raw SDK envelopes remain separate. Keep the list flat with fine neutral dividers and wrapping (44px minimum) tool rows. Phase and sequence labels retain the incumbent muted metadata role. This is supporting activity, not a second conversation frame or code-display theme.
+The read-only “执行过程” extends the existing quiet activity disclosure in `apps/desktop/src/features/chat/Execution.tsx`, shared by private conversations, group deliveries and personal history. In the main transcript, completed replies show it below the bubble on pointer hover or keyboard focus. Expanded records and touch inputs keep the control visible. Active private runs put the disclosure below their status line, revealing it on pointer hover or keyboard focus. Active group runs, unsuccessful runs and the separate history reader keep the disclosure above the reply. Default to collapsed and retain the user's expanded state through streaming and completion. The header shows the current phase and observed task duration when available; old records without timing omit it. Opening the outer disclosure loads scoped metadata and provider-returned thinking text inline, while tool content retains its nested lazy disclosure. Thinking uses muted (14px, line height 1.7) text with a fine neutral guide, a short preview and an explicit full-text toggle. Live thinking yields to its committed native step without duplicating it; reply text, tool arguments and raw SDK envelopes remain separate. Keep the list flat with fine neutral dividers and wrapping (44px minimum) tool rows. Phase and sequence labels retain the incumbent muted metadata role. This is supporting activity, not a second conversation frame or code-display theme.
 
 Long record text preserves whitespace and wraps within a named, keyboard-focusable region capped at (240px). Keep list pagination and content pagination explicit, including the notice that only part is loaded; polling follows only the already reached recording tail and must not skip unread pages or reset expanded content. Scope remains bound to the exact Bot/run plus private conversation revision or group conversation identity. Switching scope, reading, refreshing or paging must preserve the owner’s draft and reading position.
 
@@ -441,7 +440,7 @@ The reader states that reading never reruns tools, reuses old approval or resume
 
 Native DSH plans use a quiet, expandable list with actual pending/in-progress/completed states. Human waits show “等待你的回复”. Live questions and one-shot web approvals reuse the existing inbox row language in both the transcript and inbox; the connected inbox excludes demonstration requests. Question choices have no preselected answer, always allow free text, and preserve per-request drafts. Approval cards show the full URL and separate “仅允许这一次” from “拒绝”; a question answer does not grant permission. Retry freezes an uncertain submitted payload so it cannot silently become a different reply. New requests scroll into view, while ordinary polling and draft edits preserve the reading position. Cancelled or interrupted requests remain readable and cannot be answered.
 
-The compact status row in `apps/desktop/src/features/chat/Conversation.tsx` sits immediately above the composer, using muted (10px) text, wrapping gaps and a small soft action. Starting, running and takeover-paused tasks show their current state, executed step count and “停止任务”. An uncertain submission shows “正在确认任务是否启动” with “重试发送”; the pending composer stays disabled until that request is resolved.
+The private transcript shows the current activity and executed tool count after the live reply. Only starting and running labels use a soft moving highlight, with static text in reduced-motion and forced-colors modes. “停止任务” stays beside the composer. An uncertain submission shows “正在确认任务是否启动” with “重试发送”; the pending composer stays disabled until that request is resolved.
 
 Failed, stopped or interrupted tasks with an original prompt show “任务已中断，已保存文件仍保留” and “继续处理”. Service restart marks active tasks interrupted without automatically replaying them. Continue reuses the original request and saved input files in a new run directory, preserving previous outputs. `apps/desktop/src/app/App.tsx` and `apps/desktop/src/app/state.ts` keep definite rejection editable by clearing pending state while preserving drafts and attachments; ambiguous network results retain the original request ID for deduplication. Clear a submitted draft only after its matching runtime acknowledgement, without clearing later edits.
 
