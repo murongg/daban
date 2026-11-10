@@ -1,4 +1,8 @@
-import type { CuaDriverLike, WindowElement, WindowInfo } from '@trycua/cua-driver';
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
+import type { AppInfo, CuaDriverLike, WindowElement, WindowInfo } from '@trycua/cua-driver';
 import { nativeImage, type Point } from 'electron';
 import type { LocalCapture, WindowDriver } from './local-computer';
 import { windowCapture } from './window-capture';
@@ -16,6 +20,7 @@ const windowName = (window: WindowInfo) =>
 type Bounds = LocalCapture['bounds'];
 const geometry = ({ x, y, width, height }: Bounds) => [x, y, width, height].join(':');
 const context = (window: WindowInfo) => `${windowId(window)}:${geometry(window.bounds)}`;
+const runFile = promisify(execFile);
 
 type CuaPlatform = 'darwin' | 'win32';
 type CuaElement = Pick<WindowElement, 'actions' | 'depth' | 'enabled' | 'frame' | 'role'> & {
@@ -93,7 +98,83 @@ export function cuaWindows(platform: CuaPlatform) {
         window.bounds.height >= 32,
     );
   }
+  const appId = (app: AppInfo) =>
+    platform === 'darwin' ? app.bundleId : app.bundleId || app.launchPath;
+  async function apps(signal: AbortSignal) {
+    const sdk = await native();
+    const { apps } = await sdk.listApps({}, { signal });
+    return apps.filter(
+      (app) =>
+        appId(app) &&
+        app.pid !== process.pid &&
+        !['dev.daban.app', 'com.trycua.driver', 'com.trycua.driver.local'].includes(
+          app.bundleId || '',
+        ),
+    );
+  }
+  const normalize = (value: string) => value.trim().normalize('NFKC').toLowerCase();
   return {
+    async resolveApp(name: string, signal: AbortSignal) {
+      const requested = normalize(name);
+      const catalog = await apps(signal);
+      let matches = catalog.filter((app) =>
+        [app.name, appId(app), app.launchPath && path.basename(app.launchPath, '.app')].some(
+          (value) => value && normalize(value) === requested,
+        ),
+      );
+      let label: string | undefined;
+      if (!matches.length && platform === 'darwin' && !/[*?\\]/.test(name)) {
+        // Launch Services display names can be localized while the SDK reports the bundle name.
+        const query = `kMDItemContentType == "com.apple.application-bundle" && kMDItemDisplayName == ${JSON.stringify(name)}c`;
+        const result = await runFile('/usr/bin/mdfind', ['-0', query], { signal, timeout: 2000 });
+        const paths = new Set(result.stdout.split('\0'));
+        matches = catalog.filter((app) => app.launchPath && paths.has(app.launchPath));
+        label = name;
+      }
+      const ids = new Set(matches.map(appId));
+      if (ids.size > 1) throw new Error('LOCAL_APP_AMBIGUOUS');
+      const match = matches[0];
+      if (!match) throw new Error('LOCAL_APP_NOT_FOUND');
+      if (platform === 'win32' && !matches.some((app) => app.running && app.pid > 0))
+        throw new Error('LOCAL_APP_OPEN_REQUIRED');
+      return { id: appId(match)!, name: (label ?? match.name).slice(0, 256) };
+    },
+    async appWindow(id: string, signal: AbortSignal) {
+      const matches = (await apps(signal)).filter((app) => appId(app) === id);
+      if (!matches.length) throw new Error('LOCAL_APP_NOT_FOUND');
+      if (new Set(matches.flatMap((app) => (app.launchPath ? [app.launchPath] : []))).size > 1)
+        throw new Error('LOCAL_APP_AMBIGUOUS');
+      if (!matches.some((app) => app.running && app.pid > 0)) {
+        // The Windows SDK launch path does not guarantee that the new window stays in the background.
+        if (platform !== 'darwin') throw new Error('LOCAL_APP_OPEN_REQUIRED');
+        const sdk = await native();
+        signal.throwIfAborted();
+        const result = await sdk.callTool('launch_app', JSON.stringify({ bundle_id: id }), {
+          signal,
+        });
+        if (result.isError || result.action?.error) throw new Error('LOCAL_APP_LAUNCH_FAILED');
+        if (platform === 'darwin' && result.structuredJson) {
+          const receipt = JSON.parse(result.structuredJson) as {
+            self_activation_suppressed?: boolean;
+          };
+          if (receipt.self_activation_suppressed === false)
+            throw new Error('LOCAL_APP_BACKGROUND_UNAVAILABLE');
+        }
+      }
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const running = (await apps(signal)).filter(
+          (app) => appId(app) === id && app.running && app.pid > 0,
+        );
+        for (const app of running) {
+          const window = (await available(app.pid, signal)).find(
+            (window) => window.pid === app.pid,
+          );
+          if (window) return windowId(window);
+        }
+        await delay(250, undefined, { signal });
+      }
+      throw new Error('LOCAL_WINDOW_UNAVAILABLE');
+    },
     async typeText(text: string, check: () => unknown) {
       const sdk = await native();
       check();

@@ -177,6 +177,7 @@ export function Conversation({
   );
   const browserApproval =
     runtime.snapshot.protocolVersion >= browserApprovalProtocol &&
+    !runtime.snapshot.computerAccess &&
     runtime.snapshot.hostBrowser?.available === true;
   const trashPending = conversationPending(state, bot.id, revision);
   const trashed = conversationState(state, bot.id, revision, runtime.snapshot.chats)?.trashed;

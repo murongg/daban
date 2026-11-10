@@ -346,3 +346,40 @@ it('shows the connection state for installed but unavailable Linux instead of an
   expect(await screen.findByRole('button', { name: '连接电脑' })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command.type === 'computer.action')).toBe(false);
 });
+
+it('lets the Bot request the browser or Linux desktop without a panel connection action', async () => {
+  const bot = initialState().bots[0]!;
+  const snapshot = disconnected('ready');
+  snapshot.protocolVersion = 52;
+  snapshot.computerAccess = true;
+  snapshot.agent = {
+    location: 'host',
+    execution: 'local-workspace',
+    privilege: 'workspace',
+    approvals: 'host',
+  };
+  snapshot.hostBrowser = { available: true, connections: [] };
+  snapshot.setup = { required: false, target: 'linux', phase: 'existing' };
+  snapshot.linux = { available: true };
+  snapshot.computers = { available: true, revision: 0, limit: 2, items: [] };
+  const invoke = vi.fn(async (command: RuntimeCommand) => ({
+    ok: true,
+    value: command.type === 'status' ? snapshot : { bot: agentId(bot.id), enabled: false },
+  }));
+  Object.defineProperty(window, 'daban', {
+    configurable: true,
+    value: { platform: 'darwin', runtime: { invoke, subscribe: () => () => {} } },
+  });
+  render(
+    <RuntimeProvider>
+      <Computer bot={bot} notify={vi.fn()} />
+    </RuntimeProvider>,
+  );
+  expect(await screen.findByRole('form', { name: '浏览器导航' })).toBeVisible();
+  expect(screen.getByText('Bot 会在需要时申请使用。')).toBeVisible();
+  expect(screen.queryByRole('button', { name: '打开浏览器' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Linux 虚拟机' }));
+  expect(screen.getByText('Bot 会在需要时申请使用。')).toBeVisible();
+  expect(screen.queryByRole('button', { name: '连接电脑' })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command.type === 'computer.action')).toBe(false);
+});

@@ -320,6 +320,9 @@ function ConnectionControl({
             <button type="button" className="secondary" disabled={locked} onClick={stopButton}>
               {changing ? t('computer.pleaseWait') : t('computer.retryStop')}
             </button>
+          ) : runtime.snapshot.agent?.execution === 'local-workspace' &&
+            runtime.snapshot.computerAccess ? (
+            <p className="connection-description">{t('localComputer.onDemand')}</p>
           ) : (
             <button
               type="button"

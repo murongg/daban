@@ -1815,6 +1815,7 @@ export async function startPrototype({
               ...(host?.localComputer ? { localComputer: await host.localComputer.status() } : {}),
               ...(models?.tools.localFiles ? { localFolders: true } : {}),
               ...(models?.tools.localCommands ? { hostCommandFullAccess: true } : {}),
+              ...(host?.nativeWorkspace ? { computerAccess: true } : {}),
               ...(host?.nativeWorkspace ? { linux: { available: linuxAvailable } } : {}),
               ...(hostBrowser ? { hostBrowser: await hostBrowser.status() } : {}),
               ...(host?.reboot && (!host.nativeWorkspace || linuxAvailable)

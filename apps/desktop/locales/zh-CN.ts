@@ -2152,6 +2152,12 @@ export const chinese = {
   'localComputer.permissionsRecovery':
     '按系统提示重开 Daban。列表中没有 Daban 时，点「+」添加。更新开发版后，可移除旧条目再添加。',
   'localComputer.connect': '连接本机',
+  'localComputer.onDemand': 'Bot 会在需要时申请使用。',
+  'requests.allowComputerAccess': '允许 Bot 使用电脑？',
+  'requests.computerAppAccess': 'Bot 将在后台操作这个应用的窗口，截图会交给模型 {0}。',
+  'requests.browserComputerAccess':
+    'Bot 可使用 Daban 浏览器中已登录的账号，并将网页内容交给所选模型。',
+  'requests.linuxComputerAccess': 'Bot 将打开自己的 Linux 桌面，并可将桌面内容交给所选模型。',
   'localComputer.disconnect': '断开本机',
   'localComputer.connected': '本机已连接',
   'localComputer.paused': '已暂停，等待交还',

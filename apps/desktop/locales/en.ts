@@ -2414,6 +2414,14 @@ export const english = {
   'localComputer.permissionsRecovery':
     'Reopen Daban if prompted. If Daban is missing, click + to add it. After a development build update, you may need to remove the old entry and add it again.',
   'localComputer.connect': 'Connect this computer',
+  'localComputer.onDemand': 'The Bot will request access when it needs it.',
+  'requests.allowComputerAccess': 'Allow computer access?',
+  'requests.computerAppAccess':
+    'The Bot will use this app window in the background and send its screenshots to {0}.',
+  'requests.browserComputerAccess':
+    'The Bot can use accounts already signed in to the Daban browser and send page content to the selected model.',
+  'requests.linuxComputerAccess':
+    'The Bot will open its Linux desktop and can send its contents to the selected model.',
   'localComputer.disconnect': 'Disconnect this computer',
   'localComputer.connected': 'Local computer connected',
   'localComputer.paused': 'Paused, waiting for handback',

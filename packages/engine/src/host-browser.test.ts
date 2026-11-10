@@ -5,10 +5,59 @@ import type { HostBrowserRequest } from '@daban/protocol';
 import type { BrowserContext } from 'playwright';
 import { expect, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
+import type { ComputerFacade } from './computer-tools.js';
 import { Control, Fault } from './control.js';
 import { HostBrowser } from './host-browser.js';
 import { Browser, type BrowserOptions } from './runtime.js';
 import { WorkspaceFiles } from './workspace.js';
+
+test('offers browser access without a connection and waits for the run authorization before opening', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'synthetic-browser-access-'));
+  t.onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const close = vi.fn(async () => {});
+  const open = vi.fn(async () => close);
+  const host = {
+    available: () => false,
+    browser: { autoStart: { allowed: async () => true, open }, tabs: {} },
+  } as unknown as ComputerFacade;
+  const tools = new AgentTools(undefined, new WorkspaceFiles(root), {
+    nativeOnly: true,
+    hostBrowser: host,
+  });
+  const run: AgentToolRun = {
+    id: 'mock-run',
+    bot: 'mock-bot',
+    workdir: root,
+    canonicalRoot: root,
+    abort: new AbortController(),
+    toolCount: 0,
+    limit: 8,
+    seen: {},
+    trace: [],
+    task: { requestId: 'mock-request', prompt: 'Open a synthetic site.' },
+  };
+  let approve!: (id: string) => unknown;
+  tools.requestComputerAccess = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        approve = resolve;
+      }),
+  );
+  await tools.open(run);
+  expect(tools.hostSelected(run.bot, run)).toBe(false);
+  expect(tools.list(run.bot, undefined, undefined, run).map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(['computer_access', 'browser_snapshot']),
+  );
+  const access = tools.invoke(run, 'computer_access', { target: 'browser' });
+  await vi.waitFor(() => expect(tools.requestComputerAccess).toHaveBeenCalled());
+  expect(open).not.toHaveBeenCalled();
+  approve('mock-approval');
+  expect((await access).isError).toBeUndefined();
+  expect(open).toHaveBeenCalledWith(run.bot, 'task', run.abort.signal);
+  expect(tools.hostSelected(run.bot, run)).toBe(true);
+  await tools.finish(run);
+  expect(close).toHaveBeenCalledOnce();
+});
 
 test('blocks native input before AI handback and publishes the new lease only after transfer', async () => {
   const control = new Control(['mock-a']);

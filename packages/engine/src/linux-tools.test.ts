@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { expect, type TestContext, test } from 'vitest';
+import type { ComputerState, ExecutionSnapshot } from '@daban/protocol';
+import { expect, type TestContext, test, vi } from 'vitest';
 import { type AgentToolRun, AgentTools } from './agent-tools.js';
 import { LinuxTools } from './linux-tools.js';
 import { NativeWorkspace } from './native-workspace.js';
@@ -18,10 +19,33 @@ async function fixture(t: TestContext) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const files = new Map<string, Buffer>();
   let prepare: () => Promise<unknown> = async () => {};
+  const connected: ComputerState = {
+    bot: 'mock-bot',
+    phase: 'connected',
+    revision: 4,
+    desired: true,
+    reserved: true,
+    instance: 'mock-instance',
+  };
+  const status: ExecutionSnapshot['status'] = {
+    available: true,
+    limit: 2,
+    revision: 3,
+    items: [],
+  };
   const execution = {
+    snapshot: { status } as ExecutionSnapshot,
     call: async (method: string, params: Record<string, unknown>) => {
       calls.push({ method, params });
       if (method === 'workspace.base') return '/synthetic-linux/shared';
+      if (method === 'computer.status') return structuredClone(status);
+      if (method === 'computer.request') {
+        status.items = [connected];
+        return {
+          state: connected,
+          receipt: { id: 'mock-approval', bot: connected.bot, phase: 'settled' },
+        };
+      }
       if (method === 'workspace.create') {
         await prepare();
         return {
@@ -56,7 +80,9 @@ async function fixture(t: TestContext) {
     },
   };
   const tools = new AgentTools(undefined, workspace, { nativeOnly: true });
-  tools.linux = new LinuxTools(execution, workspace, tools);
+  tools.linux = new LinuxTools(execution, workspace, tools, async () => {
+    tools.linux!.online = true;
+  });
   tools.linux.enabled = true;
   tools.executeRemote = async (_run, _name, _args, _wire, dispatch) => dispatch();
   const run: AgentToolRun = {
@@ -81,6 +107,36 @@ async function fixture(t: TestContext) {
     },
   };
 }
+
+test('wakes Linux and connects its desktop only after the task receives approval', async (t) => {
+  const { tools, run, calls } = await fixture(t);
+  let approve!: (id: string) => unknown;
+  tools.requestComputerAccess = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        approve = resolve;
+      }),
+  );
+  const access = tools.invoke(run, 'computer_access', { target: 'linux' });
+  await vi.waitFor(() =>
+    expect(tools.requestComputerAccess).toHaveBeenCalledWith(run, { target: 'linux' }),
+  );
+  expect(calls).toEqual([]);
+  approve('mock-approval');
+  expect(await access).not.toHaveProperty('isError');
+  expect(calls.map(({ method }) => method)).toEqual([
+    'workspace.base',
+    'computer.status',
+    'computer.request',
+  ]);
+  expect(calls[2]?.params.body).toEqual({
+    id: 'mock-approval',
+    bot: run.bot,
+    action: 'connect',
+    revision: 0,
+  });
+  expect(tools.hasComputer(run.bot, undefined, true, run)).toBe(true);
+});
 
 test('Linux transfers preserve origins, verify downloaded bytes and never overwrite native outputs', async (t) => {
   const { tools, run, files, calls } = await fixture(t);

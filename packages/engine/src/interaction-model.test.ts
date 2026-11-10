@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { TaskPlan } from '@daban/protocol';
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFinished, test, vi } from 'vitest';
+import type { ComputerFacade } from './computer-tools.js';
 import { ModelRuns } from './model.js';
 import { ModelSettings } from './settings.js';
 
@@ -155,6 +156,98 @@ test.each(['auto', 'full'] as const)(
     } finally {
       await models?.close();
       await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(['allow', 'deny', 'full'] as const)(
+  'the live model task handles on-demand browser approval: %s',
+  async (decision) => {
+    const root = await mkdtemp(path.join(tmpdir(), 'mock-computer-policy-'));
+    const workspace = path.join(root, 'workspace');
+    await mkdir(workspace);
+    const settings = new ModelSettings(path.join(root, 'credentials.json'));
+    await settings.save({ apiKey: 'mock-policy-key' });
+    const release = vi.fn(async () => {});
+    const open = vi.fn(async () => release);
+    const hostBrowser = {
+      available: () => false,
+      browser: { autoStart: { allowed: async () => false, open }, tabs: {} },
+    } as unknown as ComputerFacade;
+    let outcome: unknown;
+    class Harness {
+      async start() {}
+      async close() {}
+      session() {
+        return {
+          id: 'mock-computer-session',
+          run: async () => {
+            const job = models.jobs.get('mock-bot')!;
+            outcome = await models.rpc('mock-bot', `Bearer ${job.token}`, {
+              id: 1,
+              method: 'tools/call',
+              params: { name: 'computer_access', arguments: { target: 'browser' } },
+            });
+            return { sessionId: 'mock-computer-session', finalResponse: 'Synthetic result.' };
+          },
+        };
+      }
+      async resumeSession() {
+        return this.session();
+      }
+    }
+    const models = new ModelRuns({
+      settings,
+      workspace,
+      dir: path.join(root, 'model'),
+      origin: 'http://127.0.0.1:12345',
+      hostBrowser,
+      Harness,
+    });
+    onTestFinished(async () => {
+      await models.close();
+      await rm(root, { recursive: true, force: true });
+    });
+    await models.start('mock-bot', {
+      requestId: 'mock-computer-task',
+      prompt: 'Open a synthetic website.',
+      approvalMode: decision === 'full' ? 'full' : 'auto',
+    });
+    const job = models.jobs.get('mock-bot')!;
+    const approval = await vi.waitFor(async () => {
+      const item = (await models.interactions.list()).find(
+        (row) => row.kind === 'approval' && row.tool === 'computer_access',
+      );
+      expect(item).toMatchObject({
+        bot: 'mock-bot',
+        runId: job.id,
+        sessionId: 'mock-computer-session',
+        target: 'browser',
+        status: decision === 'full' ? 'resolved' : 'pending',
+      });
+      return item!;
+    });
+    if (decision !== 'full') {
+      expect(open).not.toHaveBeenCalled();
+      await models.interactions.reply('mock-bot', job.id, approval.id, {
+        kind: 'decision',
+        allow: decision === 'allow',
+      });
+    } else {
+      expect(approval).toMatchObject({ decisionSource: 'policy', reply: { allow: true } });
+    }
+    await job.done;
+    if (decision === 'deny') {
+      expect(outcome).toMatchObject({
+        result: { isError: true, content: [{ type: 'text', text: 'COMPUTER_ACCESS_DENIED' }] },
+      });
+      expect(open).not.toHaveBeenCalled();
+    } else {
+      expect(outcome).toMatchObject({
+        result: { content: [{ type: 'text', text: '{"connected":"browser"}' }] },
+      });
+      expect(open).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledOnce();
     }
   },
 );

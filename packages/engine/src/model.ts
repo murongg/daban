@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -971,6 +971,34 @@ export class ModelRuns {
       authorization: (connection) => this.oauth.token(connection),
       networkFile: path.join(dir, 'network.json'),
     });
+    this.tools.requestComputerAccess = async (run, target) => {
+      const current = this.jobs.get(run.bot);
+      if (current !== run || !current.running || !run.id || !run.sessionId)
+        throw new Fault('MODEL_CANCELLED');
+      run.abort.signal.throwIfAborted();
+      let approval = await this.interactions.open(
+        run.bot,
+        run.id,
+        {
+          ...target,
+          id: randomUUID(),
+          sessionId: run.sessionId,
+          kind: 'approval',
+          tool: 'computer_access',
+        },
+        run.conversationId,
+      );
+      while (approval.status === 'pending')
+        approval = await this.interactions.wait(run.bot, run.id, approval.id, run.abort.signal);
+      run.abort.signal.throwIfAborted();
+      if (
+        approval.status !== 'resolved' ||
+        approval.reply?.kind !== 'decision' ||
+        !approval.reply.allow
+      )
+        throw new Fault('COMPUTER_ACCESS_DENIED');
+      return approval.id;
+    };
     this.tools.authorizeComputer = async (run) => {
       const approvals = (await this.interactions.list()).filter(
         (item) =>
@@ -978,6 +1006,7 @@ export class ModelRuns {
           item.runId === run.id &&
           item.conversationId === run.conversationId &&
           item.kind === 'approval' &&
+          item.tool !== 'computer_access' &&
           item.tool !== 'software_install',
       );
       // A pending/refused public-read permission must not be bypassed through a more privileged browser or desktop surface.
@@ -1947,6 +1976,11 @@ export class ModelRuns {
       let patch = '';
       if (!('driver' in config)) {
         await this.tools.open(job);
+        const accessTargets = task ? this.tools.accessTargets(job) : [];
+        if (accessTargets.length)
+          job.binding = createHash('sha256')
+            .update(`${job.binding}:computer-access-v1:${accessTargets.join(',')}`)
+            .digest('hex');
         if (this.tools.hostSelected(job.bot, job))
           // Browser file and vision tools change the SDK catalog; never resume a context with obsolete permissions.
           job.binding = createHash('sha256')
@@ -2663,6 +2697,7 @@ export class ModelRuns {
       computerConnected: this.tools.hasComputer(job.bot, job.model, job.vision, job),
       browserToolsConnected: this.tools.hasBrowser(job.bot, job),
       localComputerConnected: this.tools.localSelected(job.bot, job),
+      computerAccess: this.tools.accessTargets(job),
       nativeOnly: !!this.tools.options.nativeOnly,
       linuxAvailable: !!this.tools.linux?.enabled,
     });
@@ -3290,7 +3325,9 @@ export class ModelRuns {
         !isInteractionInput(rpc.params) ||
         rpc.params.sessionId !== job.sessionId ||
         (rpc.params.kind === 'approval' &&
-          ['software_install', 'vm_command', 'local_file'].includes(rpc.params.tool))
+          ['software_install', 'vm_command', 'local_file', 'computer_access'].includes(
+            rpc.params.tool,
+          ))
       )
         throw new Fault('INVALID_INTERACTION', 400);
       await this.fenceAttempt(job, 'tool');

@@ -52,8 +52,11 @@ export async function localServer(dataRoot: string, computer: LocalComputer) {
     }
     let runId: string | undefined;
     let sessionId: string | undefined;
+    const pending = new AbortController();
     res.once('close', () => {
-      if (!res.writableEnded && runId) computer.cancel(runId, sessionId).catch(() => {});
+      if (res.writableEnded) return;
+      pending.abort();
+      if (runId) computer.cancel(runId, sessionId).catch(() => {});
     });
     try {
       const chunks: Buffer[] = [];
@@ -79,6 +82,36 @@ export async function localServer(dataRoot: string, computer: LocalComputer) {
           delete status.session.window;
           if (data.scope === true) status.session.window = 'window';
         }
+        result = status;
+      } else if (
+        data.method === 'app.resolve' &&
+        Object.keys(data).length === 2 &&
+        typeof data.name === 'string' &&
+        data.name.trim() &&
+        data.name.length <= 256
+      ) {
+        result = await computer.resolveApp(data.name, pending.signal);
+      } else if (
+        data.method === 'app.connect' &&
+        Object.keys(data).length === 6 &&
+        typeof data.app === 'string' &&
+        data.app.length > 0 &&
+        data.app.length <= 4096 &&
+        validAgentId(data.bot) &&
+        validAgentId(data.runId) &&
+        typeof data.model === 'string' &&
+        data.model.length > 0 &&
+        data.model.length <= 256 &&
+        Number.isSafeInteger(data.modelRevision) &&
+        Number(data.modelRevision) >= 0
+      ) {
+        runId = data.runId;
+        const status = await computer.connectApp(
+          { bot: data.bot, runId, model: data.model, modelRevision: Number(data.modelRevision) },
+          data.app,
+          pending.signal,
+        );
+        sessionId = status.session?.id;
         result = status;
       } else if (
         data.method === 'cancel' &&
