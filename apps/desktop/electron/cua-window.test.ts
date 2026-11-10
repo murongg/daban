@@ -74,7 +74,7 @@ it('captures and acts through the embedded SDK with the exact approved window an
     delivery_mode: 'background',
     element_token: 'synthetic-snapshot:1',
   });
-  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 });
+  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 }, frame.context);
   await driver.close();
   expect(pointer.hide).toHaveBeenCalledOnce();
   expect(sdk.shutdown).toHaveBeenCalledOnce();
@@ -139,7 +139,7 @@ it('uses the approved Windows UI Automation element for a background click', asy
     delivery_mode: 'background',
     element_token: 'synthetic-snapshot:1',
   });
-  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 });
+  expect(pointer.show).toHaveBeenCalledWith(11, { x: 120, y: 80 }, frame.context);
 });
 
 it('clears the pointer on interruption and suppresses an in-flight click result', async () => {

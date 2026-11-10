@@ -212,7 +212,7 @@ export function cuaWindows(platform: CuaPlatform) {
             if (result.isError || result.action?.error)
               throw new Error('LOCAL_WINDOW_ACTION_UNSUPPORTED');
             if (action.type === 'click' && !signal.aborted)
-              pointer.show(target.window_id, point).catch(() => {
+              pointer.show(target.window_id, point, frame.context).catch(() => {
                 // Display failure cannot turn an already dispatched click into a failed action.
                 console.warn('Local computer pointer unavailable');
               });
